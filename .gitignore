@@ -1,0 +1,13 @@
+node_modules/
+dist/
+target/
+target-check/
+.vs/
+src-tauri/target/
+src-tauri/gen/
+.env
+.env.*
+*.log
+*.tmp
+sauc_go/
+sauc_go.zip

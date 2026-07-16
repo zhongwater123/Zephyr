@@ -1,0 +1,24 @@
+{
+  "name": "gy-typing",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.0.4",
+    "@tauri-apps/api": "^2.8.0",
+    "preact": "^10.27.2",
+    "three": "^0.185.1"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.2",
+    "@tauri-apps/cli": "^2.8.4",
+    "typescript": "~5.9.2",
+    "vite": "^7.1.7"
+  }
+}
