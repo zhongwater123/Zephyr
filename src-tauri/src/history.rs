@@ -2,8 +2,11 @@ use chrono::Local;
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use thiserror::Error;
 use uuid::Uuid;
+
+const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Error)]
 pub enum HistoryError {
@@ -41,7 +44,10 @@ pub fn history_path() -> Result<PathBuf, HistoryError> {
     Ok(dir.join("history.db"))
 }
 
-pub fn insert_transcript(text: &str, app_context: &AppContext) -> Result<HistoryItem, HistoryError> {
+pub fn insert_transcript(
+    text: &str,
+    app_context: &AppContext,
+) -> Result<HistoryItem, HistoryError> {
     let item = HistoryItem {
         id: Uuid::new_v4().to_string(),
         text: text.to_string(),
@@ -80,9 +86,17 @@ pub fn get_history_text(id: &str) -> Result<String, HistoryError> {
 
 fn open_database(path: &Path) -> Result<Connection, HistoryError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| HistoryError::CreateDir(error.to_string()))?;
+        std::fs::create_dir_all(parent)
+            .map_err(|error| HistoryError::CreateDir(error.to_string()))?;
     }
-    let connection = Connection::open(path).map_err(|error| HistoryError::Open(error.to_string()))?;
+    let connection =
+        Connection::open(path).map_err(|error| HistoryError::Open(error.to_string()))?;
+    connection
+        .busy_timeout(DATABASE_BUSY_TIMEOUT)
+        .map_err(|error| HistoryError::Database(error.to_string()))?;
+    connection
+        .execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+        .map_err(|error| HistoryError::Database(error.to_string()))?;
     initialize_database(&connection)?;
     Ok(connection)
 }
@@ -140,7 +154,9 @@ fn list_history_from_path(
     let connection = open_database(path)?;
     let limit = limit.clamp(1, 100);
     let offset = offset.max(0);
-    let query = query.map(|value| value.trim().to_string()).filter(|value| !value.is_empty());
+    let query = query
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
 
     let mut items = Vec::new();
     if let Some(query) = query {
@@ -235,74 +251,6 @@ fn row_to_history_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryItem>
     })
 }
 
-#[cfg(target_os = "windows")]
-pub fn capture_foreground_app() -> AppContext {
-    use std::path::Path;
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId,
-    };
-    use windows::core::PWSTR;
-
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.is_invalid() {
-            return AppContext::default();
-        }
-
-        let mut title_buffer = [0u16; 512];
-        let title_len = GetWindowTextW(hwnd, &mut title_buffer);
-        let app_title = if title_len > 0 {
-            Some(String::from_utf16_lossy(&title_buffer[..title_len as usize]))
-        } else {
-            None
-        };
-
-        let mut process_id = 0u32;
-        GetWindowThreadProcessId(hwnd, Some(&mut process_id as *mut u32));
-        let app_name = if process_id == 0 {
-            None
-        } else {
-            foreground_process_name(process_id)
-        };
-
-        return AppContext {
-            app_name,
-            app_title,
-        };
-    }
-
-    unsafe fn foreground_process_name(process_id: u32) -> Option<String> {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id).ok()?;
-        let mut buffer = [0u16; 1024];
-        let mut size = buffer.len() as u32;
-        let result = QueryFullProcessImageNameW(
-            handle,
-            PROCESS_NAME_WIN32,
-            PWSTR(buffer.as_mut_ptr()),
-            &mut size,
-        );
-        let _ = CloseHandle(handle);
-        result.ok()?;
-        if size == 0 {
-            return None;
-        }
-        let path = String::from_utf16_lossy(&buffer[..size as usize]);
-        Path::new(&path)
-            .file_name()
-            .and_then(|value| value.to_str())
-            .map(|value| value.to_string())
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn capture_foreground_app() -> AppContext {
-    AppContext::default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -361,12 +309,17 @@ mod tests {
         assert_eq!(searched[0].id, "first");
 
         update_history_at_path(&path, "first", "改过的文本").unwrap();
-        assert_eq!(get_history_text_at_path(&path, "first").unwrap(), "改过的文本");
+        assert_eq!(
+            get_history_text_at_path(&path, "first").unwrap(),
+            "改过的文本"
+        );
 
         delete_history_at_path(&path, "second").unwrap();
         assert_eq!(list_history_from_path(&path, None, 20, 0).unwrap().len(), 1);
 
         clear_history_at_path(&path).unwrap();
-        assert!(list_history_from_path(&path, None, 20, 0).unwrap().is_empty());
+        assert!(list_history_from_path(&path, None, 20, 0)
+            .unwrap()
+            .is_empty());
     }
 }

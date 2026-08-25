@@ -8,11 +8,16 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 use thiserror::Error;
+use url::Url;
 
 const HOTWORD_BATCH_SIZE: i64 = 20;
 const MAX_HOTWORDS: usize = 30;
 const MAX_CONTEXT_CHARS: usize = 120;
+const AGENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const AGENT_REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
+const DATABASE_BUSY_TIMEOUT: Duration = Duration::from_secs(3);
 
 static ORGANIZE_RUNNING: AtomicBool = AtomicBool::new(false);
 
@@ -109,60 +114,60 @@ struct ChatCompletionMessage {
     content: String,
 }
 
-pub fn get_state(config: &AppConfig) -> Result<HotwordState, HotwordError> {
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
-    state_from_connection(config, &connection)
+pub fn get_state(config: &AppConfig, has_api_key: bool) -> Result<HotwordState, HotwordError> {
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
+    state_from_connection(config, &connection, has_api_key)
 }
 
 pub fn save_manual_hotwords(words: Vec<String>) -> Result<(), HotwordError> {
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
     update_manual_hotwords(&connection, sanitize_words(words, true))
 }
 
 pub fn add_hotword(word: &str) -> Result<(), HotwordError> {
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
     let mut state = load_stored_state(&connection)?;
     add_hotword_to_state(&mut state, word);
     save_stored_state(&connection, &state)
 }
 
 pub fn update_hotword(old_word: &str, new_word: &str) -> Result<(), HotwordError> {
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
     let mut state = load_stored_state(&connection)?;
     update_hotword_in_state(&mut state, old_word, new_word);
     save_stored_state(&connection, &state)
 }
 
 pub fn delete_hotword(word: &str) -> Result<(), HotwordError> {
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
     let mut state = load_stored_state(&connection)?;
     delete_hotword_from_state(&mut state, word);
     save_stored_state(&connection, &state)
 }
 
 pub fn delete_agent_hotword(word: &str) -> Result<(), HotwordError> {
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
     let mut state = load_stored_state(&connection)?;
     state.agent_hotwords.retain(|item| item != word);
     save_stored_state(&connection, &state)
 }
 
 pub fn promote_agent_hotword(word: &str) -> Result<(), HotwordError> {
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
     let mut state = load_stored_state(&connection)?;
     if !word.trim().is_empty() && !state.manual_hotwords.iter().any(|item| item == word) {
         state.manual_hotwords.push(word.trim().to_string());
@@ -173,9 +178,9 @@ pub fn promote_agent_hotword(word: &str) -> Result<(), HotwordError> {
 }
 
 pub fn update_profile_context(text: &str) -> Result<(), HotwordError> {
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
     let mut state = load_stored_state(&connection)?;
     state.profile_context = truncate_chars(text.trim(), MAX_CONTEXT_CHARS);
     save_stored_state(&connection, &state)
@@ -186,9 +191,9 @@ pub fn update_app_context(app_name: &str, context: &str) -> Result<(), HotwordEr
     if app_name.is_empty() {
         return Ok(());
     }
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
     let mut state = load_stored_state(&connection)?;
     let context = truncate_chars(context.trim(), MAX_CONTEXT_CHARS);
     if let Some(item) = state
@@ -208,9 +213,9 @@ pub fn update_app_context(app_name: &str, context: &str) -> Result<(), HotwordEr
 }
 
 pub fn delete_app_context(app_name: &str) -> Result<(), HotwordError> {
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
     let mut state = load_stored_state(&connection)?;
     state
         .app_contexts
@@ -226,9 +231,9 @@ pub fn compose_asr_hints(
         return Ok(None);
     }
 
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
     let state = load_stored_state(&connection)?;
     let mut hotwords = state.manual_hotwords;
     hotwords.extend(state.agent_hotwords);
@@ -246,8 +251,8 @@ pub fn compose_asr_hints(
                 .map(|item| item.context.clone())
         })
         .filter(|text| !text.trim().is_empty());
-    let profile_context = (!state.profile_context.trim().is_empty())
-        .then(|| state.profile_context.clone());
+    let profile_context =
+        (!state.profile_context.trim().is_empty()).then(|| state.profile_context.clone());
 
     if hotwords.is_empty() && app_context_text.is_none() && profile_context.is_none() {
         return Ok(None);
@@ -264,17 +269,24 @@ pub fn should_auto_organize(config: &AppConfig) -> bool {
     if !config.hotword_agent_enabled {
         return false;
     }
-    get_state(config)
+    get_state(config, false)
         .map(|state| state.pending_count >= HOTWORD_BATCH_SIZE)
         .unwrap_or(false)
 }
 
-pub async fn test_agent_connection(config: AppConfig) -> Result<String, HotwordError> {
-    let api_key = config::load_hotword_agent_api_key()
-        .map_err(|error| HotwordError::Request(error.to_string()))?
-        .filter(|key| !key.trim().is_empty())
-        .ok_or(HotwordError::MissingApiKey)?;
-    let url = chat_completions_url(&config.hotword_agent_base_url);
+pub async fn test_agent_connection(
+    config: AppConfig,
+    api_key: String,
+) -> Result<String, HotwordError> {
+    if !config.is_endpoint_trusted(
+        &config.hotword_agent_base_url,
+        config::EndpointPurpose::HotwordAgent,
+    ) {
+        return Err(HotwordError::Request(
+            "热词 Agent endpoint 尚未通过 Windows 原生授权".to_string(),
+        ));
+    }
+    let url = chat_completions_url(&config.hotword_agent_base_url)?;
     let payload = json!({
         "model": config.hotword_agent_model,
         "messages": [
@@ -290,7 +302,7 @@ pub async fn test_agent_connection(config: AppConfig) -> Result<String, HotwordE
         "stream": false
     });
 
-    let response = reqwest::Client::new()
+    let response = agent_http_client()?
         .post(url)
         .bearer_auth(api_key)
         .json(&payload)
@@ -321,7 +333,11 @@ pub async fn test_agent_connection(config: AppConfig) -> Result<String, HotwordE
     Ok("DeepSeek 热词 Agent 已就绪。".to_string())
 }
 
-pub async fn organize_hotwords(config: AppConfig, force: bool) -> Result<HotwordState, HotwordError> {
+pub async fn organize_hotwords(
+    config: AppConfig,
+    force: bool,
+    api_key: String,
+) -> Result<HotwordState, HotwordError> {
     if !force && !config.hotword_agent_enabled {
         return Err(HotwordError::AgentDisabled);
     }
@@ -330,19 +346,22 @@ pub async fn organize_hotwords(config: AppConfig, force: bool) -> Result<Hotword
     }
     let _guard = OrganizeGuard;
 
-    let api_key = config::load_hotword_agent_api_key()
-        .map_err(|error| HotwordError::Request(error.to_string()))?
-        .filter(|key| !key.trim().is_empty())
-        .ok_or(HotwordError::MissingApiKey)?;
-
+    if !config.is_endpoint_trusted(
+        &config.hotword_agent_base_url,
+        config::EndpointPurpose::HotwordAgent,
+    ) {
+        return Err(HotwordError::Request(
+            "热词 Agent endpoint 尚未通过 Windows 原生授权".to_string(),
+        ));
+    }
     let (stored_state, items) = {
-        let connection = open_database(&history::history_path().map_err(|error| {
-            HotwordError::Open(error.to_string())
-        })?)?;
+        let connection = open_database(
+            &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+        )?;
         let state = load_stored_state(&connection)?;
         let pending_count = pending_count(&connection, state.last_processed_rowid)?;
         if !force && pending_count < HOTWORD_BATCH_SIZE {
-            return state_from_connection(&config, &connection);
+            return state_from_connection(&config, &connection, true);
         }
         let limit = if force {
             pending_count.max(1)
@@ -354,28 +373,22 @@ pub async fn organize_hotwords(config: AppConfig, force: bool) -> Result<Hotword
     };
 
     if items.is_empty() {
-        return get_state(&config);
+        return get_state(&config, true);
     }
 
     let max_rowid = items.iter().map(|item| item.rowid).max().unwrap_or(0);
     let result = request_agent_output(&config, &api_key, &stored_state, &items).await;
-    let connection = open_database(&history::history_path().map_err(|error| {
-        HotwordError::Open(error.to_string())
-    })?)?;
+    let connection = open_database(
+        &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+    )?;
 
     match result {
         Ok(agent_output) => {
-            let mut next_state = stored_state;
-            next_state.agent_hotwords = sanitize_words(agent_output.agent_hotwords, false);
-            next_state.agent_hotwords.truncate(MAX_HOTWORDS);
-            next_state.profile_context =
-                truncate_chars(agent_output.profile_context.trim(), MAX_CONTEXT_CHARS);
-            next_state.app_contexts = normalize_app_contexts(agent_output.app_contexts);
-            next_state.last_processed_rowid = max_rowid;
-            next_state.updated_at = Some(Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
-            next_state.last_error = None;
+            let latest_state = load_stored_state(&connection)?;
+            let next_state =
+                merge_agent_output(&stored_state, latest_state, agent_output, max_rowid);
             save_stored_state(&connection, &next_state)?;
-            state_from_connection(&config, &connection)
+            state_from_connection(&config, &connection, true)
         }
         Err(error) => {
             set_last_error(&connection, &error.to_string())?;
@@ -393,7 +406,14 @@ impl Drop for OrganizeGuard {
 }
 
 fn open_database(path: &Path) -> Result<Connection, HotwordError> {
-    let connection = Connection::open(path).map_err(|error| HotwordError::Open(error.to_string()))?;
+    let connection =
+        Connection::open(path).map_err(|error| HotwordError::Open(error.to_string()))?;
+    connection
+        .busy_timeout(DATABASE_BUSY_TIMEOUT)
+        .map_err(|error| HotwordError::Database(error.to_string()))?;
+    connection
+        .execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+        .map_err(|error| HotwordError::Database(error.to_string()))?;
     initialize_database(&connection)?;
     Ok(connection)
 }
@@ -441,15 +461,20 @@ fn initialize_database(connection: &Connection) -> Result<(), HotwordError> {
 fn state_from_connection(
     config: &AppConfig,
     connection: &Connection,
+    has_api_key: bool,
 ) -> Result<HotwordState, HotwordError> {
     let stored = load_stored_state(connection)?;
     let pending_count = pending_count(connection, stored.last_processed_rowid)?;
+    let endpoint_authorized = config.is_endpoint_trusted(
+        &config.hotword_agent_base_url,
+        config::EndpointPurpose::HotwordAgent,
+    );
     Ok(HotwordState {
         hotwords_enabled: config.hotwords_enabled,
         hotword_agent_enabled: config.hotword_agent_enabled,
         hotword_agent_base_url: config.hotword_agent_base_url.clone(),
         hotword_agent_model: config.hotword_agent_model.clone(),
-        has_hotword_agent_api_key: config::has_hotword_agent_api_key(),
+        has_hotword_agent_api_key: endpoint_authorized && has_api_key,
         manual_hotwords: stored.manual_hotwords,
         agent_hotwords: stored.agent_hotwords,
         profile_context: stored.profile_context,
@@ -586,7 +611,7 @@ async fn request_agent_output(
     state: &StoredHotwordState,
     items: &[PendingHistoryItem],
 ) -> Result<AgentOutput, HotwordError> {
-    let url = chat_completions_url(&config.hotword_agent_base_url);
+    let url = chat_completions_url(&config.hotword_agent_base_url)?;
     let payload = json!({
         "model": config.hotword_agent_model,
         "messages": [
@@ -602,7 +627,7 @@ async fn request_agent_output(
         "stream": false
     });
 
-    let response = reqwest::Client::new()
+    let response = agent_http_client()?
         .post(url)
         .bearer_auth(api_key)
         .json(&payload)
@@ -676,13 +701,56 @@ fn strip_json_fence(content: &str) -> String {
         .to_string()
 }
 
-fn chat_completions_url(base_url: &str) -> String {
+fn chat_completions_url(base_url: &str) -> Result<String, HotwordError> {
     let base_url = base_url.trim().trim_end_matches('/');
-    if base_url.ends_with("/chat/completions") {
+    let endpoint = if base_url.ends_with("/chat/completions") {
         base_url.to_string()
     } else {
         format!("{base_url}/chat/completions")
+    };
+    let parsed = Url::parse(&endpoint)
+        .map_err(|error| HotwordError::Request(format!("无效的热词 Agent 地址: {error}")))?;
+    let is_loopback_http = parsed.scheme() == "http"
+        && parsed
+            .host_str()
+            .is_some_and(|host| matches!(host, "localhost" | "127.0.0.1" | "::1"));
+    if parsed.scheme() != "https" && !is_loopback_http {
+        return Err(HotwordError::Request(
+            "热词 Agent 地址必须使用 HTTPS；仅本机回环地址允许 HTTP。".to_string(),
+        ));
     }
+    Ok(endpoint)
+}
+
+fn agent_http_client() -> Result<reqwest::Client, HotwordError> {
+    reqwest::Client::builder()
+        .connect_timeout(AGENT_CONNECT_TIMEOUT)
+        .timeout(AGENT_REQUEST_TIMEOUT)
+        .build()
+        .map_err(|error| HotwordError::Request(error.to_string()))
+}
+
+fn merge_agent_output(
+    requested_state: &StoredHotwordState,
+    mut latest_state: StoredHotwordState,
+    agent_output: AgentOutput,
+    max_rowid: i64,
+) -> StoredHotwordState {
+    latest_state.agent_hotwords = sanitize_words(agent_output.agent_hotwords, false);
+    latest_state.agent_hotwords.truncate(MAX_HOTWORDS);
+
+    if latest_state.profile_context == requested_state.profile_context {
+        latest_state.profile_context =
+            truncate_chars(agent_output.profile_context.trim(), MAX_CONTEXT_CHARS);
+    }
+    if latest_state.app_contexts == requested_state.app_contexts {
+        latest_state.app_contexts = normalize_app_contexts(agent_output.app_contexts);
+    }
+
+    latest_state.last_processed_rowid = max_rowid;
+    latest_state.updated_at = Some(Local::now().format("%Y-%m-%d %H:%M:%S").to_string());
+    latest_state.last_error = None;
+    latest_state
 }
 
 fn normalize_app_contexts(contexts: Vec<AppHotwordContext>) -> Vec<AppHotwordContext> {
@@ -882,6 +950,52 @@ mod tests {
     }
 
     #[test]
+    fn agent_endpoint_requires_https_except_for_loopback_hosts() {
+        assert!(chat_completions_url("https://api.deepseek.com").is_ok());
+        assert!(chat_completions_url("http://127.0.0.1:11434/v1").is_ok());
+        assert!(chat_completions_url("http://example.com/v1").is_err());
+    }
+
+    #[test]
+    fn agent_result_preserves_user_edits_made_while_request_was_running() {
+        let requested = StoredHotwordState {
+            manual_hotwords: vec!["Zephyr".to_string()],
+            agent_hotwords: Vec::new(),
+            profile_context: "旧的个人上下文".to_string(),
+            app_contexts: vec![AppHotwordContext {
+                app_name: "code.exe".to_string(),
+                context: "旧的应用上下文".to_string(),
+            }],
+            last_processed_rowid: 10,
+            updated_at: None,
+            last_error: None,
+        };
+        let mut latest = requested.clone();
+        latest.manual_hotwords.push("用户新词".to_string());
+        latest.profile_context = "用户刚刚修改的上下文".to_string();
+
+        let merged = merge_agent_output(
+            &requested,
+            latest,
+            AgentOutput {
+                agent_hotwords: vec!["Agent 新词".to_string()],
+                profile_context: "Agent 生成的上下文".to_string(),
+                app_contexts: vec![AppHotwordContext {
+                    app_name: "code.exe".to_string(),
+                    context: "Agent 生成的应用上下文".to_string(),
+                }],
+            },
+            20,
+        );
+
+        assert_eq!(merged.manual_hotwords, vec!["Zephyr", "用户新词"]);
+        assert_eq!(merged.profile_context, "用户刚刚修改的上下文");
+        assert_eq!(merged.app_contexts[0].context, "Agent 生成的应用上下文");
+        assert_eq!(merged.agent_hotwords, vec!["Agent 新词"]);
+        assert_eq!(merged.last_processed_rowid, 20);
+    }
+
+    #[test]
     fn state_reports_pending_count() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("history.db");
@@ -894,7 +1008,7 @@ mod tests {
             )
             .unwrap();
 
-        let state = state_from_connection(&test_config(), &connection).unwrap();
+        let state = state_from_connection(&test_config(), &connection, false).unwrap();
 
         assert!(state.hotwords_enabled);
         assert_eq!(state.pending_count, 1);

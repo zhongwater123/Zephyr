@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "architectureDir": "docs/architecture",
+  "codeMap": "docs/architecture/code-map.json",
+  "codeMapSchema": "docs/architecture/code-map.schema.json",
+  "facts": "docs/architecture/architecture-facts.json",
+  "requiredDocs": [
+    "README.md",
+    "arc42-lean.md",
+    "c4-context.md",
+    "c4-container.md",
+    "c4-components-backend.md",
+    "c4-components-frontend.md",
+    "runtime-views.md",
+    "invariants.md",
+    "code-map.md",
+    "maintenance.md",
+    "adr/README.md",
+    "adr/template.md"
+  ],
+  "sourceCoverage": [
+    {
+      "root": "src",
+      "extensions": [".ts", ".tsx", ".css"],
+      "excludeSuffixes": [".test.ts", ".test.tsx"]
+    },
+    {
+      "root": "src-tauri/src",
+      "extensions": [".rs"],
+      "excludeSuffixes": []
+    }
+  ]
+}

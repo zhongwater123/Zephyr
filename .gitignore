@@ -4,6 +4,7 @@ target/
 target-check/
 .vs/
 src-tauri/target/
+.tauri-dev.lock
 src-tauri/gen/
 .env
 .env.*

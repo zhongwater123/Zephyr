@@ -7,6 +7,25 @@
   text-rendering: optimizeLegibility;
 }
 
+.pending-output {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+.pending-output p {
+  margin: 0;
+  max-height: 92px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pending-output small {
+  color: var(--muted);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -720,27 +739,48 @@ textarea {
 
 .shortcut-card {
   grid-template-rows: auto auto auto auto;
-  width: min(520px, calc(100vw - 36px));
+  gap: 14px;
+  width: min(460px, calc(100vw - 36px));
   height: auto;
   min-height: 0;
 }
 
-.shortcut-card:focus {
-  outline: 1px solid rgba(38, 66, 76, 0.18);
-  outline-offset: 3px;
+.shortcut-current {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: rgba(48, 61, 70, 0.62);
+  font-size: 12px;
+}
+
+.shortcut-current kbd {
+  color: #22303a;
+  font-weight: 700;
 }
 
 .shortcut-capture-box {
   display: grid;
+  width: 100%;
   grid-template-columns: minmax(86px, auto) minmax(0, 1fr);
   gap: 12px 14px;
   align-items: center;
   padding: 14px;
   border: 1px solid rgba(49, 62, 72, 0.14);
   border-radius: 5px;
+  color: inherit;
+  text-align: left;
+  cursor: text;
   background:
     linear-gradient(90deg, rgba(45, 58, 68, 0.025), transparent 42%),
     rgba(255, 255, 255, 0.42);
+}
+
+.shortcut-capture-box:hover,
+.shortcut-capture-box:focus-visible {
+  border-color: rgba(31, 113, 129, 0.48);
+  outline: 2px solid rgba(31, 113, 129, 0.12);
+  outline-offset: 2px;
 }
 
 .shortcut-capture-box span {
@@ -755,6 +795,13 @@ textarea {
   color: #22303a;
   font-size: 15px;
   font-weight: 700;
+}
+
+.shortcut-capture-box small {
+  grid-column: 1 / -1;
+  color: rgba(48, 61, 70, 0.62);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .shortcut-capture-box kbd {
@@ -784,19 +831,35 @@ textarea {
   color: #9e382f;
 }
 
-.shortcut-suggestions {
-  display: flex;
-  flex-wrap: wrap;
+.shortcut-conflict {
+  display: grid;
   gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(158, 56, 47, 0.22);
+  border-radius: 5px;
+  background: rgba(158, 56, 47, 0.055);
 }
 
-.shortcut-suggestions button {
-  min-height: 30px;
-  border: 1px solid rgba(42, 55, 64, 0.18);
-  border-radius: 4px;
-  padding: 0 10px;
-  color: #25313b;
-  background: rgba(255, 255, 255, 0.58);
+.shortcut-conflict strong {
+  color: #7f332d;
+  font-size: 13px;
+}
+
+.shortcut-conflict p {
+  margin: 0;
+  color: rgba(48, 61, 70, 0.7);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.shortcut-conflict > div {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.shortcut-conflict button {
+  min-height: 34px;
 }
 
 .history-header {

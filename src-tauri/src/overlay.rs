@@ -80,11 +80,6 @@ pub fn update_preinput(app: &AppHandle, payload: PreInputPayload) {
     }
 }
 
-pub fn hide_preinput(app: &AppHandle) {
-    let session_id = current_preinput_session_id();
-    hide_preinput_for_session(app, session_id);
-}
-
 pub fn begin_preinput_session() -> u64 {
     if let Ok(mut store) = preinput_store().lock() {
         store.current_session_id = store.current_session_id.saturating_add(1);
@@ -107,11 +102,7 @@ pub fn current_preinput_session_id() -> u64 {
 pub fn hide_preinput_for_session(app: &AppHandle, session_id: u64) {
     let payload = clear_current_preinput_payload(session_id);
     if let Some(window) = app.get_webview_window(PREINPUT_LABEL) {
-        emit_to_preinput(
-            app,
-            PREINPUT_HIDE_EVENT,
-            &payload,
-        );
+        emit_to_preinput(app, PREINPUT_HIDE_EVENT, &payload);
         if let Err(error) = window.hide() {
             log::warn!("failed to hide preinput overlay: {error}");
         }
@@ -239,7 +230,7 @@ fn ensure_preinput_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         PREINPUT_LABEL,
         WebviewUrl::App("index.html?window=preinput".into()),
     )
-    .title("GY Typing Preview")
+    .title("Zephyr Preview")
     .inner_size(PREINPUT_WIDTH, PREINPUT_HEIGHT)
     .resizable(false)
     .decorations(false)
@@ -252,14 +243,8 @@ fn ensure_preinput_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
 }
 
 fn emit_to_preinput<T: Serialize + Clone>(app: &AppHandle, event: &str, payload: &T) {
-    if let Err(error) = app.emit(event, payload.clone()) {
-        log::warn!("failed to emit {event} globally: {error}");
-    }
-
-    if let Some(window) = app.get_webview_window(PREINPUT_LABEL) {
-        if let Err(error) = window.emit(event, payload.clone()) {
-            log::warn!("failed to emit {event} to preinput overlay: {error}");
-        }
+    if let Err(error) = app.emit_to(PREINPUT_LABEL, event, payload.clone()) {
+        log::warn!("failed to emit {event} to preinput overlay: {error}");
     }
 }
 
@@ -268,8 +253,7 @@ fn overlay_position(app: &AppHandle) -> Option<PhysicalPosition<i32>> {
 }
 
 fn bottom_center_position(app: &AppHandle) -> Option<PhysicalPosition<i32>> {
-    let (x, y, width, height) =
-        target_screen_rect(app).or_else(|| primary_screen_rect(app))?;
+    let (x, y, width, height) = target_screen_rect(app).or_else(|| primary_screen_rect(app))?;
 
     Some(PhysicalPosition::new(
         x + ((width as f64 - PREINPUT_WIDTH) / 2.0).max(0.0) as i32,

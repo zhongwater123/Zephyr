@@ -1,0 +1,627 @@
+{
+  "$schema": "./code-map.schema.json",
+  "schemaVersion": 2,
+  "system": "gy-typing",
+  "components": [
+    {
+      "id": "system.zephyr",
+      "name": "GY Typing / Zephyr",
+      "kind": "software-system",
+      "source": [
+        "README.md",
+        "src-tauri/src/lib.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-context.md",
+        "docs/architecture/arc42-lean.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md"
+      ],
+      "changeTriggers": [
+        "产品边界、用户角色、外部系统或本机控制边界变化"
+      ],
+      "owner": "product-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "frontend.entry",
+        "backend.bootstrap",
+        "external.asr",
+        "external.hotword-agent",
+        "platform.windows"
+      ],
+      "publicContracts": [
+        "Windows desktop application boundary",
+        "Global voice shortcut user workflow"
+      ]
+    },
+    {
+      "id": "frontend.entry",
+      "name": "Window entry loader",
+      "kind": "component",
+      "source": [
+        "src/main.tsx",
+        "src/app/App.tsx",
+        "src/app/FrontendErrorBoundary.tsx"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-frontend.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md"
+      ],
+      "changeTriggers": [
+        "窗口入口、动态导入或 bundle 边界变化"
+      ],
+      "owner": "frontend-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "frontend.shell",
+        "frontend.overlay"
+      ],
+      "publicContracts": [
+        "window=preinput query parameter",
+        "Main and preinput dynamic import boundary"
+      ]
+    },
+    {
+      "id": "frontend.shell",
+      "name": "App shell",
+      "kind": "component",
+      "source": [
+        "src/app/AppShell.tsx",
+        "src/app/AppShellV2.tsx",
+        "src/app/useRevisionedConfigMutation.ts"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-frontend.md",
+        "docs/architecture/arc42-lean.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0005-revisioned-atomic-local-storage.md"
+      ],
+      "changeTriggers": [
+        "全局状态、配置 revision 或通知流变化"
+      ],
+      "owner": "frontend-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "frontend.features",
+        "frontend.ipc",
+        "frontend.presentation"
+      ],
+      "publicContracts": [
+        "voice_state_changed event",
+        "pending_outputs_changed event",
+        "AppConfig revision snapshot"
+      ]
+    },
+    {
+      "id": "frontend.features",
+      "name": "Feature modules",
+      "kind": "component-group",
+      "source": [
+        "src/features"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-frontend.md",
+        "docs/architecture/code-map.md"
+      ],
+      "adrs": [],
+      "changeTriggers": [
+        "功能模块边界或 feature-owned state 变化"
+      ],
+      "owner": "frontend-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "frontend.ipc"
+      ],
+      "publicContracts": [
+        "Feature-owned loading, notice, form and editing state"
+      ]
+    },
+    {
+      "id": "frontend.presentation",
+      "name": "Presentation and visual field",
+      "kind": "component-group",
+      "source": [
+        "src/styles.css",
+        "src/styles-v2.css",
+        "src/ZephyrAsciiField.tsx"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-frontend.md",
+        "docs/architecture/code-map.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0007-architecture-docs-as-code.md"
+      ],
+      "changeTriggers": [
+        "共享样式、视觉 bundle、Three.js 懒加载或主界面表现边界变化"
+      ],
+      "owner": "frontend-maintainers",
+      "status": "active",
+      "dependsOn": [],
+      "publicContracts": [
+        "Shared application CSS class contract",
+        "Lazy ZephyrAsciiField Three.js bundle"
+      ]
+    },
+    {
+      "id": "frontend.overlay",
+      "name": "Preinput overlay",
+      "kind": "component",
+      "source": [
+        "src/preinput/PreInputOverlay.tsx"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-frontend.md",
+        "docs/architecture/runtime-views.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md"
+      ],
+      "changeTriggers": [
+        "overlay payload、事件定向或窗口能力变化"
+      ],
+      "owner": "frontend-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "frontend.ipc"
+      ],
+      "publicContracts": [
+        "PreInputPayload sessionId and seq ordering",
+        "Targeted preinput overlay events"
+      ]
+    },
+    {
+      "id": "frontend.ipc",
+      "name": "Typed IPC client",
+      "kind": "component",
+      "source": [
+        "src/ipc/client.ts",
+        "src/domain.ts",
+        "src/security-model.ts"
+      ],
+      "docs": [
+        "docs/architecture/c4-container.md",
+        "docs/architecture/c4-components-frontend.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md"
+      ],
+      "changeTriggers": [
+        "command、DTO、错误结构或 capability 变化"
+      ],
+      "owner": "frontend-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "backend.commands"
+      ],
+      "publicContracts": [
+        "Typed config/history/hotword/pending/shortcut/provider/session APIs",
+        "camelCase invoke arguments and stable DTOs"
+      ]
+    },
+    {
+      "id": "backend.bootstrap",
+      "name": "Tauri bootstrap",
+      "kind": "component",
+      "source": [
+        "src-tauri/src/lib.rs",
+        "src-tauri/src/runtime_metrics.rs",
+        "src-tauri/src/platform/tray.rs",
+        "src-tauri/tauri.conf.json",
+        "src-tauri/src/main.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-container.md",
+        "docs/architecture/c4-components-backend.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md"
+      ],
+      "changeTriggers": [
+        "进程装配、managed state、窗口、托盘或 handler 注册变化"
+      ],
+      "owner": "core-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "backend.services",
+        "backend.shortcut",
+        "backend.voice-controller",
+        "platform.windows"
+      ],
+      "publicContracts": [
+        "Tauri managed state",
+        "Tauri invoke handler registry",
+        "Application setup and exit cleanup"
+      ]
+    },
+    {
+      "id": "backend.commands",
+      "name": "Thin IPC commands",
+      "kind": "component-group",
+      "source": [
+        "src-tauri/src/commands",
+        "src-tauri/src/command_error.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-backend.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md"
+      ],
+      "changeTriggers": [
+        "command 名称、参数、窗口权限或错误映射变化"
+      ],
+      "owner": "core-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "backend.services",
+        "backend.voice-controller",
+        "backend.incident-vault"
+      ],
+      "publicContracts": [
+        "Stable Tauri command names and arguments",
+        "CommandError { code, message, details }",
+        "main/preinput window label authorization"
+      ]
+    },
+    {
+      "id": "backend.services",
+      "name": "AppServices",
+      "kind": "component",
+      "source": [
+        "src-tauri/src/services.rs",
+        "src-tauri/src/voice_input_service.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-backend.md",
+        "docs/architecture/arc42-lean.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0004-trust-before-credentials.md",
+        "docs/architecture/adr/0005-revisioned-atomic-local-storage.md"
+      ],
+      "changeTriggers": [
+        "服务所有权、语音输入协调、配置快照、provider 构造或凭据读取顺序变化"
+      ],
+      "owner": "core-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "backend.repositories",
+        "backend.incident-vault",
+        "external.asr",
+        "external.hotword-agent",
+        "platform.windows"
+      ],
+      "publicContracts": [
+        "AppServices",
+        "VoiceInputService command orchestration",
+        "ConfigService revision CAS",
+        "ProviderService trust-before-credential construction"
+      ]
+    },
+    {
+      "id": "backend.voice-controller",
+      "name": "VoiceSessionController",
+      "kind": "component",
+      "source": [
+        "src-tauri/src/voice_controller.rs",
+        "src-tauri/src/state.rs",
+        "src-tauri/src/session.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-backend.md",
+        "docs/architecture/runtime-views.md",
+        "docs/architecture/arc42-lean.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0002-single-owner-bounded-voice-session.md",
+        "docs/architecture/adr/0003-delivery-commit-point-and-pending-output.md"
+      ],
+      "changeTriggers": [
+        "会话事件、状态、取消、deadline、finalize 或所有权变化"
+      ],
+      "owner": "voice-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "backend.streaming",
+        "backend.delivery",
+        "backend.services",
+        "backend.incident-vault",
+        "platform.windows"
+      ],
+      "publicContracts": [
+        "SessionEvent",
+        "VoiceStatePayload",
+        "SessionMetrics",
+        "single active session ownership"
+      ]
+    },
+    {
+      "id": "backend.streaming",
+      "name": "Streaming pipeline",
+      "kind": "component-group",
+      "source": [
+        "src-tauri/src/streaming_pipeline.rs",
+        "src-tauri/src/audio.rs",
+        "src-tauri/src/provider.rs",
+        "src-tauri/src/provider_model.rs",
+        "src-tauri/src/provider/volcengine.rs",
+        "src-tauri/src/preview.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-backend.md",
+        "docs/architecture/runtime-views.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0002-single-owner-bounded-voice-session.md",
+        "docs/architecture/adr/0004-trust-before-credentials.md"
+      ],
+      "changeTriggers": [
+        "音频队列、ASR 协议、preview、背压或 overflow 变化"
+      ],
+      "owner": "voice-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "backend.services",
+        "external.asr",
+        "platform.windows"
+      ],
+      "publicContracts": [
+        "StreamingTranscriptionProvider",
+        "bounded PCM chunk channel",
+        "latest-value transcript preview"
+      ]
+    },
+    {
+      "id": "backend.delivery",
+      "name": "Delivery service",
+      "kind": "component-group",
+      "source": [
+        "src-tauri/src/delivery.rs",
+        "src-tauri/src/target.rs",
+        "src-tauri/src/inject.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-backend.md",
+        "docs/architecture/runtime-views.md",
+        "docs/architecture/arc42-lean.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0003-delivery-commit-point-and-pending-output.md",
+        "docs/architecture/adr/0006-unicode-injection-default.md"
+      ],
+      "changeTriggers": [
+        "目标验证、文本校验、注入、Pending 或副作用提交顺序变化"
+      ],
+      "owner": "voice-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "backend.services",
+        "backend.repositories",
+        "platform.windows"
+      ],
+      "publicContracts": [
+        "DeliveryService",
+        "PendingOutput DTO and lifecycle",
+        "successful injection commit point"
+      ]
+    },
+    {
+      "id": "backend.shortcut",
+      "name": "Shortcut adapter",
+      "kind": "component-group",
+      "source": [
+        "src-tauri/src/hotkey.rs",
+        "src-tauri/src/low_level_hook.rs",
+        "src-tauri/src/shortcut.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-backend.md",
+        "docs/architecture/runtime-views.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0002-single-owner-bounded-voice-session.md"
+      ],
+      "changeTriggers": [
+        "热键 ID、RegisterHotKey 预占、低级钩子过滤、替换事务或事件语义变化"
+      ],
+      "owner": "windows-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "backend.voice-controller",
+        "platform.windows"
+      ],
+      "publicContracts": [
+        "Normalized shortcut syntax",
+        "Pressed and Released SessionEvent translation",
+        "transactional shortcut replacement",
+        "best-effort WH_KEYBOARD_LL exclusive mode"
+      ]
+    },
+    {
+      "id": "backend.repositories",
+      "name": "Repositories and adapters",
+      "kind": "component-group",
+      "source": [
+        "src-tauri/src/repositories.rs",
+        "src-tauri/src/config.rs",
+        "src-tauri/src/history.rs",
+        "src-tauri/src/hotwords.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-backend.md",
+        "docs/architecture/arc42-lean.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0004-trust-before-credentials.md",
+        "docs/architecture/adr/0005-revisioned-atomic-local-storage.md"
+      ],
+      "changeTriggers": [
+        "repository 契约、持久化、凭据或 Agent 适配器变化"
+      ],
+      "owner": "data-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "storage.local",
+        "external.hotword-agent"
+      ],
+      "publicContracts": [
+        "ConfigRepository",
+        "CredentialStore",
+        "HistoryRepository",
+        "HotwordRepository",
+        "HotwordAgentClient"
+      ]
+    },
+    {
+      "id": "backend.incident-vault",
+      "name": "IncidentVault",
+      "kind": "component",
+      "source": [
+        "src-tauri/src/incident"
+      ],
+      "docs": [
+        "docs/architecture/c4-components-backend.md",
+        "docs/architecture/runtime-views.md",
+        "docs/architecture/incident-event-dictionary.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0008-incident-vault-isolated-recovery.md"
+      ],
+      "changeTriggers": [
+        "异常事件契约、授权、队列、恢复材料、保留、导出或完整性边界变化"
+      ],
+      "owner": "data-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "storage.local"
+      ],
+      "publicContracts": [
+        "IncidentSink::try_emit",
+        "IncidentHealth",
+        "IncidentService recovery queries",
+        "separate incident.db and artifact lifecycle"
+      ]
+    },
+    {
+      "id": "platform.windows",
+      "name": "Windows adapters",
+      "kind": "platform-adapter",
+      "source": [
+        "src-tauri/src/platform.rs",
+        "src-tauri/src/platform",
+        "src-tauri/src/overlay.rs",
+        "src-tauri/src/target.rs",
+        "src-tauri/src/inject.rs",
+        "src-tauri/src/hotkey.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-container.md",
+        "docs/architecture/runtime-views.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md",
+        "docs/architecture/adr/0006-unicode-injection-default.md"
+      ],
+      "changeTriggers": [
+        "Win32、OLE、托盘、原生确认或窗口身份行为变化"
+      ],
+      "owner": "windows-maintainers",
+      "status": "active",
+      "dependsOn": [],
+      "publicContracts": [
+        "NativeConfirmation",
+        "TargetWindowIdentity",
+        "TextInjector",
+        "tray and overlay window adapters"
+      ]
+    },
+    {
+      "id": "storage.local",
+      "name": "Local persistence",
+      "kind": "datastore-group",
+      "source": [
+        "src-tauri/src/config.rs",
+        "src-tauri/src/history.rs",
+        "src-tauri/src/hotwords.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-container.md",
+        "docs/architecture/arc42-lean.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0005-revisioned-atomic-local-storage.md"
+      ],
+      "changeTriggers": [
+        "config schema、备份恢复、SQLite schema/WAL 或 Keyring 变化"
+      ],
+      "owner": "data-maintainers",
+      "status": "active",
+      "dependsOn": [
+        "platform.windows"
+      ],
+      "publicContracts": [
+        "AppConfig schema version and revision",
+        "history.db SQLite schema",
+        "gy-typing Credential Manager service"
+      ]
+    },
+    {
+      "id": "external.asr",
+      "name": "Streaming ASR",
+      "kind": "external-system",
+      "source": [
+        "src-tauri/src/provider.rs",
+        "src-tauri/src/provider_model.rs",
+        "src-tauri/src/provider/volcengine.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-context.md",
+        "docs/architecture/c4-container.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0004-trust-before-credentials.md"
+      ],
+      "changeTriggers": [
+        "ASR endpoint、认证、WebSocket 协议或数据外发变化"
+      ],
+      "owner": "integration-maintainers",
+      "status": "external",
+      "dependsOn": [],
+      "publicContracts": [
+        "Volcengine-compatible WSS handshake and binary frames",
+        "partial and final transcript events"
+      ]
+    },
+    {
+      "id": "external.hotword-agent",
+      "name": "Hotword agent",
+      "kind": "external-system",
+      "source": [
+        "src-tauri/src/repositories.rs",
+        "src-tauri/src/hotwords.rs"
+      ],
+      "docs": [
+        "docs/architecture/c4-context.md",
+        "docs/architecture/c4-container.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0004-trust-before-credentials.md"
+      ],
+      "changeTriggers": [
+        "Agent endpoint、认证、请求内容或整理语义变化"
+      ],
+      "owner": "integration-maintainers",
+      "status": "external",
+      "dependsOn": [],
+      "publicContracts": [
+        "DeepSeek-compatible HTTPS chat completion",
+        "hotword organization response"
+      ]
+    }
+  ]
+}

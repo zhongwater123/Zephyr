@@ -1,16 +1,6 @@
-use serde::Serialize;
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 
-pub const DEFAULT_SHORTCUT: &str = "Ctrl+Alt+Space";
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ShortcutValidation {
-    pub shortcut: String,
-    pub normalized: String,
-    pub valid: bool,
-    pub available: bool,
-    pub reason: Option<String>,
-}
+pub const DEFAULT_SHORTCUT: &str = "LeftCtrl+LeftShift+Space";
 
 #[derive(Debug, Clone)]
 pub struct ParsedShortcut {
@@ -89,26 +79,6 @@ pub fn default_shortcut() -> ParsedShortcut {
     parse_shortcut(DEFAULT_SHORTCUT).expect("default shortcut must be valid")
 }
 
-pub fn validation_error(input: &str, error: ShortcutParseError) -> ShortcutValidation {
-    ShortcutValidation {
-        shortcut: input.to_string(),
-        normalized: String::new(),
-        valid: false,
-        available: false,
-        reason: Some(error.message()),
-    }
-}
-
-pub fn validation_success(input: &str, normalized: String, available: bool, reason: Option<String>) -> ShortcutValidation {
-    ShortcutValidation {
-        shortcut: input.to_string(),
-        normalized,
-        valid: true,
-        available,
-        reason,
-    }
-}
-
 fn normalize_parts(mods: Modifiers, key_label: &str) -> String {
     let mut parts = Vec::new();
     if mods.contains(Modifiers::CONTROL) {
@@ -133,7 +103,19 @@ fn reject_reserved(mods: Modifiers, key: Code, normalized: &str) -> Result<(), S
     let shift = mods.contains(Modifiers::SHIFT);
     let win = mods.contains(Modifiers::SUPER);
 
-    if alt && !ctrl && !shift && !win && key == Code::Tab {
+    if key == Code::F12 {
+        return Err(ShortcutParseError::Reserved(
+            "F12 由 Windows 调试器永久保留，不能注册为全局快捷键。".to_string(),
+        ));
+    }
+
+    if win {
+        return Err(ShortcutParseError::Reserved(format!(
+            "{normalized} 包含 Windows 键；此类组合由操作系统保留。"
+        )));
+    }
+
+    if alt && !ctrl && !shift && key == Code::Tab {
         return Err(ShortcutParseError::Reserved(
             "Alt+Tab 是系统切换窗口快捷键，不能作为语音输入快捷键。".to_string(),
         ));
@@ -142,11 +124,6 @@ fn reject_reserved(mods: Modifiers, key: Code, normalized: &str) -> Result<(), S
         return Err(ShortcutParseError::Reserved(
             "Ctrl+Alt+Delete 是系统安全快捷键，不能覆盖。".to_string(),
         ));
-    }
-    if win && !ctrl && !alt && !shift && matches!(key, Code::KeyL | Code::KeyD | Code::Tab) {
-        return Err(ShortcutParseError::Reserved(format!(
-            "{normalized} 是 Windows 系统保留快捷键。"
-        )));
     }
     Ok(())
 }
@@ -272,23 +249,55 @@ mod tests {
 
     #[test]
     fn normalizes_common_shortcuts() {
-        assert_eq!(parse_shortcut("ctrl + alt + space").unwrap().normalized, "Ctrl+Alt+Space");
+        assert_eq!(
+            parse_shortcut("ctrl + alt + space").unwrap().normalized,
+            "Ctrl+Alt+Space"
+        );
         assert_eq!(parse_shortcut("Ctrl+V").unwrap().normalized, "Ctrl+V");
         assert_eq!(parse_shortcut("Alt+Space").unwrap().normalized, "Alt+Space");
-        assert_eq!(parse_shortcut("Ctrl+Shift+V").unwrap().normalized, "Ctrl+Shift+V");
-        assert_eq!(parse_shortcut("Alt+Shift+Space").unwrap().normalized, "Alt+Shift+Space");
+        assert_eq!(
+            parse_shortcut("Ctrl+Shift+V").unwrap().normalized,
+            "Ctrl+Shift+V"
+        );
+        assert_eq!(
+            parse_shortcut("Alt+Shift+Space").unwrap().normalized,
+            "Alt+Shift+Space"
+        );
     }
 
     #[test]
     fn rejects_single_keys_and_modifier_only_shortcuts() {
-        assert_eq!(parse_shortcut("A").unwrap_err(), ShortcutParseError::MissingModifier);
-        assert_eq!(parse_shortcut("Ctrl+Alt").unwrap_err(), ShortcutParseError::MissingMainKey);
+        assert_eq!(
+            parse_shortcut("A").unwrap_err(),
+            ShortcutParseError::MissingModifier
+        );
+        assert_eq!(
+            parse_shortcut("Ctrl+Alt").unwrap_err(),
+            ShortcutParseError::MissingMainKey
+        );
     }
 
     #[test]
     fn rejects_system_reserved_shortcuts() {
-        assert!(matches!(parse_shortcut("Alt+Tab"), Err(ShortcutParseError::Reserved(_))));
-        assert!(matches!(parse_shortcut("Ctrl+Alt+Delete"), Err(ShortcutParseError::Reserved(_))));
-        assert!(matches!(parse_shortcut("Win+L"), Err(ShortcutParseError::Reserved(_))));
+        assert!(matches!(
+            parse_shortcut("Alt+Tab"),
+            Err(ShortcutParseError::Reserved(_))
+        ));
+        assert!(matches!(
+            parse_shortcut("Ctrl+Alt+Delete"),
+            Err(ShortcutParseError::Reserved(_))
+        ));
+        assert!(matches!(
+            parse_shortcut("Win+L"),
+            Err(ShortcutParseError::Reserved(_))
+        ));
+        assert!(matches!(
+            parse_shortcut("Win+Shift+K"),
+            Err(ShortcutParseError::Reserved(_))
+        ));
+        assert!(matches!(
+            parse_shortcut("Ctrl+F12"),
+            Err(ShortcutParseError::Reserved(_))
+        ));
     }
 }

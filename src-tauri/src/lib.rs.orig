@@ -1,0 +1,301 @@
+mod audio;
+mod command_error;
+mod commands;
+mod config;
+mod delivery;
+mod history;
+mod physical_shortcut;
+mod hotwords;
+mod incident;
+mod inject;
+mod shortcut_manager;
+mod overlay;
+mod platform;
+mod preview;
+mod provider;
+mod provider_model;
+mod repositories;
+mod runtime_metrics;
+mod services;
+mod session;
+mod windows_keyboard;
+mod state;
+mod streaming_pipeline;
+mod target;
+mod voice_controller;
+mod voice_input_service;
+
+use audio::Recorder;
+use config::{AppConfig, ConfigRecovery};
+use inject::{TextInjector, UnicodeTextInjector};
+use preview::TranscriptPreviewState;
+use provider::{ProviderError, StreamingTranscriptionProvider};
+use serde::Serialize;
+use state::AppStateMachine;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use tauri::Manager;
+use tokio::sync::Notify;
+
+pub type SharedRuntime = Arc<Mutex<VoiceRuntime>>;
+#[derive(Debug, Default)]
+pub struct SessionCancellation {
+    cancelled: AtomicBool,
+    notify: Notify,
+}
+
+impl SessionCancellation {
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    pub async fn cancelled(&self) {
+        let notified = self.notify.notified();
+        if self.is_cancelled() {
+            return;
+        }
+        notified.await;
+    }
+}
+
+pub struct ActiveSession {
+    pub session_id: u64,
+    pub attempt_id: String,
+    pub provider_task: tauri::async_runtime::JoinHandle<()>,
+    pub provider_result: tokio::sync::oneshot::Receiver<Result<String, ProviderError>>,
+    pub preview_state: Arc<tokio::sync::Mutex<TranscriptPreviewState>>,
+    pub app_context: history::AppContext,
+    pub target: target::TargetWindowIdentity,
+    pub cancellation: Arc<SessionCancellation>,
+    pub deadline_cancellation: Arc<SessionCancellation>,
+    pub audio_queue: Arc<audio::AudioQueueMonitor>,
+    pub started_at: Instant,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionMetrics {
+    pub session_id: u64,
+    pub audio_packets: u64,
+    pub queue_high_watermark: usize,
+    pub overflow: bool,
+    pub recording_duration_ms: u64,
+    pub cancel_reason: Option<String>,
+    pub final_state: String,
+}
+
+pub struct VoiceRuntime {
+    pub machine: AppStateMachine,
+    pub recorder: Recorder,
+    pub provider: Arc<dyn StreamingTranscriptionProvider>,
+    pub injector: Arc<dyn TextInjector>,
+    pub sessions: session::SessionCoordinator,
+    pub shortcut_registration_error: Option<String>,
+}
+
+impl VoiceRuntime {
+    fn new(enabled: bool, provider: Arc<dyn StreamingTranscriptionProvider>) -> Self {
+        let mut machine = AppStateMachine::new();
+        machine.set_enabled(enabled);
+        let recorder = Recorder::new();
+        Self {
+            machine,
+            recorder,
+            provider,
+            injector: Arc::new(UnicodeTextInjector),
+            sessions: session::SessionCoordinator::default(),
+            shortcut_registration_error: None,
+        }
+    }
+
+    pub fn voice_state_payload(&self) -> state::VoiceStatePayload {
+        if let Some(message) = &self.shortcut_registration_error {
+            return state::VoiceStatePayload {
+                state: state::VoiceState::Error,
+                message: message.clone(),
+                elapsed_ms: None,
+            };
+        }
+        let state = self.machine.state().clone();
+        let message = match state {
+            state::VoiceState::Idle => "准备就绪",
+            state::VoiceState::Recording => "正在听",
+            state::VoiceState::Transcribing => "识别中",
+            state::VoiceState::Pasting => "正在输入",
+            state::VoiceState::Disabled => "已暂停",
+            state::VoiceState::Error => "语音输入发生错误",
+        };
+        state::VoiceStatePayload {
+            state,
+            message: message.to_string(),
+            elapsed_ms: None,
+        }
+    }
+}
+
+pub fn run() {
+    install_tls_provider();
+    runtime_metrics::install();
+
+    let loaded = config::load_config_with_status().unwrap_or_else(|error| {
+        log::error!("failed to load configuration safely: {error}");
+        let config = AppConfig {
+            enabled: false,
+            ..AppConfig::default()
+        };
+        config::LoadedConfig {
+            config,
+            recovery: ConfigRecovery::DisabledDefaults,
+        }
+    });
+    let app_services = services::AppServices::production(loaded.clone())
+        .expect("failed to initialize application services");
+    let runtime: SharedRuntime = Arc::new(Mutex::new(VoiceRuntime::new(
+        loaded.config.enabled,
+        app_services.provider.build(&loaded.config),
+    )));
+    let tray_config = app_services.config.clone();
+    let voice_services = app_services.clone();
+    let shutdown_incidents = app_services.incidents.clone();
+
+    let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Info)
+                .level_for("rustls", log::LevelFilter::Warn)
+                .level_for("tungstenite", log::LevelFilter::Warn)
+                .level_for("tao", log::LevelFilter::Warn)
+                .build(),
+        )
+        .manage(runtime.clone())
+        .manage(app_services)
+        .invoke_handler(tauri::generate_handler![
+            commands::config::get_config,
+            commands::asr::get_asr_option_pool,
+            commands::asr::set_asr_option,
+            commands::config::get_config_status,
+            commands::session::get_preinput_payload,
+            commands::session::get_voice_state,
+            commands::session::list_pending_outputs,
+            commands::session::get_session_metrics,
+            commands::session::deliver_pending_output,
+            commands::session::copy_pending_output,
+            commands::session::discard_pending_output,
+            commands::config::authorize_endpoint,
+            commands::config::revoke_endpoint,
+            commands::config::set_clipboard_compatibility,
+            commands::history::list_history,
+            commands::history::update_history,
+            commands::history::delete_history,
+            commands::history::clear_history,
+            commands::history::copy_history_text,
+            commands::incident::list_incidents,
+            commands::incident::get_incident_health,
+            commands::incident::copy_incident_text,
+            commands::incident::get_incident_audio,
+            commands::incident::export_incident_report,
+            commands::incident::save_incident_audio,
+            commands::incident::save_incident_report,
+            commands::incident::delete_incident,
+            commands::incident::set_incident_pinned,
+            commands::incident::record_frontend_incident,
+            commands::shortcut::prepare_shortcut,
+            commands::shortcut::commit_shortcut,
+            commands::shortcut::cancel_shortcut_preview,
+            commands::shortcut::get_shortcut_preview,
+            commands::shortcut::get_shortcut_status,
+            commands::hotwords::get_hotword_state,
+            commands::hotwords::save_hotword_settings,
+            commands::hotwords::save_manual_hotwords,
+            commands::hotwords::add_hotword,
+            commands::hotwords::update_hotword,
+            commands::hotwords::delete_hotword,
+            commands::hotwords::organize_hotwords_now,
+            commands::hotwords::test_hotword_agent,
+            commands::hotwords::delete_agent_hotword,
+            commands::hotwords::promote_agent_hotword,
+            commands::hotwords::update_profile_context,
+            commands::hotwords::update_app_context,
+            commands::hotwords::delete_app_context,
+            commands::config::save_config,
+            commands::config::set_enabled,
+            commands::config::set_history_enabled,
+            commands::config::set_incident_recovery_enabled,
+            commands::provider::test_provider
+        ])
+        .setup(move |app| {
+            let (controller, shortcut_manager) =
+                hotkey::ShortcutManager::initialize(app, runtime.clone(), voice_services.clone())?;
+            let voice_input = voice_input_service::VoiceInputService::new(
+                runtime.clone(),
+                voice_services.config.clone(),
+                voice_services.provider.clone(),
+                controller.clone(),
+                shortcut_manager.clone(),
+            );
+            app.manage(controller.clone());
+            app.manage(shortcut_manager);
+            app.manage(voice_input);
+            overlay::setup_preinput_window(app.handle())?;
+            platform::tray::setup(
+                app.handle(),
+                runtime.clone(),
+                tray_config.clone(),
+                controller,
+            )?;
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+    app.run(move |app_handle, event| match event {
+        tauri::RunEvent::Resumed => {
+            if let Some(manager) = app_handle.try_state::<Arc<hotkey::ShortcutManager>>() {
+                manager.resume();
+            }
+        }
+        tauri::RunEvent::Exit => {
+            if let Some(manager) = app_handle.try_state::<Arc<hotkey::ShortcutManager>>() {
+                manager.shutdown();
+            }
+            shutdown_incidents.shutdown();
+        }
+        _ => {}
+    });
+}
+
+fn install_tls_provider() {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::time::{timeout, Duration};
+
+    #[tokio::test]
+    async fn session_cancellation_wakes_waiters_and_is_sticky() {
+        let cancellation = Arc::new(SessionCancellation::default());
+        let waiter_cancellation = cancellation.clone();
+        let waiter = tokio::spawn(async move {
+            waiter_cancellation.cancelled().await;
+        });
+
+        tokio::task::yield_now().await;
+        cancellation.cancel();
+
+        timeout(Duration::from_millis(100), waiter)
+            .await
+            .expect("cancellation waiter should wake")
+            .expect("cancellation waiter should not panic");
+        timeout(Duration::from_millis(100), cancellation.cancelled())
+            .await
+            .expect("late waiter should observe prior cancellation");
+    }
+}

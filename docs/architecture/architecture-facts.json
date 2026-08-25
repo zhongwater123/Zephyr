@@ -1,0 +1,211 @@
+{
+  "schemaVersion": 1,
+  "facts": [
+    {
+      "id": "voice.control-queue-capacity",
+      "value": 16,
+      "display": "16",
+      "unit": "events",
+      "description": "VoiceSessionController 控制通道容量",
+      "source": {
+        "path": "src-tauri/src/voice_controller.rs",
+        "symbol": "CONTROL_QUEUE_CAPACITY"
+      },
+      "mentions": [
+        { "path": "docs/architecture/arc42-lean.md", "token": "容量 {value}" },
+        { "path": "docs/architecture/c4-components-backend.md", "token": "容量 {value}" },
+        { "path": "docs/architecture/code-map.md", "token": "容量 {value}" },
+        { "path": "docs/architecture/adr/0002-single-owner-bounded-voice-session.md", "token": "容量 {value}" }
+      ]
+    },
+    {
+      "id": "voice.audio-queue-capacity",
+      "value": 32,
+      "display": "32",
+      "unit": "chunks",
+      "description": "单会话 PCM 音频队列容量",
+      "source": {
+        "path": "src-tauri/src/voice_controller.rs",
+        "symbol": "AUDIO_QUEUE_CAPACITY"
+      },
+      "mentions": [
+        { "path": "docs/architecture/arc42-lean.md", "token": "容量 {value}" },
+        { "path": "docs/architecture/c4-components-backend.md", "token": "容量 {value}" },
+        { "path": "docs/architecture/runtime-views.md", "token": "capacity={value}" },
+        { "path": "docs/architecture/adr/0002-single-owner-bounded-voice-session.md", "token": "容量 {value}" }
+      ]
+    },
+    {
+      "id": "voice.recording-deadline-seconds",
+      "value": 120,
+      "display": "120 秒",
+      "unit": "seconds",
+      "description": "单次录音硬上限",
+      "source": {
+        "path": "src-tauri/src/voice_controller.rs",
+        "symbol": "MAX_RECORDING_SECS"
+      },
+      "mentions": [
+        { "path": "docs/architecture/arc42-lean.md", "token": "{display}" },
+        { "path": "docs/architecture/runtime-views.md", "token": "{display}" },
+        { "path": "docs/architecture/adr/0002-single-owner-bounded-voice-session.md", "token": "{display}" }
+      ]
+    },
+    {
+      "id": "voice.stream-chunk-milliseconds",
+      "value": 200,
+      "display": "200ms",
+      "unit": "milliseconds",
+      "description": "录音 PCM chunk 目标时长",
+      "source": {
+        "path": "src-tauri/src/voice_controller.rs",
+        "symbol": "STREAM_CHUNK_MS"
+      },
+      "mentions": [
+        { "path": "docs/architecture/c4-components-backend.md", "token": "{display}" },
+        { "path": "docs/architecture/runtime-views.md", "token": "{display}" }
+      ]
+    },
+    {
+      "id": "voice.final-transcript-timeout-seconds",
+      "value": 25,
+      "display": "25 秒",
+      "unit": "seconds",
+      "description": "已有 partial 时等待 final transcript 的超时",
+      "source": {
+        "path": "src-tauri/src/voice_controller.rs",
+        "symbol": "FINAL_TRANSCRIPT_TIMEOUT_SECS"
+      },
+      "mentions": []
+    },
+    {
+      "id": "voice.empty-transcript-timeout-milliseconds",
+      "value": 800,
+      "display": "800ms",
+      "unit": "milliseconds",
+      "description": "没有 partial 时初次等待 provider 结果的短超时",
+      "source": {
+        "path": "src-tauri/src/voice_controller.rs",
+        "symbol": "EMPTY_TRANSCRIPT_TIMEOUT_MS"
+      },
+      "mentions": []
+    },
+    {
+      "id": "delivery.max-output-characters",
+      "value": 8000,
+      "display": "8000",
+      "unit": "unicode-characters",
+      "description": "自动交付文本最大 Unicode 字符数",
+      "source": {
+        "path": "src-tauri/src/target.rs",
+        "symbol": "MAX_OUTPUT_CHARACTERS"
+      },
+      "mentions": [
+        { "path": "docs/architecture/arc42-lean.md", "token": "{value} 个 Unicode 字符" }
+      ]
+    },
+    {
+      "id": "delivery.max-pending-outputs",
+      "value": 5,
+      "display": "5",
+      "unit": "outputs",
+      "description": "内存 PendingOutput 队列最大条数",
+      "source": {
+        "path": "src-tauri/src/target.rs",
+        "symbol": "MAX_PENDING_OUTPUTS"
+      },
+      "mentions": [
+        { "path": "docs/architecture/arc42-lean.md", "token": "{value} 条" },
+        { "path": "docs/architecture/c4-components-backend.md", "token": "{value} 条" },
+        { "path": "docs/architecture/runtime-views.md", "token": "{value} 条" },
+        { "path": "docs/architecture/adr/0003-delivery-commit-point-and-pending-output.md", "token": "{value} 条" }
+      ]
+    },
+    {
+      "id": "delivery.pending-output-ttl-seconds",
+      "value": 600,
+      "display": "10 分钟",
+      "unit": "seconds",
+      "description": "PendingOutput 内存保留时间",
+      "source": {
+        "path": "src-tauri/src/target.rs",
+        "symbol": "PENDING_OUTPUT_TTL",
+        "wrapper": "Duration::from_secs"
+      },
+      "mentions": [
+        { "path": "docs/architecture/arc42-lean.md", "token": "TTL {display}" },
+        { "path": "docs/architecture/c4-components-backend.md", "token": "TTL {display}" },
+        { "path": "docs/architecture/runtime-views.md", "token": "TTL {display}" },
+        { "path": "docs/architecture/adr/0003-delivery-commit-point-and-pending-output.md", "token": "TTL {display}" }
+      ]
+    },
+    {
+      "id": "provider.max-websocket-frame-bytes",
+      "value": 1048576,
+      "display": "1 MiB",
+      "unit": "bytes",
+      "description": "原始 WebSocket frame payload 上限",
+      "source": {
+        "path": "src-tauri/src/provider/volcengine.rs",
+        "symbol": "MAX_WS_FRAME_PAYLOAD"
+      },
+      "mentions": []
+    },
+    {
+      "id": "provider.raw-frame-queue-capacity",
+      "value": 4,
+      "display": "4",
+      "unit": "frames",
+      "description": "WebSocket reader 到解析器的有界原始帧通道容量",
+      "source": {
+        "path": "src-tauri/src/provider/volcengine.rs",
+        "symbol": "RAW_WS_FRAME_QUEUE_CAPACITY"
+      },
+      "mentions": [
+        { "path": "docs/architecture/arc42-lean.md", "token": "容量 {value}" }
+      ]
+    },
+    {
+      "id": "incident.control-queue-capacity",
+      "value": 64,
+      "display": "64",
+      "unit": "events",
+      "description": "IncidentVault 语义控制事件无锁队列容量",
+      "source": {
+        "path": "src-tauri/src/incident/mod.rs",
+        "symbol": "CONTROL_QUEUE_CAPACITY"
+      },
+      "mentions": [
+        { "path": "docs/architecture/c4-components-backend.md", "token": "capacity {value} control" }
+      ]
+    },
+    {
+      "id": "incident.audio-queue-capacity",
+      "value": 64,
+      "display": "64",
+      "unit": "chunks",
+      "description": "IncidentVault PCM 音频无锁队列容量",
+      "source": {
+        "path": "src-tauri/src/incident/mod.rs",
+        "symbol": "AUDIO_QUEUE_CAPACITY"
+      },
+      "mentions": [
+        { "path": "docs/architecture/c4-components-backend.md", "token": "capacity {value} audio" }
+      ]
+    },
+    {
+      "id": "incident.audio-gap-queue-capacity",
+      "value": 64,
+      "display": "64",
+      "unit": "markers",
+      "description": "IncidentVault 音频缺口标记无锁队列容量",
+      "source": {
+        "path": "src-tauri/src/incident/mod.rs",
+        "symbol": "AUDIO_GAP_QUEUE_CAPACITY"
+      },
+      "mentions": [
+        { "path": "docs/architecture/c4-components-backend.md", "token": "capacity {value} lock-free gap-marker" }
+      ]
+    }
+  ]
+}

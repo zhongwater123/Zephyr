@@ -1,0 +1,165 @@
+use crate::config::{self, AppConfig, CredentialUpdates, InjectionStrategy};
+use crate::shortcut_manager::ShortcutManager;
+use crate::services::{ConfigService, ConfigServiceError, ProviderService};
+use crate::voice_controller::VoiceSessionController;
+use crate::SharedRuntime;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter};
+
+#[derive(Debug)]
+pub enum VoiceInputServiceError {
+    Config(ConfigServiceError),
+    NativeConfirmationRequired,
+    RuntimeLock(String),
+    ShortcutState(String),
+    EventEmit(String),
+}
+
+impl From<ConfigServiceError> for VoiceInputServiceError {
+    fn from(error: ConfigServiceError) -> Self {
+        Self::Config(error)
+    }
+}
+
+#[derive(Clone)]
+pub struct VoiceInputService {
+    runtime: SharedRuntime,
+    config: Arc<ConfigService>,
+    provider: Arc<ProviderService>,
+    controller: VoiceSessionController,
+    shortcut: Arc<ShortcutManager>,
+}
+
+impl VoiceInputService {
+    pub fn new(
+        runtime: SharedRuntime,
+        config: Arc<ConfigService>,
+        provider: Arc<ProviderService>,
+        controller: VoiceSessionController,
+        shortcut: Arc<ShortcutManager>,
+    ) -> Self {
+        Self {
+            runtime,
+            config,
+            provider,
+            controller,
+            shortcut,
+        }
+    }
+
+    pub fn save_config(
+        &self,
+        app: &AppHandle,
+        mut next: AppConfig,
+        expected_revision: u64,
+        hotword_agent_api_key: Option<String>,
+    ) -> Result<AppConfig, VoiceInputServiceError> {
+        let current = self.config.snapshot();
+        if current.revision != expected_revision {
+            return Err(ConfigServiceError::Conflict(Box::new(current)).into());
+        }
+        if introduces_clipboard_compatibility(&current, &next) {
+            return Err(VoiceInputServiceError::NativeConfirmationRequired);
+        }
+
+        next.schema_version = config::CURRENT_SCHEMA_VERSION;
+        next.asr = current.asr.clone();
+        next.shortcut = current.shortcut.clone();
+        next.shortcut_binding = current.shortcut_binding.clone();
+        next.revision = current.revision.saturating_add(1);
+        let updates = CredentialUpdates {
+            hotword_agent_api_key: hotword_agent_api_key.filter(|key| !key.trim().is_empty()),
+            ..CredentialUpdates::default()
+        };
+        let committed = self.config.commit(expected_revision, next, &updates)?;
+
+        if !committed.enabled {
+            self.controller.request_cancel(app);
+        }
+        {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .map_err(|error| VoiceInputServiceError::RuntimeLock(error.to_string()))?;
+            if runtime.machine.is_enabled() != committed.enabled {
+                runtime.machine.set_enabled(committed.enabled);
+            }
+            runtime.provider = self.provider.build(&committed);
+        }
+        if current.enabled != committed.enabled {
+            self.shortcut
+                .set_enabled(committed.enabled)
+                .map_err(VoiceInputServiceError::ShortcutState)?;
+        }
+        Ok(committed)
+    }
+
+    pub fn set_enabled(
+        &self,
+        app: &AppHandle,
+        enabled: bool,
+        expected_revision: u64,
+    ) -> Result<u64, VoiceInputServiceError> {
+        let mut next = self.config.snapshot();
+        if next.revision != expected_revision {
+            return Err(ConfigServiceError::Conflict(Box::new(next)).into());
+        }
+        next.enabled = enabled;
+        next.revision = next.revision.saturating_add(1);
+        let revision = next.revision;
+        self.config.commit_config(expected_revision, next)?;
+
+        if !enabled {
+            self.controller.request_cancel(app);
+        }
+        {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .map_err(|error| VoiceInputServiceError::RuntimeLock(error.to_string()))?;
+            runtime.machine.set_enabled(enabled);
+        }
+        let shortcut_result = self.shortcut.set_enabled(enabled);
+        let payload = self
+            .runtime
+            .lock()
+            .map_err(|error| VoiceInputServiceError::RuntimeLock(error.to_string()))?
+            .voice_state_payload();
+        app.emit("voice_state_changed", payload)
+            .map_err(|error| VoiceInputServiceError::EventEmit(error.to_string()))?;
+        shortcut_result.map_err(VoiceInputServiceError::ShortcutState)?;
+        Ok(revision)
+    }
+}
+
+fn introduces_clipboard_compatibility(current: &AppConfig, next: &AppConfig) -> bool {
+    next.injection_overrides.iter().any(|candidate| {
+        candidate.strategy == InjectionStrategy::ClipboardCompatibility
+            && !current.injection_overrides.iter().any(|existing| {
+                existing.strategy == InjectionStrategy::ClipboardCompatibility
+                    && existing
+                        .executable_name
+                        .eq_ignore_ascii_case(&candidate.executable_name)
+            })
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::InjectionOverride;
+
+    #[test]
+    fn detects_only_new_clipboard_compatibility_grants() {
+        let current = AppConfig::default();
+        let mut next = current.clone();
+        next.injection_overrides.push(InjectionOverride {
+            executable_name: "legacy.exe".to_string(),
+            strategy: InjectionStrategy::ClipboardCompatibility,
+        });
+        assert!(introduces_clipboard_compatibility(&current, &next));
+
+        let unchanged = next.clone();
+        assert!(!introduces_clipboard_compatibility(&next, &unchanged));
+    }
+}
