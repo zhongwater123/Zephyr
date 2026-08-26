@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://gy-typing.local/schemas/feature-dossier.schema.json",
+  "title": "GY Typing Feature Dossier metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "featureId",
+    "specStatus",
+    "implementationStatus",
+    "validationStatus",
+    "components",
+    "decisions",
+    "validationSlices",
+    "evidence"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "featureId": { "type": "string", "pattern": "^FEAT-[A-Z0-9]+(?:-[A-Z0-9]+)*$" },
+    "specStatus": { "enum": ["draft", "confirmed", "superseded"] },
+    "implementationStatus": {
+      "enum": ["not_started", "in_progress", "implemented", "deprecated", "superseded"]
+    },
+    "validationStatus": { "enum": ["unverified", "partial", "validated", "invalidated"] },
+    "components": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$" }
+    },
+    "decisions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^ADR-[0-9]{4}$" }
+    },
+    "validationSlices": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "components"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^AC-[A-Z0-9]+(?:-[A-Z0-9]+)*$" },
+          "components": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$" }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "acceptanceIds",
+          "method",
+          "result",
+          "freshness",
+          "sourceRevision",
+          "worktreeState",
+          "environment",
+          "validatedAt"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^EV-[A-Z0-9]+(?:-[A-Z0-9]+)*$" },
+          "acceptanceIds": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^AC-[A-Z0-9]+(?:-[A-Z0-9]+)*$" }
+          },
+          "method": { "enum": ["automated", "manual", "historical_observation", "static_review"] },
+          "result": { "enum": ["pass", "fail", "partial"] },
+          "freshness": { "enum": ["current", "potentially_stale", "stale", "revalidated"] },
+          "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+          "worktreeState": { "enum": ["clean", "dirty", "unknown"] },
+          "changedPaths": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "buildId": { "type": "string", "minLength": 1 },
+          "artifactSha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "environment": { "type": "string", "minLength": 1 },
+          "validatedAt": { "type": "string", "format": "date" }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "specStatus": { "const": "confirmed" } } },
+      "then": { "properties": { "validationSlices": { "type": "array", "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "validationStatus": { "const": "validated" } } },
+      "then": { "properties": { "evidence": { "type": "array", "minItems": 1 } } }
+    }
+  ]
+}

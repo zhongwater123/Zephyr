@@ -1,3 +1,7 @@
+---
+{"documentType":"c4-view","viewStatus":"current"}
+---
+
 # C4 L1：系统上下文
 
 [component:system.zephyr] [component:external.asr] [component:external.hotword-agent] [component:platform.windows]

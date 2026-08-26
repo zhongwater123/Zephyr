@@ -19,6 +19,10 @@
 | `incident.audio-queue-capacity` [fact:incident.audio-queue-capacity] | 64 chunks | `incident/mod.rs::AUDIO_QUEUE_CAPACITY` | Vault 变慢时不得把背压传给 ASR |
 | `incident.audio-gap-queue-capacity` [fact:incident.audio-gap-queue-capacity] | 64 markers | `incident/mod.rs::AUDIO_GAP_QUEUE_CAPACITY` | 控制队列饱和时仍保留音频缺口完整性标记 |
 
+## 行为边界
+
+- `INV-SC-01`：设置页一旦在本地输入边界观察到按键，必须立即向用户反馈；该反馈不得依赖正式全局监听器的健康状态或异步后端往返。对应产品行为见 [FEAT-SHORTCUT-BINDING](../features/shortcut-binding.md)，决策依据见 [ADR-0010](adr/0010-separate-focused-shortcut-editing.md)。
+
 ## 更新规则
 
 1. 先修改代码与测试，再修改 `architecture-facts.json`。

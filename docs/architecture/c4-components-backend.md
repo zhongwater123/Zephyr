@@ -1,3 +1,7 @@
+---
+{"documentType":"c4-view","viewStatus":"current"}
+---
+
 # C4 L3：Rust 后端组件
 
 [component:backend.bootstrap] [component:backend.commands] [component:backend.services] [component:backend.voice-controller] [component:backend.streaming] [component:backend.delivery] [component:backend.shortcut] [component:backend.repositories] [component:backend.incident-vault]
@@ -10,7 +14,7 @@ flowchart TB
         bootstrap["Component<br/>Bootstrap + Platform Startup<br/><small>lib.rs, platform/tray.rs</small>"]
         commands["Component<br/>Thin IPC Commands<br/><small>commands/*, CommandError</small>"]
         services["Component<br/>Application Services<br/><small>VoiceInputService, ConfigService, ProviderService</small>"]
-        shortcut["Component<br/>Shortcut Manager<br/><small>physical scan code + WH_KEYBOARD_LL</small>"]
+        shortcut["Component<br/>Shortcut Manager<br/><small>binding transaction + runtime adapter</small>"]
         controller["Component<br/>VoiceSessionController<br/><small>bounded event loop, state, session</small>"]
         streaming["Component<br/>StreamingPipeline<br/><small>audio, provider, preview, overflow</small>"]
         delivery["Component<br/>DeliveryService<br/><small>target, text, inject, Pending, commit</small>"]
@@ -60,11 +64,11 @@ flowchart TB
 
 ### ShortcutManager
 
-`ShortcutManager` 以快捷键领域门闩串行化 edit、启停、resume 和 shutdown，并只维护一个 `ShortcutEditTransaction`。`begin_shortcut_edit` 校验 revision、保存旧配置事实并立即暂停运行时监听，不安装或重装 Hook；`commit_shortcut_edit` 重新执行权威物理键与 Windows 保留组合校验，在配置启用时强制确认 Hook generation，再切换运行时 binding、恢复监听并持久化。持久化或运行时步骤失败时按当前权威配置回滚；回滚失败才进入 runtime error。前端只接收 `shortcut_edit_interrupted`，已知业务失败通过 edit outcome 返回，不存在生命周期快照、候选事件或轮询。
+`ShortcutManager` 串行化快捷键 edit、启停、系统恢复和关闭，负责权威校验、配置事务、运行时绑定切换及失败回滚。有焦点的设置录入由前端 feature 负责；Manager 不生成逐键候选。
 
-设置界面的 `KeyboardEvent.code` 是换绑录入的唯一输入源，负责左右修饰键、实时键帽、AltGr 修正、200ms 纯修饰键和同步候选校验；后端不从 DOM 之外生成换绑候选。物理 binding 仍保持 `modifiers + trigger` 的 `scanCode + extended` 持久化结构，配置 schema 不变。
+`WindowsKeyboardEngine` 只负责应用运行期间的全局物理快捷键监听，并把已提交绑定的匹配结果转换为 `SessionEvent::Pressed/Released`。稳定职责边界见 [ADR-0010](adr/0010-separate-focused-shortcut-editing.md)。
 
-`WindowsKeyboardEngine` 只负责应用运行期间的全局物理快捷键，在专用消息线程安装 `WH_KEYBOARD_LL` 并把匹配结果转换为 `SessionEvent::Pressed/Released`。Hook 回调只更新原子状态并 `try_send`，不等待锁、不格式化、不访问磁盘也不发送 UI 事件。初次安装失败保留 degraded worker；commit、重新启用和系统 resume 通过 generation 回执强制重装，已退出的 Hook worker 可在进程内回收重启。引擎允许第三方注入事件，只过滤带应用专用 `dwExtraInfo` 标记的自身 `SendInput`；语音输入显式关闭时 Hook 保持安装但全量放行。
+Manager 事务、Windows Worker、generation 回执、失败回滚和诊断字段的完整说明见 [热键录入、换绑事务与 Windows 运行时链路](shortcut-editing.md)。
 
 ### StreamingPipeline
 

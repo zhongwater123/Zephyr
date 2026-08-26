@@ -1,3 +1,7 @@
+---
+{"documentType":"c4-view","viewStatus":"current"}
+---
+
 # C4 L2：容器
 
 [component:frontend.ipc] [component:backend.bootstrap] [component:storage.local] [component:external.asr] [component:external.hotword-agent] [component:platform.windows]

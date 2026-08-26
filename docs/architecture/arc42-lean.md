@@ -1,6 +1,6 @@
 # arc42-Lean：GY Typing 架构叙事
 
-本文采用 arc42 的 12 个主题，但保持 Lean：只记录理解、演进和评审当前系统所需的内容。结构事实由 C4 和代码地图承载，决策依据由 ADR 承载。
+本文采用 arc42 的 12 个主题，但保持 Lean：只记录理解、演进和评审当前系统所需的内容。源码与运行配置承载实现事实；Current C4、Runtime View、arc42 和代码地图是对事实的解释；Feature Dossier 规定用户行为，ADR 记录长期决策。
 
 ## 1. 简介与目标
 
@@ -124,6 +124,8 @@ commands 返回 `CommandError { code, message, details }`。session metrics 记�
 | [ADR-0005](adr/0005-revisioned-atomic-local-storage.md) | revision CAS、原子 JSON、SQLite 与 Credential Manager |
 | [ADR-0006](adr/0006-unicode-injection-default.md) | Unicode SendInput 默认，剪贴板按应用显式兼容 |
 | [ADR-0007](adr/0007-architecture-docs-as-code.md) | C4 + arc42-Lean + ADR + 机器可读代码地图 |
+| [ADR-0009](adr/0009-evidence-aware-document-governance.md) | 区分材料角色、实现与验证状态，并隔离 Proposed/Current |
+| [ADR-0010](adr/0010-separate-focused-shortcut-editing.md) | 分离有焦点的设置录入与全局运行时监听 |
 
 ## 10. 质量要求与场景
 

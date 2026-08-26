@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --configLoader native",
     "build": "tsc && vite build",
+    "architecture:test": "node --test scripts/check-architecture-docs.node-test.mjs",
     "test": "vitest run",
     "architecture:check": "node scripts/check-architecture-docs.mjs",
     "architecture:asr": "node scripts/check-asr-boundaries.mjs",

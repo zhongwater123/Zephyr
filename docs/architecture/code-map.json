@@ -104,9 +104,12 @@
       ],
       "docs": [
         "docs/architecture/c4-components-frontend.md",
+        "docs/architecture/shortcut-editing.md",
         "docs/architecture/code-map.md"
       ],
-      "adrs": [],
+      "adrs": [
+        "docs/architecture/adr/0010-separate-focused-shortcut-editing.md"
+      ],
       "changeTriggers": [
         "功能模块边界或 feature-owned state 变化"
       ],
@@ -117,7 +120,7 @@
       ],
       "publicContracts": [
         "Feature-owned loading, notice, form and editing state",
-        "Shortcut DOM capture and edit transaction state"
+        "Focused shortcut editing intent and local feedback state"
       ]
     },
     {
@@ -425,13 +428,15 @@
       ],
       "docs": [
         "docs/architecture/c4-components-backend.md",
-        "docs/architecture/runtime-views.md"
+        "docs/architecture/runtime-views.md",
+        "docs/architecture/shortcut-editing.md"
       ],
       "adrs": [
-        "docs/architecture/adr/0002-single-owner-bounded-voice-session.md"
+        "docs/architecture/adr/0002-single-owner-bounded-voice-session.md",
+        "docs/architecture/adr/0010-separate-focused-shortcut-editing.md"
       ],
       "changeTriggers": [
-        "物理键模型、DOM 录入、edit 事务、低级钩子传播或恢复语义变化"
+        "物理键模型、edit 事务、低级钩子传播或恢复语义变化"
       ],
       "owner": "windows-maintainers",
       "status": "active",

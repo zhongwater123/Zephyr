@@ -3,6 +3,10 @@
 - Status: Proposed
 - Date: YYYY-MM-DD
 - Deciders: Project maintainers
+- Drivers: 需要解决的产品、质量属性、约束或事故
+- Related features: FEAT-EXAMPLE 或 None
+- Assumptions: 依赖的 Open/Confirmed 假设或 None
+- Evidence: 支持当前判断的验证记录、事故或技术探针
 - Supersedes: None
 - Superseded by: None
 

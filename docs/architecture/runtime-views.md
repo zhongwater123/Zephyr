@@ -1,3 +1,7 @@
+---
+{"documentType":"runtime-view","viewStatus":"current"}
+---
+
 # 运行时与部署视图
 
 ## 语音输入主链路
@@ -49,6 +53,11 @@ sequenceDiagram
 
 ### 快捷键录入与提交
 
+- View status: `current`
+- Feature: [FEAT-SHORTCUT-BINDING](../features/shortcut-binding.md)
+- Decision: [ADR-0010](adr/0010-separate-focused-shortcut-editing.md)
+- Validation: `partial`
+
 用户点击快捷键字段时，前端在同一帧进入 `capturing`，生成 `traceId` 并聚焦字段；`begin_shortcut_edit(traceId, expectedRevision)` 在后台暂停旧运行时 binding，但 DOM 录入不等待 begin 回执。旧快捷键暂停只切换引擎 matching 状态，不卸载或重装 Hook。
 
 字段内 `KeyboardEvent.code` 唯一负责候选：左右 Ctrl/Alt/Shift/Win 分开记录，修饰键逐键更新键帽，普通组合在主键 `keydown` 时完成；纯修饰键至少按住 200ms 并在全部释放时完成。裸 Escape、字段外点击和再次点击取消；带修饰键 Escape 可进入保留组合校验。非法候选留在录入状态并显示短暂警告，下一次按键直接重新组装。合法候选立即退出录入外观并乐观显示，提交期间字段短暂禁用但不显示保存动画或成功提示。
@@ -58,6 +67,8 @@ begin 成功后，前端以会话返回的 `editId + configRevision` 提交现�
 Hook、运行时切换或持久化失败时，Manager 以当前权威配置恢复旧 binding 和 enabled 状态；恢复成功返回普通失败，前端弹轻量错误并回滚乐观标签。恢复失败返回 `runtime_rollback_failed` 并将运行时标记为 error，界面不得声称旧快捷键仍有效。外部启停和系统 resume 会中断 edit，并通过唯一事件 `shortcut_edit_interrupted` 让前端退出。Hook 不生成候选事件，前端不监听快捷键 lifecycle event，也不执行 250ms 轮询。
 
 换绑专用 `shortcut_edit_trace` 日志用 `traceId/editId/eventSeq` 串联 DOM 原始按键、规范化候选、begin、Hook generation、运行时应用、持久化和回滚。Hook 回调本身不写日志；dispatch 只记录真正匹配到的运行时 Pressed/Released。
+完整的数据结构、状态机、成功/失败时序、Hook 恢复和日志排查见 [热键录入、换绑事务与 Windows 运行时链路](shortcut-editing.md)。
+
 ### 并发与终止条件
 
 - 120 秒 deadline 和真实 Released 进入相同的幂等 finalize 路径。

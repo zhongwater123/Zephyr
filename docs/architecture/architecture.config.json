@@ -1,6 +1,11 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "architectureDir": "docs/architecture",
+  "featureDir": "docs/features",
+  "featureSchema": "docs/features/feature-dossier.schema.json",
+  "proposalDir": "docs/architecture/proposals",
+  "postmortemDir": "docs/postmortems",
+  "knowledgeEntries": ["docs/architecture.md"],
   "codeMap": "docs/architecture/code-map.json",
   "codeMapSchema": "docs/architecture/code-map.schema.json",
   "facts": "docs/architecture/architecture-facts.json",
@@ -16,7 +21,8 @@
     "code-map.md",
     "maintenance.md",
     "adr/README.md",
-    "adr/template.md"
+    "adr/template.md",
+    "proposals/README.md"
   ],
   "sourceCoverage": [
     {

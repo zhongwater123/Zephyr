@@ -1,3 +1,7 @@
+---
+{"documentType":"c4-view","viewStatus":"current"}
+---
+
 # C4 L3：WebView 前端组件
 
 [component:frontend.entry] [component:frontend.shell] [component:frontend.features] [component:frontend.presentation] [component:frontend.overlay] [component:frontend.ipc]
@@ -40,10 +44,12 @@ flowchart TB
 
 - `AppShell` 只共享当前配置、配置状态、语音状态、全局 notice 和 revision 协调。
 - 每个 feature controller 自持表单、loading、notice、选择和编辑状态。
-- Shortcut feature 的 controller 在字段焦点内独占 DOM `KeyboardEvent.code`，维护 `idle/capturing/committing/warning/error`、本轮 `traceId/eventSeq`、左右修饰键和乐观标签。点击即进入录入并异步 begin；合法主键按下即乐观显示并 commit，失败按 outcome 回滚。后端只会用 `shortcut_edit_interrupted` 终止当前 edit，不发布候选或生命周期快照，也不存在轮询补偿。
+- Shortcut feature 在有焦点的设置字段内捕获编辑意图并维护局部录入反馈；后端负责提交结果和运行时绑定权威。具体候选、取消和提交时序见 [Current Runtime View](runtime-views.md#快捷键录入与提交)，稳定边界见 [ADR-0010](adr/0010-separate-focused-shortcut-editing.md)。
 - `useRevisionedConfigMutation` 统一携带 expected revision，拒绝迟到响应，并在冲突时回载当前配置。
 - `src/ipc/client.ts` 是组件调用 command 的唯一字符串入口；业务组件不散落 `invoke("...")`。
 - `PreInputOverlay` 只按 session ID 与 seq 接受当前会话更新；它不会装载设置、历史或 Three.js bundle。
+
+热键字段的完整状态机、DOM 事件规则和前后端事务见 [热键录入、换绑事务与 Windows 运行时链路](shortcut-editing.md)。
 
 ## 异常恢复融合
 
