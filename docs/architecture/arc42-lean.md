@@ -144,7 +144,7 @@ commands 返回 `CommandError { code, message, details }`。session metrics 记�
 | --- | --- | --- |
 | `SharedRuntime` 与 `AppServices` 并存，部分运行时状态仍为粗粒度锁 | controller 单所有者、配置快照和 session ownership 检查 | 出现锁竞争、死锁或更多并行会话需求时继续缩小锁域 |
 | `voice_controller.rs`、`provider.rs`、`hotwords.rs` 仍较大 | 已抽出 Streaming、Delivery、Repository 接口 | 新增 provider/协议或热词策略前进一步按协议/领域拆分 |
-| `AppShell.tsx` 仍承担大量页面装配 | feature controllers 已分离，preinput 已动态拆包 | 新增主页面功能前继续拆 Settings 与 shell orchestration |
+| `AppShellV2.tsx` 仍承担大量页面装配 | feature controllers 已分离，preinput 已动态拆包 | 新增主页面功能前继续拆 Settings 与 shell orchestration |
 | Win32/OLE 行为受目标应用和 UIPI 影响 | 默认不回退、Pending 兜底、Windows CI 与手工验收 | 支持高完整性目标或更多兼容应用时增加隔离集成测试 |
 | 外部 ASR/Agent 协议可能变化 | provider 错误分类、endpoint trust、可替换 adapter trait | API 版本或认证方式变化时新增 ADR 并更新 L1/L2 |
 | 架构文档可能与实现漂移 | 代码地图路径、组件 marker、链接和 ADR 元数据进入 CI | 语义漂移仍需评审者结合 impact 输出人工复核 |

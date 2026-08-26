@@ -1,144 +1,144 @@
 import type { JSX } from "preact";
 import { useEffect, useRef } from "preact/hooks";
-import type { ShortcutLifecycleViewModel } from "./shortcutLifecycle";
+import type { ShortcutBindingViewModel } from "./useShortcutBindingController";
 
 const TEXT = {
   title: "语音输入快捷键",
   idleHelp: "按住快捷键开始语音输入，松开后结束。",
-  prepareHelp: "正在准备键盘 Hook，请稍候。",
-  captureHelp: "按下新的组合键；输入会实时显示，全部松开后自动验证。",
-  processingHelp: "正在验证并应用新的快捷键。",
+  captureHelp: "直接按下新的组合键，主键按下后自动保存。",
+
   currentLabel: "当前快捷键",
-  resetLabel: "点击重新设置",
-  placeholder: "输入快捷键",
+  resetLabel: "点击更改",
+  placeholder: "正在录入",
 } as const;
 
 export function ShortcutCaptureField({
   view,
-  requestPending,
-  transportError,
   onStart,
   onCancel,
+  onKeyDown,
+  onKeyUp,
 }: {
-  view: ShortcutLifecycleViewModel;
-  requestPending: boolean;
-  transportError: string;
+  view: ShortcutBindingViewModel;
   onStart: () => void;
-  onCancel: () => void;
+  onCancel: (source?: string) => void;
+  onKeyDown: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
+  onKeyUp: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
 }) {
   const fieldRef = useRef<HTMLButtonElement>(null);
   const onCancelRef = useRef(onCancel);
-  const suppressNextClickRef = useRef(false);
   onCancelRef.current = onCancel;
-  const active = view.busy || requestPending;
-  const preparing = view.phase === "starting" || (requestPending && !view.busy);
-  const capturing = view.phase === "capturing";
-  const cancellable = requestPending
-    || view.phase === "starting"
-    || view.phase === "capturing";
-  const locked = view.phase === "validating" || view.phase === "applying";
-  const visibleShortcut = preparing ? "" : view.displayLabel;
-  const keycaps = visibleShortcut
+  const suppressClickRef = useRef(false);
+  const issue = view.phase === "warning" || view.phase === "error";
+  const toneClass =
+    view.phase === "warning" ? " is-warning" : view.phase === "error" ? " is-error" : "";
+  const keycaps = view.displayLabel
     .split("+")
     .map((key) => key.trim())
     .filter(Boolean);
-  const notice = transportError
-    || (preparing ? "正在准备换绑…" : view.message);
-  const validationWarning = capturing && !transportError && Boolean(view.errorCode);
-  const failure = Boolean(transportError || (view.errorCode && !validationWarning));
-  const issue = validationWarning || failure;
-  const toneClass = validationWarning ? " is-warning" : failure ? " is-error" : "";
-  const help = preparing
-    ? TEXT.prepareHelp
-    : capturing
-      ? TEXT.captureHelp
-      : locked
-        ? TEXT.processingHelp
-        : TEXT.idleHelp;
+  const help = view.isCapturing ? TEXT.captureHelp : TEXT.idleHelp;
 
-  function handleKeyDown(event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) {
-    if (
-      cancellable
-      && event.key === "Escape"
-      && !event.ctrlKey
-      && !event.altKey
-      && !event.shiftKey
-      && !event.metaKey
-    ) {
-      event.preventDefault();
-      event.stopPropagation();
-      onCancel();
-    }
+  function startAndFocus() {
+    onStart();
+    window.requestAnimationFrame(() => fieldRef.current?.focus());
   }
 
   function handlePointerDown(event: JSX.TargetedPointerEvent<HTMLButtonElement>) {
-    if (!active) return;
-    event.preventDefault();
-    event.stopPropagation();
-    suppressNextClickRef.current = true;
-    if (cancellable) onCancel();
+    if (view.committing) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    suppressClickRef.current = true;
+    if (view.isCapturing) {
+      event.preventDefault();
+      event.stopPropagation();
+      onCancel();
+      return;
+    }
+    startAndFocus();
   }
 
   function handleClick(event: JSX.TargetedMouseEvent<HTMLButtonElement>) {
-    if (suppressNextClickRef.current) {
-      suppressNextClickRef.current = false;
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
       event.preventDefault();
       event.stopPropagation();
       return;
     }
-    if (active) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-    onStart();
+    if (view.committing) return;
+    if (view.isCapturing) onCancel();
+    else startAndFocus();
+  }
+
+  function handleFocus() {
+    if (view.phase === "idle" || view.phase === "error") onStart();
+  }
+
+  function handleBlur() {
+    if (view.isCapturing) onCancel("focus_lost");
   }
 
   useEffect(() => {
-    if (!cancellable) return;
+    if (!view.isCapturing) return;
     function cancelOnOutsidePointer(event: PointerEvent) {
       const target = event.target;
       if (target instanceof Node && fieldRef.current?.contains(target)) return;
-      onCancelRef.current();
+      void onCancelRef.current("focus_lost");
     }
     document.addEventListener("pointerdown", cancelOnOutsidePointer, true);
     return () => document.removeEventListener("pointerdown", cancelOnOutsidePointer, true);
-  }, [cancellable]);
+  }, [view.isCapturing]);
 
   return (
-    <section className={`shortcut-setting${preparing ? " is-preparing" : ""}${capturing ? " is-capturing" : ""}${toneClass}`}>
+    <section
+      className={
+        "shortcut-setting"
+        + (view.isCapturing ? " is-capturing" : "")
+        + (view.committing ? " is-committing" : "")
+        + toneClass
+      }
+    >
       <div className="shortcut-setting-copy">
         <strong>{TEXT.title}</strong>
         <small>{help}</small>
-        {notice ? <span className="shortcut-setting-notice" role={issue ? "alert" : "status"}>{notice}</span> : null}
+        {view.message ? (
+          <span className="shortcut-setting-notice" role={issue ? "alert" : "status"}>
+            {view.message}
+          </span>
+        ) : null}
       </div>
 
       <button
         ref={fieldRef}
         type="button"
         className="shortcut-key-field"
-        aria-label={active
-          ? preparing
-            ? "正在准备换绑，再次点击或按 Escape 取消"
-            : locked
-            ? "正在验证并应用快捷键"
-            : "正在设置快捷键，再次点击或按 Escape 取消"
-          : `${TEXT.currentLabel} ${view.activeLabel}，${TEXT.resetLabel}`}
-        aria-pressed={active}
-        aria-busy={preparing || locked}
-        onPointerDown={handlePointerDown}
+        aria-label={
+          view.isCapturing
+            ? "正在录入快捷键，再次点击或按 Escape 取消"
+            : view.committing
+              ? "正在应用快捷键"
+              : TEXT.currentLabel + " " + view.activeLabel + "，" + TEXT.resetLabel
+        }
+        aria-pressed={view.isCapturing}
+        aria-busy={view.committing}
         aria-invalid={issue}
+        disabled={view.committing}
+        onPointerDown={handlePointerDown}
         onClick={handleClick}
-        onKeyDown={handleKeyDown}
+        onFocus={handleFocus}
+        onBlur={handleBlur}
+        onKeyDown={onKeyDown}
+        onKeyUp={onKeyUp}
       >
-        {visibleShortcut ? (
+        {keycaps.length > 0 ? (
           <span className="shortcut-keycaps" aria-live="polite" aria-atomic="true">
-            {keycaps.map((key) => <kbd key={key}>{key}</kbd>)}
+            {keycaps.map((key, index) => <kbd key={key + index}>{key}</kbd>)}
           </span>
         ) : (
           <>
             <span className="shortcut-capture-indicator" aria-hidden="true" />
-            <span className="shortcut-placeholder">{preparing ? "正在准备" : TEXT.placeholder}</span>
+            <span className="shortcut-placeholder">{TEXT.placeholder}</span>
           </>
         )}
       </button>

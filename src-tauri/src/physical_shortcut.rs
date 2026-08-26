@@ -98,10 +98,24 @@ impl ShortcutBinding {
         if self.trigger.scan_code == 0 {
             return Err("快捷键需要包含一个主键。".into());
         }
+        if self.modifiers.len().saturating_add(1) > 3 {
+            return Err("快捷键最多支持三个物理按键。".into());
+        }
+        for (index, modifier) in self.modifiers.iter().enumerate() {
+            if self.modifiers[..index].contains(modifier) {
+                return Err("快捷键包含重复的修饰键。".into());
+            }
+        }
         let compiled = self.compile()?;
         let modifier_trigger = compiled.trigger_modifier;
-        if modifier_trigger == 0 && self.modifiers.is_empty() {
-            return Err("快捷键至少需要一个 Ctrl、Alt、Shift 或 Win 修饰键。".into());
+        if modifier_trigger == 0 && physical_key_label(self.trigger).is_none() {
+            return Err("该物理按键暂不支持作为快捷键。".into());
+        }
+        if modifier_trigger == 0
+            && self.modifiers.is_empty()
+            && !standalone_key_allowed(self.trigger)
+        {
+            return Err("字母、数字、标点和 Enter 需要与修饰键组合使用。".into());
         }
         if modifier_trigger != 0
             && self.modifiers.is_empty()
@@ -112,6 +126,9 @@ impl ShortcutBinding {
         Ok(())
     }
 
+    pub fn display_label(&self) -> String {
+        self.label_with_trigger(physical_key_label(self.trigger).unwrap_or("未知按键"))
+    }
     pub(crate) fn compile(&self) -> Result<CompiledBinding, String> {
         let mut sided = 0u8;
         let mut any = 0u8;
@@ -340,6 +357,165 @@ pub(crate) fn modifier_label(modifier: ModifierBinding) -> String {
     }
 }
 
+pub(crate) fn physical_key_label(key: PhysicalKeyId) -> Option<&'static str> {
+    Some(match (key.scan_code, key.extended) {
+        (0x01, false) => "Escape",
+        (0x02, false) => "1",
+        (0x03, false) => "2",
+        (0x04, false) => "3",
+        (0x05, false) => "4",
+        (0x06, false) => "5",
+        (0x07, false) => "6",
+        (0x08, false) => "7",
+        (0x09, false) => "8",
+        (0x0a, false) => "9",
+        (0x0b, false) => "0",
+        (0x0c, false) => "Minus",
+        (0x0d, false) => "Equal",
+        (0x0e, false) => "Backspace",
+        (0x0f, false) => "Tab",
+        (0x10, false) => "Q",
+        (0x11, false) => "W",
+        (0x12, false) => "E",
+        (0x13, false) => "R",
+        (0x14, false) => "T",
+        (0x15, false) => "Y",
+        (0x16, false) => "U",
+        (0x17, false) => "I",
+        (0x18, false) => "O",
+        (0x19, false) => "P",
+        (0x1a, false) => "BracketLeft",
+        (0x1b, false) => "BracketRight",
+        (0x1c, false) => "Enter",
+        (0x1c, true) => "NumpadEnter",
+        (0x1e, false) => "A",
+        (0x1f, false) => "S",
+        (0x20, false) => "D",
+        (0x21, false) => "F",
+        (0x22, false) => "G",
+        (0x23, false) => "H",
+        (0x24, false) => "J",
+        (0x25, false) => "K",
+        (0x26, false) => "L",
+        (0x27, false) => "Semicolon",
+        (0x28, false) => "Quote",
+        (0x29, false) => "Backquote",
+        (0x2b, false) => "Backslash",
+        (0x2c, false) => "Z",
+        (0x2d, false) => "X",
+        (0x2e, false) => "C",
+        (0x2f, false) => "V",
+        (0x30, false) => "B",
+        (0x31, false) => "N",
+        (0x32, false) => "M",
+        (0x33, false) => "Comma",
+        (0x34, false) => "Period",
+        (0x35, false) => "Slash",
+        (0x35, true) => "NumpadDivide",
+        (0x37, false) => "NumpadMultiply",
+        (0x37, true) => "PrintScreen",
+        (0x39, false) => "Space",
+        (0x3b, false) => "F1",
+        (0x3c, false) => "F2",
+        (0x3d, false) => "F3",
+        (0x3e, false) => "F4",
+        (0x3f, false) => "F5",
+        (0x40, false) => "F6",
+        (0x41, false) => "F7",
+        (0x42, false) => "F8",
+        (0x43, false) => "F9",
+        (0x44, false) => "F10",
+        (0x45, false) => "Pause",
+        (0x45, true) => "NumLock",
+        (0x46, false) => "ScrollLock",
+        (0x47, false) => "Numpad7",
+        (0x47, true) => "Home",
+        (0x48, false) => "Numpad8",
+        (0x48, true) => "ArrowUp",
+        (0x49, false) => "Numpad9",
+        (0x49, true) => "PageUp",
+        (0x4a, false) => "NumpadSubtract",
+        (0x4b, false) => "Numpad4",
+        (0x4b, true) => "ArrowLeft",
+        (0x4c, false) => "Numpad5",
+        (0x4d, false) => "Numpad6",
+        (0x4d, true) => "ArrowRight",
+        (0x4e, false) => "NumpadAdd",
+        (0x4f, false) => "Numpad1",
+        (0x4f, true) => "End",
+        (0x50, false) => "Numpad2",
+        (0x50, true) => "ArrowDown",
+        (0x51, false) => "Numpad3",
+        (0x51, true) => "PageDown",
+        (0x52, false) => "Numpad0",
+        (0x52, true) => "Insert",
+        (0x53, false) => "NumpadDecimal",
+        (0x53, true) => "Delete",
+        (0x57, false) => "F11",
+        (0x58, false) => "F12",
+        (0x64, false) => "F13",
+        (0x65, false) => "F14",
+        (0x66, false) => "F15",
+        (0x67, false) => "F16",
+        (0x68, false) => "F17",
+        (0x69, false) => "F18",
+        (0x6a, false) => "F19",
+        (0x6b, false) => "F20",
+        (0x6c, false) => "F21",
+        (0x6d, false) => "F22",
+        (0x6e, false) => "F23",
+        (0x76, false) => "F24",
+        _ => return None,
+    })
+}
+
+pub(crate) fn standalone_key_allowed(key: PhysicalKeyId) -> bool {
+    matches!(
+        physical_key_label(key),
+        Some(
+            "Space"
+                | "Tab"
+                | "Backspace"
+                | "Insert"
+                | "Delete"
+                | "Home"
+                | "End"
+                | "PageUp"
+                | "PageDown"
+                | "ArrowUp"
+                | "ArrowDown"
+                | "ArrowLeft"
+                | "ArrowRight"
+                | "PrintScreen"
+                | "Pause"
+                | "ScrollLock"
+                | "NumLock"
+                | "F1"
+                | "F2"
+                | "F3"
+                | "F4"
+                | "F5"
+                | "F6"
+                | "F7"
+                | "F8"
+                | "F9"
+                | "F10"
+                | "F11"
+                | "F13"
+                | "F14"
+                | "F15"
+                | "F16"
+                | "F17"
+                | "F18"
+                | "F19"
+                | "F20"
+                | "F21"
+                | "F22"
+                | "F23"
+                | "F24"
+        )
+    )
+}
 fn modifier_binding_from_key(key: PhysicalKeyId) -> Option<ModifierBinding> {
     modifier_bit(key).and_then(|bit| modifiers_from_bits(bit).into_iter().next())
 }

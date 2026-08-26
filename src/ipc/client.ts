@@ -11,7 +11,10 @@ import type {
   HotwordState,
   PendingOutput,
   PreInputPayload,
-  ShortcutLifecycleSnapshot,
+  ShortcutBinding,
+  ShortcutEditOutcome,
+  ShortcutEditSession,
+  ShortcutEditTraceInput,
   VoiceStatePayload,
 } from "../domain";
 
@@ -87,24 +90,26 @@ export const incidentApi = {
     invoke<void>("record_frontend_incident", { input }),
 };
 
-export const shortcutLifecycleApi = {
-  startCapture: (expectedRevision: number) =>
-    invoke<ShortcutLifecycleSnapshot>("start_shortcut_capture", { expectedRevision }),
-  cancelOperation: (operationId: number) =>
-    invoke<ShortcutLifecycleSnapshot>("cancel_shortcut_operation", { operationId }),
-  get: (operationId?: number | null) =>
-    invoke<ShortcutLifecycleSnapshot>("get_shortcut_lifecycle", {
-      operationId: operationId ?? null,
-    }),
-  restoreDefault: (expectedRevision: number) =>
-    invoke<ShortcutLifecycleSnapshot>("restore_default_shortcut", { expectedRevision }),
-  undo: (changeId: number, expectedRevision: number) =>
-    invoke<ShortcutLifecycleSnapshot>("undo_last_shortcut_change", {
-      changeId,
+export const shortcutEditApi = {
+  begin: (traceId: string, expectedRevision: number) =>
+    invoke<ShortcutEditSession>("begin_shortcut_edit", { traceId, expectedRevision }),
+  commit: (
+    traceId: string,
+    editId: number,
+    expectedRevision: number,
+    binding: ShortcutBinding,
+  ) =>
+    invoke<ShortcutEditOutcome>("commit_shortcut_edit", {
+      traceId,
+      editId,
       expectedRevision,
+      binding,
     }),
+  cancel: (traceId: string, editId: number) =>
+    invoke<ShortcutEditOutcome>("cancel_shortcut_edit", { traceId, editId }),
+  trace: (input: ShortcutEditTraceInput) =>
+    invoke<void>("record_shortcut_edit_trace", { input }),
 };
-
 export const hotwordApi = {
   getState: () => invoke<HotwordState>("get_hotword_state"),
   saveSettings: (args: {

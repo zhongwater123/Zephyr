@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 const checks = [
   {
-    file: "src/app/AppShell.tsx",
+    file: "src/app/AppShellV2.tsx",
     forbidden: [
       "enable_punc",
       "enable_itn",

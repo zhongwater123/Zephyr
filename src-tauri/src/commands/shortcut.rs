@@ -1,66 +1,76 @@
 use crate::command_error::{self, CommandError, CommandResult};
-use crate::shortcut_lifecycle::ShortcutLifecycleSnapshot;
-use crate::shortcut_manager::ShortcutManager;
+use crate::physical_shortcut::ShortcutBinding;
+use crate::shortcut_manager::{
+    ShortcutEditOutcome, ShortcutEditSession, ShortcutEditTraceInput, ShortcutManager,
+};
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
 
+fn manager_error(error: String) -> CommandError {
+    CommandError::new("shortcut_edit_failed", error)
+}
+
+fn task_error(error: impl ToString) -> CommandError {
+    CommandError::new("shortcut_edit_task_failed", error.to_string())
+}
+
 #[tauri::command]
-pub fn start_shortcut_capture(
+pub async fn begin_shortcut_edit(
+    trace_id: String,
     expected_revision: u64,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
-) -> CommandResult<ShortcutLifecycleSnapshot> {
+) -> CommandResult<ShortcutEditSession> {
     command_error::require_window(&window, "main")?;
-    manager
-        .start_capture(expected_revision)
-        .map_err(|error| CommandError::new("shortcut_lifecycle_failed", error))
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.begin_edit(trace_id, expected_revision))
+        .await
+        .map_err(task_error)?
+        .map_err(manager_error)
 }
 
 #[tauri::command]
-pub fn cancel_shortcut_operation(
-    operation_id: u64,
-    window: WebviewWindow,
-    manager: State<'_, Arc<ShortcutManager>>,
-) -> CommandResult<ShortcutLifecycleSnapshot> {
-    command_error::require_window(&window, "main")?;
-    manager
-        .cancel_operation(operation_id)
-        .map_err(|error| CommandError::new("shortcut_lifecycle_failed", error))
-}
-
-#[tauri::command]
-pub fn undo_last_shortcut_change(
-    change_id: u64,
+pub async fn commit_shortcut_edit(
+    trace_id: String,
+    edit_id: u64,
     expected_revision: u64,
+    binding: ShortcutBinding,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
-) -> CommandResult<ShortcutLifecycleSnapshot> {
+) -> CommandResult<ShortcutEditOutcome> {
     command_error::require_window(&window, "main")?;
-    manager
-        .undo(change_id, expected_revision)
-        .map_err(|error| CommandError::new("shortcut_lifecycle_failed", error))
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        manager.commit_edit(trace_id, edit_id, expected_revision, binding)
+    })
+    .await
+    .map_err(task_error)?
+    .map_err(manager_error)
 }
 
 #[tauri::command]
-pub fn get_shortcut_lifecycle(
-    operation_id: Option<u64>,
+pub async fn cancel_shortcut_edit(
+    trace_id: String,
+    edit_id: u64,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
-) -> CommandResult<ShortcutLifecycleSnapshot> {
+) -> CommandResult<ShortcutEditOutcome> {
     command_error::require_window(&window, "main")?;
-    manager
-        .lifecycle(operation_id)
-        .map_err(|error| CommandError::new("shortcut_lifecycle_failed", error))
+    let manager = manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.cancel_edit(trace_id, edit_id))
+        .await
+        .map_err(task_error)?
+        .map_err(manager_error)
 }
 
 #[tauri::command]
-pub fn restore_default_shortcut(
-    expected_revision: u64,
+pub fn record_shortcut_edit_trace(
+    input: ShortcutEditTraceInput,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
-) -> CommandResult<ShortcutLifecycleSnapshot> {
+) -> CommandResult<()> {
     command_error::require_window(&window, "main")?;
     manager
-        .restore_default(expected_revision)
-        .map_err(|error| CommandError::new("shortcut_lifecycle_failed", error))
+        .record_trace(input)
+        .map_err(|error| CommandError::new("shortcut_trace_invalid", error))
 }

@@ -69,7 +69,6 @@
       "name": "App shell",
       "kind": "component",
       "source": [
-        "src/app/AppShell.tsx",
         "src/app/AppShellV2.tsx",
         "src/app/useRevisionedConfigMutation.ts"
       ],
@@ -118,7 +117,7 @@
       ],
       "publicContracts": [
         "Feature-owned loading, notice, form and editing state",
-        "Shortcut lifecycle reducer and view-model selectors"
+        "Shortcut DOM capture and edit transaction state"
       ]
     },
     {
@@ -421,7 +420,6 @@
       "kind": "component-group",
       "source": [
         "src-tauri/src/physical_shortcut.rs",
-        "src-tauri/src/shortcut_lifecycle.rs",
         "src-tauri/src/shortcut_manager.rs",
         "src-tauri/src/windows_keyboard.rs"
       ],
@@ -433,7 +431,7 @@
         "docs/architecture/adr/0002-single-owner-bounded-voice-session.md"
       ],
       "changeTriggers": [
-        "物理键模型、低级钩子传播决策、捕获事务或事件语义变化"
+        "物理键模型、DOM 录入、edit 事务、低级钩子传播或恢复语义变化"
       ],
       "owner": "windows-maintainers",
       "status": "active",
@@ -444,7 +442,7 @@
       "publicContracts": [
         "Physical scan-code binding contract",
         "sided modifier-key trigger and modifier-only chord contract",
-        "shortcut_lifecycle_changed authoritative snapshot contract",
+        "shortcut edit begin/commit/cancel outcome contract",
         "Pressed and Released SessionEvent translation",
         "transactional shortcut replacement",
         "best-effort WH_KEYBOARD_LL physical-key engine"

@@ -17,7 +17,6 @@ mod repositories;
 mod runtime_metrics;
 mod services;
 mod session;
-mod shortcut_lifecycle;
 mod shortcut_manager;
 mod state;
 mod streaming_pipeline;
@@ -170,9 +169,12 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
+                .level_for("shortcut_edit_trace", log::LevelFilter::Debug)
                 .level_for("rustls", log::LevelFilter::Warn)
                 .level_for("tungstenite", log::LevelFilter::Warn)
                 .level_for("tao", log::LevelFilter::Warn)
+                .max_file_size(2_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
                 .build(),
         )
         .manage(runtime.clone())
@@ -207,11 +209,10 @@ pub fn run() {
             commands::incident::delete_incident,
             commands::incident::set_incident_pinned,
             commands::incident::record_frontend_incident,
-            commands::shortcut::start_shortcut_capture,
-            commands::shortcut::cancel_shortcut_operation,
-            commands::shortcut::undo_last_shortcut_change,
-            commands::shortcut::get_shortcut_lifecycle,
-            commands::shortcut::restore_default_shortcut,
+            commands::shortcut::begin_shortcut_edit,
+            commands::shortcut::commit_shortcut_edit,
+            commands::shortcut::cancel_shortcut_edit,
+            commands::shortcut::record_shortcut_edit_trace,
             commands::hotwords::get_hotword_state,
             commands::hotwords::save_hotword_settings,
             commands::hotwords::save_manual_hotwords,
@@ -245,7 +246,7 @@ pub fn run() {
                 shortcut_manager.clone(),
             );
             app.manage(controller.clone());
-            app.manage(shortcut_manager);
+            app.manage(shortcut_manager.clone());
             app.manage(voice_input);
             overlay::setup_preinput_window(app.handle())?;
             platform::tray::setup(
@@ -253,6 +254,7 @@ pub fn run() {
                 runtime.clone(),
                 tray_config.clone(),
                 controller,
+                shortcut_manager,
             )?;
             Ok(())
         })
@@ -262,7 +264,8 @@ pub fn run() {
         tauri::RunEvent::Resumed => {
             if let Some(manager) = app_handle.try_state::<Arc<shortcut_manager::ShortcutManager>>()
             {
-                manager.resume();
+                let manager = manager.inner().clone();
+                tauri::async_runtime::spawn_blocking(move || manager.resume());
             }
         }
         tauri::RunEvent::Exit => {

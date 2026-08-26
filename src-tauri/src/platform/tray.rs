@@ -1,4 +1,5 @@
 use crate::services::ConfigService;
+use crate::shortcut_manager::ShortcutManager;
 use crate::voice_controller::VoiceSessionController;
 use crate::SharedRuntime;
 use std::sync::Arc;
@@ -11,6 +12,7 @@ pub fn setup(
     runtime: SharedRuntime,
     config_service: Arc<ConfigService>,
     controller: VoiceSessionController,
+    shortcut_manager: Arc<ShortcutManager>,
 ) -> tauri::Result<()> {
     let open_settings = MenuItem::with_id(app, "open_settings", "打开设置", true, None::<&str>)?;
     let toggle_enabled =
@@ -57,6 +59,24 @@ pub fn setup(
                 };
                 if let Err(error) = app.emit("voice_state_changed", payload) {
                     log::warn!("failed to emit tray toggle state: {error}");
+                }
+                if next_enabled {
+                    let shortcut_manager = shortcut_manager.clone();
+                    tauri::async_runtime::spawn_blocking(move || {
+                        if let Err(error) = shortcut_manager.set_enabled(true) {
+                            log::error!(
+                                target: "shortcut_edit_trace",
+                                "event=tray_enable_failed phase=enable enabled=true result=failed errorCode=hook_unavailable message={:?}",
+                                error
+                            );
+                        }
+                    });
+                } else if let Err(error) = shortcut_manager.set_enabled(false) {
+                    log::error!(
+                        target: "shortcut_edit_trace",
+                        "event=tray_enable_failed phase=enable enabled=false result=failed errorCode=hook_unavailable message={:?}",
+                        error
+                    );
                 }
             }
             "quit" => app.exit(0),

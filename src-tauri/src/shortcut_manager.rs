@@ -1,65 +1,190 @@
-//! Shortcut command orchestration, runtime binding transactions and Tauri lifecycle events.
+//! Shortcut editing transactions and the runtime keyboard binding boundary.
 
 use crate::config::{AppConfig, CURRENT_SCHEMA_VERSION};
-use crate::physical_shortcut::{ModifierKind, ShortcutBinding, DEFAULT_SHORTCUT_LABEL};
+use crate::physical_shortcut::{ModifierKind, PhysicalKeyId, ShortcutBinding};
 use crate::services::{AppServices, ConfigService, ConfigServiceError};
-use crate::shortcut_lifecycle::{
-    ShortcutLifecycleCoordinator, ShortcutLifecycleSnapshot, ShortcutOperationKind,
-    ShortcutOperationPhase, ShortcutRuntimeState,
-};
 use crate::voice_controller::{SessionEvent, VoiceSessionController};
-use crate::windows_keyboard::{
-    CaptureArmReceipt, CapturedShortcut, KeyboardEngineError, KeyboardEngineEvent,
-    WindowsKeyboardEngine,
-};
+use crate::windows_keyboard::{KeyboardEngineEvent, WindowsKeyboardEngine};
 use crate::SharedRuntime;
-use std::sync::atomic::{AtomicU64, Ordering};
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
-use std::time::Duration;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 
-const LIFECYCLE_EVENT: &str = "shortcut_lifecycle_changed";
-const CAPTURE_TIMEOUT: Duration = Duration::from_secs(30);
-const RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
+const INTERRUPTED_EVENT: &str = "shortcut_edit_interrupted";
+const TRACE_TARGET: &str = "shortcut_edit_trace";
 const INVALID_BINDING: &str = "invalid_binding";
 const RESERVED_BINDING: &str = "reserved_binding";
 const REVISION_CONFLICT: &str = "revision_conflict";
 const HOOK_UNAVAILABLE: &str = "hook_unavailable";
 const PERSISTENCE_FAILED: &str = "persistence_failed";
-const CAPTURE_TIMEOUT_CODE: &str = "capture_timeout";
-const RELEASE_TIMEOUT_CODE: &str = "release_timeout";
 const HOOK_INTERRUPTED: &str = "hook_interrupted";
 const RUNTIME_ROLLBACK_FAILED: &str = "runtime_rollback_failed";
 
-#[derive(Clone)]
-struct CaptureTransaction {
-    operation_id: u64,
-    hook_generation: u64,
-    expected_revision: u64,
-    capture_attempt: u64,
-    release_timeout_started: bool,
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShortcutRuntimeState {
+    Active,
+    Suspended,
+    Disabled,
+    Error,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutEditSession {
+    pub edit_id: u64,
+    pub trace_id: String,
+    pub config_revision: u64,
+    pub active_label: String,
+    pub active_binding: Option<ShortcutBinding>,
+    pub runtime_state: ShortcutRuntimeState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutEditOutcome {
+    pub success: bool,
+    pub edit_id: u64,
+    pub trace_id: String,
+    pub config_revision: u64,
+    pub active_label: String,
+    pub active_binding: Option<ShortcutBinding>,
+    pub runtime_state: ShortcutRuntimeState,
+    pub changed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShortcutEditInterrupted {
+    outcome: ShortcutEditOutcome,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ShortcutTraceEvent {
+    UiCaptureStarted,
+    DomKeydown,
+    DomKeyup,
+    CandidateRejected,
+    CandidateFinalized,
+    BeginAcknowledged,
+    CommitDispatched,
+    CommitCompleted,
+    OptimisticRollback,
+    CancelRequested,
+    FocusLost,
+    EditInterrupted,
+}
+
+impl ShortcutTraceEvent {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UiCaptureStarted => "ui_capture_started",
+            Self::DomKeydown => "dom_keydown",
+            Self::DomKeyup => "dom_keyup",
+            Self::CandidateRejected => "candidate_rejected",
+            Self::CandidateFinalized => "candidate_finalized",
+            Self::BeginAcknowledged => "begin_acknowledged",
+            Self::CommitDispatched => "commit_dispatched",
+            Self::CommitCompleted => "commit_completed",
+            Self::OptimisticRollback => "optimistic_rollback",
+            Self::CancelRequested => "cancel_requested",
+            Self::FocusLost => "focus_lost",
+            Self::EditInterrupted => "edit_interrupted",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutEditTraceInput {
+    pub trace_id: String,
+    pub edit_id: Option<u64>,
+    pub event_seq: u32,
+    pub elapsed_ms: u64,
+    pub event: ShortcutTraceEvent,
+    pub code: Option<String>,
+    pub key: Option<String>,
+    pub location: Option<u8>,
+    pub repeat: Option<bool>,
+    pub ctrl: Option<bool>,
+    pub alt: Option<bool>,
+    pub shift: Option<bool>,
+    pub meta: Option<bool>,
+    pub alt_graph: Option<bool>,
+    #[serde(default)]
+    pub held_codes: Vec<String>,
+    pub candidate_label: Option<String>,
+    pub candidate_binding: Option<ShortcutBinding>,
+    pub reason_code: Option<String>,
+}
+
+impl ShortcutEditTraceInput {
+    pub fn validate(&self) -> Result<(), String> {
+        if self.trace_id.is_empty()
+            || self.trace_id.len() > 64
+            || !self
+                .trace_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+        {
+            return Err("快捷键 traceId 无效。".into());
+        }
+        for value in self
+            .code
+            .iter()
+            .chain(self.key.iter())
+            .chain(self.held_codes.iter())
+        {
+            if value.chars().count() > 64 {
+                return Err("快捷键诊断字段过长。".into());
+            }
+        }
+        if self.held_codes.len() > 8
+            || self
+                .candidate_binding
+                .as_ref()
+                .is_some_and(|binding| binding.modifiers.len() > 8)
+            || self
+                .candidate_label
+                .as_ref()
+                .is_some_and(|value| value.chars().count() > 128)
+            || self
+                .reason_code
+                .as_ref()
+                .is_some_and(|value| value.chars().count() > 64)
+        {
+            return Err("快捷键诊断载荷过大。".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
-struct UndoTransaction {
-    change_id: u64,
-    binding: Option<ShortcutBinding>,
-    label: String,
-    committed_revision: u64,
+struct ShortcutEditTransaction {
+    edit_id: u64,
+    trace_id: String,
+    expected_revision: u64,
+    started_at: Instant,
 }
 
 struct ManagerState {
-    lifecycle: ShortcutLifecycleCoordinator,
-    capture: Option<CaptureTransaction>,
-    undo: Option<UndoTransaction>,
+    next_edit_id: u64,
+    edit: Option<ShortcutEditTransaction>,
+    runtime_error: Option<String>,
 }
 
 #[derive(Debug)]
-struct ApplyFailure {
+struct EditFailure {
     code: &'static str,
     message: String,
-    retryable: bool,
-    runtime_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -79,7 +204,7 @@ trait ShortcutConfigStore {
 
 impl ShortcutConfigStore for ConfigService {
     fn shortcut_snapshot(&self) -> AppConfig {
-        ConfigService::snapshot(self)
+        self.snapshot()
     }
 
     fn commit_shortcut(
@@ -97,28 +222,6 @@ impl ShortcutConfigStore for ConfigService {
     }
 }
 
-trait ShortcutBindingRuntime {
-    fn replace_binding(&self, binding: Option<&ShortcutBinding>) -> Result<(), String>;
-    fn enable_binding(&self, enabled: bool);
-}
-
-impl ShortcutBindingRuntime for WindowsKeyboardEngine {
-    fn replace_binding(&self, binding: Option<&ShortcutBinding>) -> Result<(), String> {
-        self.set_binding(binding)
-    }
-
-    fn enable_binding(&self, enabled: bool) {
-        self.set_enabled(enabled);
-    }
-}
-
-#[derive(Debug)]
-struct BindingCommit {
-    config: AppConfig,
-    old_binding: Option<ShortcutBinding>,
-    old_label: String,
-}
-
 pub struct ShortcutManager {
     app: AppHandle,
     runtime: SharedRuntime,
@@ -127,7 +230,6 @@ pub struct ShortcutManager {
     operation_gate: Mutex<()>,
     state: Mutex<ManagerState>,
     engine: Mutex<Option<Arc<WindowsKeyboardEngine>>>,
-    last_logged_sequence: AtomicU64,
 }
 
 impl ShortcutManager {
@@ -148,11 +250,11 @@ impl ShortcutManager {
         });
         let (engine, initial_error) = match engine_result {
             Ok(engine) => {
-                let engine_error = engine.startup_error();
+                let hook_error = engine.startup_error();
                 let binding_error = binding
                     .is_none()
                     .then(|| "旧快捷键无法映射为物理键，请重新设置。".to_string());
-                (Some(Arc::new(engine)), engine_error.or(binding_error))
+                (Some(Arc::new(engine)), hook_error.or(binding_error))
             }
             Err(error) => (None, Some(error)),
         };
@@ -163,399 +265,604 @@ impl ShortcutManager {
             controller: controller.clone(),
             operation_gate: Mutex::new(()),
             state: Mutex::new(ManagerState {
-                lifecycle: ShortcutLifecycleCoordinator::new(
-                    config.revision,
-                    config.enabled,
-                    config.shortcut.clone(),
-                    binding.clone(),
-                    initial_error.clone(),
-                ),
-                capture: None,
-                undo: None,
+                next_edit_id: 0,
+                edit: None,
+                runtime_error: initial_error.clone(),
             }),
             engine: Mutex::new(engine),
-            last_logged_sequence: AtomicU64::new(0),
         });
         let _ = weak_slot.set(Arc::downgrade(&manager));
         if let Ok(engine) = manager.engine_handle() {
             if let Err(error) = engine.set_binding(binding.as_ref()) {
-                manager.set_runtime_error(error);
+                manager.set_runtime_error(Some(error));
             } else {
-                engine.set_enabled(config.enabled && binding.is_some());
+                engine.set_enabled(config.enabled && binding.is_some() && initial_error.is_none());
             }
         }
-        if let Ok(mut voice) = runtime.lock() {
-            voice.shortcut_registration_error = initial_error;
-        }
-        manager.publish_snapshot();
+        manager.sync_voice_runtime_error();
         Ok((controller, manager))
     }
 
-    pub fn lifecycle(
+    pub fn begin_edit(
         &self,
-        operation_id: Option<u64>,
-    ) -> Result<ShortcutLifecycleSnapshot, String> {
-        self.state
-            .lock()
-            .map(|state| state.lifecycle.query_snapshot(operation_id))
-            .map_err(|error| error.to_string())
-    }
-
-    pub fn start_capture(
-        &self,
+        trace_id: String,
         expected_revision: u64,
-    ) -> Result<ShortcutLifecycleSnapshot, String> {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|error| error.to_string())?;
-        self.start_capture_locked(expected_revision)
-    }
-
-    fn start_capture_locked(
-        &self,
-        expected_revision: u64,
-    ) -> Result<ShortcutLifecycleSnapshot, String> {
-        let (operation_id, created) = {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            state
-                .lifecycle
-                .begin(ShortcutOperationKind::Capture, "正在准备快捷键录制。")
-        };
-        if !created {
-            return self.lifecycle(Some(operation_id));
-        }
-        self.suspend_engine();
-        self.publish_snapshot();
+    ) -> Result<ShortcutEditSession, String> {
+        validate_trace_id(&trace_id)?;
+        let _gate = self.operation_gate.lock().map_err(|error| error.to_string())?;
+        let started = Instant::now();
         let current = self.config.snapshot();
+        log::info!(
+            target: TRACE_TARGET,
+            "event=edit_begin_requested traceId={} editId=none expectedRevision={} currentRevision={} phase=begin enabled={}",
+            trace_id,
+            expected_revision,
+            current.revision,
+            current.enabled
+        );
+
+        let existing = self.current_edit()?;
+        if let Some(existing) = existing.as_ref() {
+            if existing.trace_id == trace_id
+                && existing.expected_revision == expected_revision
+                && current.revision == existing.expected_revision
+            {
+                let mut session = self.session_for(
+                    &current,
+                    existing.edit_id,
+                    trace_id,
+                    None,
+                    "正在录入新的快捷键。",
+                );
+                session.config_revision = existing.expected_revision;
+                return Ok(session);
+            }
+        }
+
         if current.revision != expected_revision {
-            return self.fail_operation_locked(
-                operation_id,
-                REVISION_CONFLICT,
+            metrics::counter!("shortcut.operation.failed", "error_code" => REVISION_CONFLICT)
+                .increment(1);
+            log::warn!(
+                target: TRACE_TARGET,
+                "event=edit_begin_failed traceId={} editId=0 expectedRevision={} currentRevision={} phase=revision durationMs={} result=failed errorCode={}",
+                trace_id,
+                expected_revision,
+                current.revision,
+                started.elapsed().as_millis(),
+                REVISION_CONFLICT
+            );
+            return Ok(self.session_for(
+                &current,
+                0,
+                trace_id,
+                Some(REVISION_CONFLICT),
                 "配置已被其他操作更新，请刷新后重试。",
-                true,
-                None,
+            ));
+        }
+
+        if existing.is_some() {
+            self.interrupt_active_edit_locked(
+                "superseded",
+                "新的换绑会话中断了上一轮录入。",
             );
         }
         let engine = match self.engine_handle() {
             Ok(engine) => engine,
-            Err(error) => {
-                return self.fail_operation_locked(
-                    operation_id,
+            Err(message) => {
+                self.set_runtime_error(Some(message.clone()));
+                self.log_engine(
+                    "edit_begin_failed",
+                    &trace_id,
+                    0,
+                    expected_revision,
+                    current.revision,
+                    "begin",
+                    started.elapsed().as_millis(),
+                    "failed",
                     HOOK_UNAVAILABLE,
-                    error.clone(),
-                    true,
-                    Some(error),
-                )
+                    "failed",
+                    &current.shortcut,
+                );
+                return Ok(self.session_for(
+                    &current,
+                    0,
+                    trace_id,
+                    Some(HOOK_UNAVAILABLE),
+                    &message,
+                ));
             }
         };
-        let prepared = match engine.prepare_capture() {
-            Ok(prepared) => prepared,
-            Err(error) => return self.fail_keyboard_engine_locked(operation_id, error),
-        };
-        {
+        engine.set_enabled(false);
+        let edit_id = {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            if state.lifecycle.operation_phase(operation_id)
-                != Some(ShortcutOperationPhase::Starting)
-            {
-                engine.cancel_capture(Some(operation_id));
-                return Ok(state.lifecycle.query_snapshot(Some(operation_id)));
-            }
-            state.capture = Some(CaptureTransaction {
-                operation_id,
-                hook_generation: prepared.hook_generation,
+            state.next_edit_id = state.next_edit_id.saturating_add(1).max(1);
+            let edit_id = state.next_edit_id;
+            state.edit = Some(ShortcutEditTransaction {
+                edit_id,
+                trace_id: trace_id.clone(),
                 expected_revision,
-                capture_attempt: 1,
-                release_timeout_started: false,
+                started_at: Instant::now(),
             });
-        }
-        let receipt = match engine.arm_capture(prepared, operation_id) {
-            Ok(receipt) => receipt,
-            Err(error) => return self.fail_keyboard_engine_locked(operation_id, error),
+            edit_id
         };
-        let entered_capture = {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            commit_armed_capture(&mut state, receipt)
-        };
-        if !entered_capture {
-            engine.cancel_capture(Some(operation_id));
-            return self.fail_operation_locked(
-                operation_id,
-                HOOK_UNAVAILABLE,
-                "快捷键捕获状态在握手提交前发生变化。",
-                true,
-                None,
-            );
-        }
-        metrics::counter!("shortcut.operation.started", "kind" => "capture").increment(1);
-        self.publish_snapshot();
-        self.schedule_capture_timeout(operation_id, receipt.hook_generation);
-        self.lifecycle(Some(operation_id))
+        metrics::counter!("shortcut.operation.started", "kind" => "edit").increment(1);
+        self.log_engine(
+            "runtime_suspended",
+            &trace_id,
+            edit_id,
+            expected_revision,
+            current.revision,
+            "begin",
+            started.elapsed().as_millis(),
+            "success",
+            "none",
+            "none",
+            &current.shortcut,
+        );
+        self.log_engine(
+            "edit_begin_completed",
+            &trace_id,
+            edit_id,
+            expected_revision,
+            current.revision,
+            "begin",
+            started.elapsed().as_millis(),
+            "success",
+            "none",
+            "none",
+            &current.shortcut,
+        );
+        Ok(self.session_for(
+            &current,
+            edit_id,
+            trace_id,
+            None,
+            "正在录入新的快捷键。",
+        ))
     }
 
-    pub fn cancel_operation(&self, operation_id: u64) -> Result<ShortcutLifecycleSnapshot, String> {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|error| error.to_string())?;
-        self.cancel_operation_locked(operation_id)
-    }
-
-    fn cancel_operation_locked(
+    pub fn commit_edit(
         &self,
-        operation_id: u64,
-    ) -> Result<ShortcutLifecycleSnapshot, String> {
-        let cancellable = {
-            let state = self.state.lock().map_err(|error| error.to_string())?;
-            matches!(
-                state.lifecycle.operation_phase(operation_id),
-                Some(ShortcutOperationPhase::Starting | ShortcutOperationPhase::Capturing)
-            )
+        trace_id: String,
+        edit_id: u64,
+        expected_revision: u64,
+        binding: ShortcutBinding,
+    ) -> Result<ShortcutEditOutcome, String> {
+        validate_trace_id(&trace_id)?;
+        let _gate = self.operation_gate.lock().map_err(|error| error.to_string())?;
+        let started = Instant::now();
+        let candidate_label = binding.display_label();
+        let current = self.config.snapshot();
+        log::info!(
+            target: TRACE_TARGET,
+            "event=commit_requested traceId={} editId={} expectedRevision={} currentRevision={} phase=commit candidateLabel={:?} enabled={}",
+            trace_id,
+            edit_id,
+            expected_revision,
+            current.revision,
+            candidate_label,
+            current.enabled
+        );
+
+        let Some(transaction) = self.current_edit()? else {
+            return Ok(self.outcome_for(
+                &current,
+                false,
+                edit_id,
+                trace_id,
+                false,
+                Some(HOOK_INTERRUPTED),
+                "本轮快捷键录入已经结束。",
+            ));
         };
-        if !cancellable {
-            return self.lifecycle(Some(operation_id));
+        if transaction.edit_id != edit_id || transaction.trace_id != trace_id {
+            return Ok(self.outcome_for(
+                &current,
+                false,
+                edit_id,
+                trace_id,
+                false,
+                Some(HOOK_INTERRUPTED),
+                "本轮快捷键录入已经结束。",
+            ));
         }
-        self.log_capture_diagnostics("cancel", operation_id);
-        if let Ok(engine) = self.engine_handle() {
-            engine.cancel_capture(Some(operation_id));
+        if transaction.expected_revision != expected_revision {
+            return Ok(self.fail_active_edit_locked(
+                &trace_id,
+                edit_id,
+                REVISION_CONFLICT,
+                "换绑会话的配置版本不一致，请重新录入。",
+                started,
+                &candidate_label,
+            ));
         }
-        let restore_result = self.restore_authoritative_runtime_locked(Some(operation_id));
-        let cancelled = {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            state.capture = None;
-            match restore_result {
-                Err(error) => {
-                    state.lifecycle.fail(
-                        operation_id,
-                        HOOK_UNAVAILABLE,
-                        "取消录制后无法恢复快捷键 Hook。",
-                        true,
-                        Some(error),
-                    );
-                    false
-                }
-                Ok(current) => {
-                    state.lifecycle.sync_authoritative_config(
-                        current.revision,
-                        current.enabled,
-                        current.shortcut,
-                        current.shortcut_binding,
-                    );
-                    state
-                        .lifecycle
-                        .cancel(operation_id, "已取消，原快捷键保持不变。");
-                    true
-                }
+        if current.revision != expected_revision {
+            return Ok(self.fail_active_edit_locked(
+                &trace_id,
+                edit_id,
+                REVISION_CONFLICT,
+                "配置已被其他操作更新，请重新录入。",
+                started,
+                &candidate_label,
+            ));
+        }
+        if let Err(failure) = validate_candidate(&binding) {
+            log::warn!(
+                target: TRACE_TARGET,
+                "event=validation_failed traceId={} editId={} expectedRevision={} currentRevision={} phase=validation durationMs={} candidateLabel={:?} result=failed errorCode={} message={:?}",
+                trace_id,
+                edit_id,
+                expected_revision,
+                current.revision,
+                started.elapsed().as_millis(),
+                candidate_label,
+                failure.code,
+                failure.message
+            );
+            return Ok(self.fail_active_edit_locked(
+                &trace_id,
+                edit_id,
+                failure.code,
+                &failure.message,
+                started,
+                &candidate_label,
+            ));
+        }
+        log::debug!(
+            target: TRACE_TARGET,
+            "event=validation_completed traceId={} editId={} phase=validation durationMs={} candidateLabel={:?}",
+            trace_id,
+            edit_id,
+            started.elapsed().as_millis(),
+            candidate_label
+        );
+
+        let unchanged = current
+            .shortcut_binding
+            .as_ref()
+            .is_some_and(|active| active.physically_equivalent(&binding));
+        let engine = match self.engine_handle() {
+            Ok(engine) => engine,
+            Err(message) => {
+                return Ok(self.fail_active_edit_locked(
+                    &trace_id,
+                    edit_id,
+                    HOOK_UNAVAILABLE,
+                    &message,
+                    started,
+                    &candidate_label,
+                ));
             }
         };
-        if cancelled {
-            metrics::counter!("shortcut.operation.cancelled", "kind" => "capture").increment(1);
-        } else {
-            metrics::counter!("shortcut.operation.failed", "error_code" => HOOK_UNAVAILABLE)
-                .increment(1);
-        }
-        self.sync_voice_runtime_error();
-        self.publish_snapshot();
-        self.lifecycle(Some(operation_id))
-    }
 
-    pub fn restore_default(
-        &self,
-        expected_revision: u64,
-    ) -> Result<ShortcutLifecycleSnapshot, String> {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let (operation_id, created) = {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            state.lifecycle.begin(
-                ShortcutOperationKind::RestoreDefault,
-                "正在准备恢复默认快捷键。",
-            )
-        };
-        if !created {
-            return self.lifecycle(Some(operation_id));
+        if current.enabled {
+            let hook_started = Instant::now();
+            self.log_engine(
+                "hook_reinstall_requested",
+                &trace_id,
+                edit_id,
+                expected_revision,
+                current.revision,
+                "hook",
+                hook_started.elapsed().as_millis(),
+                "started",
+                "none",
+                "none",
+                &candidate_label,
+            );
+            match engine.ensure_runtime_ready(true) {
+                Ok(_) => self.log_engine(
+                    "hook_reinstall_completed",
+                    &trace_id,
+                    edit_id,
+                    expected_revision,
+                    current.revision,
+                    "hook",
+                    hook_started.elapsed().as_millis(),
+                    "success",
+                    "none",
+                    "none",
+                    &candidate_label,
+                ),
+                Err(error) => {
+                    log::error!(
+                        target: TRACE_TARGET,
+                        "event=hook_reinstall_failed_detail traceId={} editId={} phase=hook durationMs={} errorKind={:?} error={:?}",
+                        trace_id,
+                        edit_id,
+                        hook_started.elapsed().as_millis(),
+                        error.kind,
+                        error.message
+                    );
+                    self.log_engine(
+                        "hook_reinstall_failed",
+                        &trace_id,
+                        edit_id,
+                        expected_revision,
+                        current.revision,
+                        "hook",
+                        hook_started.elapsed().as_millis(),
+                        "failed",
+                        HOOK_UNAVAILABLE,
+                        "pending",
+                        &candidate_label,
+                    );
+                    return Ok(self.fail_active_edit_locked(
+                        &trace_id,
+                        edit_id,
+                        HOOK_UNAVAILABLE,
+                        &error.message,
+                        started,
+                        &candidate_label,
+                    ));
+                }
+            }
         }
-        self.suspend_engine();
-        self.publish_snapshot();
-        self.run_binding_operation(
-            operation_id,
+
+        engine.set_enabled(false);
+        if let Err(message) = engine.set_binding(Some(&binding)) {
+            return Ok(self.fail_active_edit_locked(
+                &trace_id,
+                edit_id,
+                HOOK_UNAVAILABLE,
+                &message,
+                started,
+                &candidate_label,
+            ));
+        }
+        engine.set_enabled(current.enabled);
+        self.log_engine(
+            "runtime_binding_applied",
+            &trace_id,
+            edit_id,
             expected_revision,
-            Some(ShortcutBinding::default_physical()),
-            DEFAULT_SHORTCUT_LABEL.into(),
-            true,
-        )?;
-        self.lifecycle(Some(operation_id))
-    }
+            current.revision,
+            "runtime_apply",
+            started.elapsed().as_millis(),
+            "success",
+            "none",
+            "none",
+            &candidate_label,
+        );
 
-    pub fn undo(
-        &self,
-        change_id: u64,
-        expected_revision: u64,
-    ) -> Result<ShortcutLifecycleSnapshot, String> {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let (operation_id, created) = {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            state
-                .lifecycle
-                .begin(ShortcutOperationKind::Undo, "正在准备撤销快捷键变更。")
-        };
-        if !created {
-            return self.lifecycle(Some(operation_id));
-        }
-        self.suspend_engine();
-        self.publish_snapshot();
-        let transaction = self
-            .state
-            .lock()
-            .map_err(|error| error.to_string())?
-            .undo
-            .clone()
-            .filter(|undo| {
-                undo.change_id == change_id && undo.committed_revision == expected_revision
-            });
-        let Some(transaction) = transaction else {
-            return self.fail_operation_locked(
-                operation_id,
-                REVISION_CONFLICT,
-                "该快捷键变更已无法撤销。",
+        if unchanged {
+            self.finish_edit_success();
+            let outcome = self.outcome_for(
+                &current,
+                true,
+                edit_id,
+                trace_id.clone(),
                 false,
                 None,
+                "快捷键未变化。",
             );
-        };
-        let succeeded = self.run_binding_operation(
-            operation_id,
-            expected_revision,
-            transaction.binding,
-            transaction.label,
-            false,
-        )?;
-        if succeeded {
-            if let Ok(mut state) = self.state.lock() {
-                state.undo = None;
+            self.log_terminal(&outcome, "commit_completed", started, expected_revision, "none");
+            return Ok(outcome);
+        }
+
+        let persistence_started = Instant::now();
+        log::info!(
+            target: TRACE_TARGET,
+            "event=persistence_started traceId={} editId={} phase=persistence candidateLabel={:?}",
+            trace_id,
+            edit_id,
+            candidate_label
+        );
+        let mut next = current.clone();
+        next.shortcut = candidate_label.clone();
+        next.shortcut_binding = Some(binding);
+        next.schema_version = CURRENT_SCHEMA_VERSION;
+        next.revision = next.revision.saturating_add(1);
+        match self.config.commit_shortcut(expected_revision, next) {
+            Ok(committed) => {
+                self.finish_edit_success();
+                log::info!(
+                    target: TRACE_TARGET,
+                    "event=persistence_completed traceId={} editId={} phase=persistence durationMs={} currentRevision={} result=success",
+                    trace_id,
+                    edit_id,
+                    persistence_started.elapsed().as_millis(),
+                    committed.revision
+                );
+                let outcome = self.outcome_for(
+                    &committed,
+                    true,
+                    edit_id,
+                    trace_id,
+                    true,
+                    None,
+                    "快捷键已更新。",
+                );
+                self.log_terminal(&outcome, "commit_completed", started, expected_revision, "none");
+                metrics::counter!("shortcut.operation.completed", "kind" => "edit").increment(1);
+                Ok(outcome)
+            }
+            Err(error) => {
+                let (code, message) = match error {
+                    ShortcutStoreFailure::Conflict => (
+                        REVISION_CONFLICT,
+                        "配置已被其他操作更新，请重新录入。".to_string(),
+                    ),
+                    ShortcutStoreFailure::Storage(message) => (PERSISTENCE_FAILED, message),
+                };
+                log::warn!(
+                    target: TRACE_TARGET,
+                    "event=persistence_failed traceId={} editId={} phase=persistence durationMs={} result=failed errorCode={} message={:?}",
+                    trace_id,
+                    edit_id,
+                    persistence_started.elapsed().as_millis(),
+                    code,
+                    message
+                );
+                Ok(self.fail_active_edit_locked(
+                    &trace_id,
+                    edit_id,
+                    code,
+                    &message,
+                    started,
+                    &candidate_label,
+                ))
             }
         }
-        self.lifecycle(Some(operation_id))
+    }
+    pub fn cancel_edit(
+        &self,
+        trace_id: String,
+        edit_id: u64,
+    ) -> Result<ShortcutEditOutcome, String> {
+        validate_trace_id(&trace_id)?;
+        let _gate = self.operation_gate.lock().map_err(|error| error.to_string())?;
+        let started = Instant::now();
+        let current = self.config.snapshot();
+        log::info!(
+            target: TRACE_TARGET,
+            "event=cancel_requested traceId={} editId={} expectedRevision=none currentRevision={} phase=cancel",
+            trace_id,
+            edit_id,
+            current.revision
+        );
+        let Some(transaction) = self.current_edit()? else {
+            return Ok(self.outcome_for(
+                &current,
+                false,
+                edit_id,
+                trace_id,
+                false,
+                Some(HOOK_INTERRUPTED),
+                "本轮快捷键录入已经结束。",
+            ));
+        };
+        if transaction.trace_id != trace_id
+            || (edit_id != 0 && transaction.edit_id != edit_id)
+        {
+            return Ok(self.outcome_for(
+                &current,
+                false,
+                edit_id,
+                trace_id,
+                false,
+                Some(HOOK_INTERRUPTED),
+                "本轮快捷键录入已经结束。",
+            ));
+        }
+        let edit_id = transaction.edit_id;
+        self.take_edit(edit_id, &trace_id)?;
+        match self.restore_authoritative_runtime(false) {
+            Ok(restored) => {
+                self.set_runtime_error(None);
+                let outcome = self.outcome_for(
+                    &restored,
+                    true,
+                    edit_id,
+                    trace_id,
+                    false,
+                    None,
+                    "已取消，原快捷键保持不变。",
+                );
+                self.log_terminal(
+                    &outcome,
+                    "edit_cancelled",
+                    started,
+                    transaction.expected_revision,
+                    "success",
+                );
+                metrics::counter!("shortcut.operation.cancelled", "kind" => "edit").increment(1);
+                Ok(outcome)
+            }
+            Err(message) => {
+                self.set_runtime_error(Some(message.clone()));
+                let outcome = self.outcome_for(
+                    &self.config.snapshot(),
+                    false,
+                    edit_id,
+                    trace_id,
+                    false,
+                    Some(RUNTIME_ROLLBACK_FAILED),
+                    &format!("取消换绑后无法恢复原快捷键：{message}"),
+                );
+                self.log_terminal(
+                    &outcome,
+                    "rollback_failed",
+                    started,
+                    transaction.expected_revision,
+                    "failed",
+                );
+                Ok(outcome)
+            }
+        }
     }
 
-    pub fn set_enabled(&self, enabled: bool) -> Result<(), String> {
-        let _operation = self
-            .operation_gate
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let active_operation = self
-            .state
-            .lock()
-            .map_err(|error| error.to_string())?
-            .lifecycle
-            .active_operation_id();
-        if let Some(operation_id) = active_operation {
-            let _ = self.cancel_operation_locked(operation_id);
-        }
-        let current = self.config.snapshot();
-        let binding = current.shortcut_binding.clone();
-        let result = self.engine_handle().and_then(|engine| {
-            if enabled {
-                engine
-                    .ensure_runtime_ready(true)
-                    .map_err(|error| error.to_string())?;
-            }
-            engine.cancel_capture(None);
-            engine.set_enabled(enabled && binding.is_some());
-            Ok::<(), String>(())
-        });
-        if let Err(error) = result {
-            if let Ok(mut state) = self.state.lock() {
-                state.lifecycle.sync_authoritative_config(
-                    current.revision,
-                    current.enabled,
-                    current.shortcut,
-                    current.shortcut_binding,
-                );
-                state.lifecycle.set_runtime_error(error.clone());
-            }
-            self.sync_voice_runtime_error();
-            self.publish_snapshot();
-            return Err(error);
-        }
-        {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            state.lifecycle.sync_authoritative_config(
-                current.revision,
-                current.enabled,
-                current.shortcut,
-                current.shortcut_binding,
-            );
-            state.lifecycle.set_enabled(enabled);
-            state.capture = None;
-        }
-        self.sync_voice_runtime_error();
-        self.publish_snapshot();
+    pub fn record_trace(&self, input: ShortcutEditTraceInput) -> Result<(), String> {
+        input.validate()?;
+        log::debug!(
+            target: TRACE_TARGET,
+            "event=frontend_trace traceId={} editId={} eventSeq={} clientElapsedMs={} phase={} code={:?} key={:?} location={:?} repeat={:?} ctrl={:?} alt={:?} shift={:?} meta={:?} altGraph={:?} heldCodes={:?} candidateLabel={:?} candidateBinding={:?} reasonCode={:?}",
+            input.trace_id,
+            input.edit_id
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "none".into()),
+            input.event_seq,
+            input.elapsed_ms,
+            input.event.as_str(),
+            input.code,
+            input.key,
+            input.location,
+            input.repeat,
+            input.ctrl,
+            input.alt,
+            input.shift,
+            input.meta,
+            input.alt_graph,
+            input.held_codes,
+            input.candidate_label,
+            input.candidate_binding,
+            input.reason_code,
+        );
         Ok(())
     }
 
+    pub fn set_enabled(&self, _enabled: bool) -> Result<(), String> {
+        let _gate = self.operation_gate.lock().map_err(|error| error.to_string())?;
+        self.interrupt_active_edit_locked(
+            "enable_changed",
+            "启用状态变化中断了快捷键录入。",
+        );
+        let current = self.config.snapshot();
+        match self.restore_authoritative_runtime(current.enabled) {
+            Ok(_) => {
+                self.set_runtime_error(None);
+                Ok(())
+            }
+            Err(message) => {
+                self.set_runtime_error(Some(message.clone()));
+                Err(message)
+            }
+        }
+    }
+
     pub fn resume(&self) {
-        let Ok(_operation) = self.operation_gate.lock() else {
-            self.set_runtime_error("快捷键操作门闩已损坏。".into());
+        let Ok(_gate) = self.operation_gate.lock() else {
+            self.set_runtime_error(Some("快捷键操作门闩已损坏。".into()));
             return;
         };
-        let active_capture = self.state.lock().ok().and_then(|state| {
-            state
-                .lifecycle
-                .active_operation_id()
-                .filter(|operation_id| {
-                    state.lifecycle.operation_kind(*operation_id)
-                        == Some(ShortcutOperationKind::Capture)
-                })
-        });
-        if let Some(operation_id) = active_capture {
-            let _ = self.fail_operation_with_source_locked(
-                "resume",
-                operation_id,
-                HOOK_INTERRUPTED,
-                "系统状态变化中断了快捷键录制。",
-                true,
-                None,
-            );
-        }
-        let current = self.config.snapshot();
-        let binding = current.shortcut_binding.clone();
-        let enabled = current.enabled;
-        let result = self.engine_handle().and_then(|engine| {
-            engine
-                .ensure_runtime_ready(true)
-                .map_err(|error| error.to_string())?;
-            engine.set_binding(binding.as_ref())?;
-            engine.set_enabled(enabled && binding.is_some());
-            Ok(())
-        });
-        match result {
-            Ok(()) => {
-                if let Ok(mut state) = self.state.lock() {
-                    state.lifecycle.sync_authoritative_config(
-                        current.revision,
-                        current.enabled,
-                        current.shortcut,
-                        current.shortcut_binding,
-                    );
-                    state.lifecycle.restore_runtime_health();
-                }
-                self.sync_voice_runtime_error();
-                self.publish_snapshot();
-            }
-            Err(error) => self.set_runtime_error(error),
+        self.interrupt_active_edit_locked(
+            "system_resume",
+            "系统恢复中断了快捷键录入，请重新设置。",
+        );
+        match self.restore_authoritative_runtime(true) {
+            Ok(_) => self.set_runtime_error(None),
+            Err(message) => self.set_runtime_error(Some(message)),
         }
     }
 
     pub fn shutdown(&self) {
         let engine = {
-            let Ok(_operation) = self.operation_gate.lock() else {
+            let Ok(_gate) = self.operation_gate.lock() else {
                 return;
             };
+            if let Ok(mut state) = self.state.lock() {
+                state.edit = None;
+            }
             self.engine.lock().ok().and_then(|mut engine| engine.take())
         };
         if let Some(engine) = engine {
@@ -571,539 +878,234 @@ impl ShortcutManager {
             KeyboardEngineEvent::Released => {
                 self.controller.submit(&self.app, SessionEvent::Released)
             }
-            KeyboardEngineEvent::CaptureProgress {
-                capture_id,
-                hook_generation,
-                label,
-                binding,
-            } => self.publish_capture_progress(capture_id, hook_generation, label, binding),
-            KeyboardEngineEvent::CaptureCancelled {
-                capture_id,
-                hook_generation,
-            } => {
-                self.cancel_capture_from_engine(capture_id, hook_generation);
-            }
-            KeyboardEngineEvent::Captured(captured) => self.commit_capture(captured),
+            KeyboardEngineEvent::Interrupted => self.handle_hook_interrupted(),
         }
     }
 
-    fn publish_capture_progress(
-        &self,
-        operation_id: u64,
-        hook_generation: u64,
-        label: String,
-        binding: Option<ShortcutBinding>,
-    ) {
-        let Ok(_operation) = self.operation_gate.lock() else {
+    fn handle_hook_interrupted(&self) {
+        let Ok(_gate) = self.operation_gate.lock() else {
+            self.set_runtime_error(Some("快捷键操作门闩已损坏。".into()));
             return;
         };
-        let release_timeout_attempt = {
-            let Ok(mut state) = self.state.lock() else {
-                return;
-            };
-            if !state.capture.as_ref().is_some_and(|capture| {
-                capture.operation_id == operation_id && capture.hook_generation == hook_generation
-            }) {
-                return;
-            }
-            let changed =
-                state
-                    .lifecycle
-                    .update_candidate(operation_id, label.clone(), binding.clone());
-            if !changed {
-                return;
-            }
-            if binding.is_none() && label.is_empty() {
-                if let Some(capture) = state.capture.as_mut() {
-                    if capture.release_timeout_started {
-                        capture.capture_attempt = capture.capture_attempt.saturating_add(1);
-                        capture.release_timeout_started = false;
-                    }
-                }
-                None
-            } else {
-                let should_start = binding.is_some()
-                    && state.capture.as_ref().is_some_and(|capture| {
-                        capture.operation_id == operation_id
-                            && capture.hook_generation == hook_generation
-                            && !capture.release_timeout_started
-                    });
-                if should_start {
-                    state.capture.as_mut().map(|capture| {
-                        capture.release_timeout_started = true;
-                        capture.capture_attempt
-                    })
-                } else {
-                    None
-                }
-            }
-        };
-        log::debug!(
-            "shortcut operation candidate operationId={} label={}",
-            operation_id,
-            label
-        );
-        self.publish_snapshot();
-        if let Some(capture_attempt) = release_timeout_attempt {
-            self.schedule_release_timeout(operation_id, hook_generation, capture_attempt);
+        if self
+            .engine_handle()
+            .is_ok_and(|engine| engine.is_healthy())
+        {
+            log::debug!(
+                target: TRACE_TARGET,
+                "event=hook_interruption_ignored reason=already_recovered"
+            );
+            return;
         }
-    }
 
-    fn commit_capture(&self, captured: CapturedShortcut) {
-        let Ok(_operation) = self.operation_gate.lock() else {
-            return;
-        };
-        let capture = self
+        let message = "键盘 Hook 工作线程已退出；旧快捷键当前不可用，请重新设置或重新启用。";
+        let transaction = self
             .state
             .lock()
             .ok()
-            .and_then(|state| state.capture.clone())
-            .filter(|capture| {
-                capture.operation_id == captured.capture_id
-                    && capture.hook_generation == captured.hook_generation
-            });
-        let Some(capture) = capture else {
-            return;
-        };
-        {
-            let Ok(mut state) = self.state.lock() else {
-                return;
-            };
-            if !state.lifecycle.transition(
-                captured.capture_id,
-                ShortcutOperationPhase::Validating,
-                "正在验证新的快捷键。",
-            ) {
-                return;
-            }
-        }
-        self.publish_snapshot();
-        if let Err((code, message)) = validate_captured(&captured) {
-            let engine = match self.engine_handle() {
-                Ok(engine) => engine,
-                Err(error) => {
-                    let _ = self.fail_operation_locked(
-                        captured.capture_id,
-                        HOOK_UNAVAILABLE,
-                        error.clone(),
-                        true,
-                        Some(error),
-                    );
-                    return;
-                }
-            };
-            if let Err(error) = engine.retry_capture(
-                captured.capture_id,
-                captured.hook_generation,
-            ) {
-                let _ = self.fail_keyboard_engine_locked(captured.capture_id, error);
-                return;
-            }
-            let resumed = {
-                let Ok(mut state) = self.state.lock() else {
-                    engine.cancel_capture(Some(captured.capture_id));
-                    return;
-                };
-                let transaction_matches = state.capture.as_ref().is_some_and(|capture| {
-                    capture.operation_id == captured.capture_id
-                        && capture.hook_generation == captured.hook_generation
-                });
-                if transaction_matches {
-                    if let Some(capture) = state.capture.as_mut() {
-                        capture.capture_attempt = capture.capture_attempt.saturating_add(1);
-                        capture.release_timeout_started = false;
-                    }
-                    state
-                        .lifecycle
-                        .reject_candidate(captured.capture_id, code, message)
-                } else {
-                    false
-                }
-            };
-            if !resumed {
-                engine.cancel_capture(Some(captured.capture_id));
-                let _ = self.fail_operation_locked(
-                    captured.capture_id,
-                    HOOK_UNAVAILABLE,
-                    "快捷键验证后无法恢复录入状态。",
-                    true,
-                    None,
-                );
-                return;
-            }
-            metrics::counter!("shortcut.capture.validation_rejected", "error_code" => code)
-                .increment(1);
-            self.publish_snapshot();
-            return;
-        }
-        let _ = self.run_binding_operation(
-            captured.capture_id,
-            capture.expected_revision,
-            Some(captured.binding),
-            captured.label,
-            true,
+            .and_then(|mut state| state.edit.take());
+        self.set_runtime_error(Some(message.to_string()));
+        log::error!(
+            target: TRACE_TARGET,
+            "event=hook_interruption_confirmed phase=runtime result=failed errorCode={} message={:?}",
+            HOOK_INTERRUPTED,
+            message
         );
+        if let Some(transaction) = transaction {
+            let outcome = self.outcome_for(
+                &self.config.snapshot(),
+                false,
+                transaction.edit_id,
+                transaction.trace_id,
+                false,
+                Some(HOOK_INTERRUPTED),
+                message,
+            );
+            self.log_engine(
+                "edit_interrupted",
+                &outcome.trace_id,
+                outcome.edit_id,
+                transaction.expected_revision,
+                outcome.config_revision,
+                "interrupt",
+                transaction.started_at.elapsed().as_millis(),
+                "failed",
+                HOOK_INTERRUPTED,
+                "failed",
+                &outcome.active_label,
+            );
+            let _ = self.app.emit(
+                INTERRUPTED_EVENT,
+                ShortcutEditInterrupted { outcome },
+            );
+        }
     }
-
-    fn run_binding_operation(
-        &self,
-        operation_id: u64,
-        expected_revision: u64,
-        binding: Option<ShortcutBinding>,
-        label: String,
-        record_undo: bool,
-    ) -> Result<bool, String> {
-        let phase = self
-            .state
+    fn current_edit(&self) -> Result<Option<ShortcutEditTransaction>, String> {
+        self.state
             .lock()
-            .map_err(|error| error.to_string())?
-            .lifecycle
-            .operation_phase(operation_id);
-        if phase == Some(ShortcutOperationPhase::Starting) {
-            {
-                let mut state = self.state.lock().map_err(|error| error.to_string())?;
-                state.lifecycle.transition(
-                    operation_id,
-                    ShortcutOperationPhase::Validating,
-                    "正在验证目标快捷键。",
-                );
-            }
-            self.publish_snapshot();
-            if let Some(binding) = binding.as_ref() {
-                if let Err(message) = binding.validate() {
-                    self.fail_operation_locked(operation_id, INVALID_BINDING, message, true, None)?;
-                    return Ok(false);
-                }
-            }
-        }
-        let current = self.config.snapshot();
-        match binding_is_unchanged(&current, expected_revision, &binding) {
-            Ok(true) => {
-                let restore_runtime = self.restore_authoritative_runtime_locked(Some(operation_id));
-                if let Err(error) = restore_runtime {
-                    self.fail_operation_locked(
-                        operation_id,
-                        HOOK_UNAVAILABLE,
-                        "快捷键未变化，但运行时 Hook 恢复失败。",
-                        true,
-                        Some(error),
-                    )?;
-                    return Ok(false);
-                }
-                let message = if current.enabled {
-                    "快捷键未发生变化。"
-                } else {
-                    "快捷键未发生变化；当前语音输入已关闭。"
-                };
-                {
-                    let mut state = self.state.lock().map_err(|error| error.to_string())?;
-                    state.capture = None;
-                    state.lifecycle.succeed_unchanged(operation_id, message);
-                }
-                metrics::counter!("shortcut.operation.unchanged").increment(1);
-                self.sync_voice_runtime_error();
-                self.publish_snapshot();
-                return Ok(true);
-            }
-            Ok(false) => {}
-            Err(error) => {
-                self.fail_operation_locked(
-                    operation_id,
-                    error.code,
-                    error.message,
-                    error.retryable,
-                    error.runtime_error,
-                )?;
-                return Ok(false);
-            }
-        }
-        {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            if !state.lifecycle.transition(
-                operation_id,
-                ShortcutOperationPhase::Applying,
-                "正在应用新的快捷键。",
-            ) {
-                return Ok(false);
-            }
-        }
-        self.publish_snapshot();
-        match self.apply_binding_transaction(
-            operation_id,
-            binding,
-            label,
-            expected_revision,
-            record_undo,
-        ) {
-            Ok(()) => {
-                self.sync_voice_runtime_error();
-                self.publish_snapshot();
-                Ok(true)
-            }
-            Err(error) => {
-                self.fail_operation_locked(
-                    operation_id,
-                    error.code,
-                    error.message,
-                    error.retryable,
-                    error.runtime_error,
-                )?;
-                Ok(false)
-            }
-        }
+            .map(|state| state.edit.clone())
+            .map_err(|error| error.to_string())
     }
 
-    fn apply_binding_transaction(
-        &self,
-        operation_id: u64,
-        binding: Option<ShortcutBinding>,
-        label: String,
-        expected_revision: u64,
-        record_undo: bool,
-    ) -> Result<(), ApplyFailure> {
-        let engine = self.engine_handle().map_err(|error| ApplyFailure {
-            code: HOOK_UNAVAILABLE,
-            message: error,
-            retryable: true,
-            runtime_error: None,
-        })?;
-        engine.cancel_capture(Some(operation_id));
-        if self.config.snapshot().enabled {
-            engine
-                .ensure_runtime_ready(false)
-                .map_err(|error| ApplyFailure {
-                    code: HOOK_UNAVAILABLE,
-                    message: error.to_string(),
-                    retryable: true,
-                    runtime_error: None,
-                })?;
+    fn take_edit(&self, edit_id: u64, trace_id: &str) -> Result<(), String> {
+        let mut state = self.state.lock().map_err(|error| error.to_string())?;
+        if state.edit.as_ref().is_some_and(|transaction| {
+            transaction.edit_id == edit_id && transaction.trace_id == trace_id
+        }) {
+            state.edit = None;
         }
-        let transaction = execute_binding_transaction(
-            self.config.as_ref(),
-            engine.as_ref(),
-            binding.clone(),
-            label.clone(),
-            expected_revision,
-        )?;
-        let BindingCommit {
-            config: committed,
-            old_binding,
-            old_label,
-        } = transaction;
-        let operation_kind = {
-            let mut state = self.state.lock().map_err(|error| ApplyFailure {
-                code: RUNTIME_ROLLBACK_FAILED,
-                message: error.to_string(),
-                retryable: false,
-                runtime_error: Some("快捷键状态锁已损坏。".into()),
-            })?;
-            state.capture = None;
-            if record_undo {
-                state.undo = Some(UndoTransaction {
-                    change_id: operation_id,
-                    binding: old_binding,
-                    label: old_label,
-                    committed_revision: committed.revision,
-                });
-            }
-            let message = if committed.enabled {
-                format!("快捷键 {label} 已启用。")
-            } else {
-                format!("快捷键 {label} 已保存；开启语音输入后生效。")
-            };
-            let operation_kind = state.lifecycle.operation_kind(operation_id);
-            state
-                .lifecycle
-                .succeed(operation_id, committed.revision, label, binding, message);
-            operation_kind
-        };
-        let kind = match operation_kind {
-            Some(ShortcutOperationKind::Capture) => "capture",
-            Some(ShortcutOperationKind::RestoreDefault) => "restore_default",
-            Some(ShortcutOperationKind::Undo) => "undo",
-            None => "unknown",
-        };
-        metrics::counter!("shortcut.operation.succeeded", "kind" => kind).increment(1);
         Ok(())
     }
 
-    fn fail_keyboard_engine_locked(
-        &self,
-        operation_id: u64,
-        error: KeyboardEngineError,
-    ) -> Result<ShortcutLifecycleSnapshot, String> {
-        log::warn!(
-            "shortcut capture handshake failed operationId={} kind={:?} runtimeUnavailable={} message={}",
-            operation_id,
-            error.kind,
-            error.runtime_unavailable(),
-            error.message
-        );
-        self.fail_operation_with_source_locked(
-            "handshake",
-            operation_id,
-            HOOK_UNAVAILABLE,
-            error.message,
-            true,
-            None,
-        )
-    }
-
-    fn fail_operation_locked(
-        &self,
-        operation_id: u64,
-        code: &'static str,
-        message: impl Into<String>,
-        retryable: bool,
-        runtime_error: Option<String>,
-    ) -> Result<ShortcutLifecycleSnapshot, String> {
-        self.fail_operation_with_source_locked(
-            "failed",
-            operation_id,
-            code,
-            message,
-            retryable,
-            runtime_error,
-        )
-    }
-
-    fn fail_operation_with_source_locked(
-        &self,
-        source: &str,
-        operation_id: u64,
-        code: &'static str,
-        message: impl Into<String>,
-        retryable: bool,
-        runtime_error: Option<String>,
-    ) -> Result<ShortcutLifecycleSnapshot, String> {
-        let message = message.into();
-        self.log_capture_diagnostics(source, operation_id);
-        let restore_result = self.restore_authoritative_runtime_locked(Some(operation_id));
-        let restore_error = restore_result.as_ref().err().cloned();
-        let runtime_error = runtime_error.or(restore_error);
-        {
-            let mut state = self.state.lock().map_err(|error| error.to_string())?;
-            if let Ok(current) = restore_result {
-                state.lifecycle.sync_authoritative_config(
-                    current.revision,
-                    current.enabled,
-                    current.shortcut,
-                    current.shortcut_binding,
-                );
-            }
-            if state
-                .capture
-                .as_ref()
-                .is_some_and(|capture| capture.operation_id == operation_id)
-            {
-                state.capture = None;
-            }
-            state
-                .lifecycle
-                .fail(operation_id, code, message, retryable, runtime_error);
+    fn finish_edit_success(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.edit = None;
+            state.runtime_error = None;
         }
-        metrics::counter!("shortcut.operation.failed", "error_code" => code).increment(1);
         self.sync_voice_runtime_error();
-        self.publish_snapshot();
-        self.lifecycle(Some(operation_id))
     }
 
-    fn cancel_capture_from_engine(&self, operation_id: u64, hook_generation: u64) {
-        let Ok(_operation) = self.operation_gate.lock() else {
-            return;
-        };
-        let matches = self.state.lock().ok().is_some_and(|state| {
-            state.capture.as_ref().is_some_and(|capture| {
-                capture.operation_id == operation_id && capture.hook_generation == hook_generation
-            })
-        });
-        if matches {
-            let _ = self.cancel_operation_locked(operation_id);
-        }
-    }
-
-    fn capture_timeout(
+    fn fail_active_edit_locked(
         &self,
-        operation_id: u64,
-        hook_generation: u64,
-        capture_attempt: Option<u64>,
-    ) {
-        let Ok(_operation) = self.operation_gate.lock() else {
-            return;
-        };
-        let active = self.state.lock().ok().is_some_and(|state| {
-            state.capture.as_ref().is_some_and(|capture| {
-                capture_timeout_matches(
-                    capture,
-                    operation_id,
-                    hook_generation,
-                    state.lifecycle.operation_phase(operation_id),
-                    capture_attempt,
-                )
+        trace_id: &str,
+        edit_id: u64,
+        code: &'static str,
+        message: &str,
+        started: Instant,
+        candidate_label: &str,
+    ) -> ShortcutEditOutcome {
+        let expected_revision = self
+            .current_edit()
+            .ok()
+            .flatten()
+            .filter(|transaction| {
+                transaction.edit_id == edit_id && transaction.trace_id == trace_id
             })
-        });
-        if !active {
-            return;
-        }
-        let (code, message) = if capture_attempt.is_some() {
-            (
-                RELEASE_TIMEOUT_CODE,
-                "等待按键全部释放超时，快捷键配置未更改。",
-            )
-        } else {
-            (
-                CAPTURE_TIMEOUT_CODE,
-                "等待快捷键输入超时，快捷键配置未更改。",
-            )
-        };
-        let _ = self.fail_operation_with_source_locked(
-            "timeout",
-            operation_id,
+            .map(|transaction| transaction.expected_revision)
+            .unwrap_or_else(|| self.config.snapshot().revision);
+        let _ = self.take_edit(edit_id, trace_id);
+        log::warn!(
+            target: TRACE_TARGET,
+            "event=rollback_started traceId={} editId={} phase=rollback candidateLabel={:?} errorCode={} message={:?}",
+            trace_id,
+            edit_id,
+            candidate_label,
             code,
-            message,
-            true,
-            None,
+            message
         );
-    }
-
-    fn schedule_capture_timeout(&self, operation_id: u64, hook_generation: u64) {
-        self.schedule_timeout(operation_id, hook_generation, CAPTURE_TIMEOUT, None);
-    }
-
-    fn schedule_release_timeout(
-        &self,
-        operation_id: u64,
-        hook_generation: u64,
-        capture_attempt: u64,
-    ) {
-        self.schedule_timeout(
-            operation_id,
-            hook_generation,
-            RELEASE_TIMEOUT,
-            Some(capture_attempt),
-        );
-    }
-
-    fn schedule_timeout(
-        &self,
-        operation_id: u64,
-        hook_generation: u64,
-        delay: Duration,
-        capture_attempt: Option<u64>,
-    ) {
-        let app = self.app.clone();
-        tauri::async_runtime::spawn(async move {
-            tokio::time::sleep(delay).await;
-            if let Some(manager) = app.try_state::<Arc<ShortcutManager>>() {
-                manager.capture_timeout(operation_id, hook_generation, capture_attempt);
+        match self.restore_authoritative_runtime(false) {
+            Ok(current) => {
+                self.set_runtime_error(None);
+                let outcome = self.outcome_for(
+                    &current,
+                    false,
+                    edit_id,
+                    trace_id.to_string(),
+                    false,
+                    Some(code),
+                    message,
+                );
+                self.log_terminal(
+                    &outcome,
+                    "rollback_completed",
+                    started,
+                    expected_revision,
+                    "success",
+                );
+                metrics::counter!("shortcut.operation.failed", "error_code" => code).increment(1);
+                outcome
             }
-        });
+            Err(rollback_error) => {
+                let runtime_message =
+                    format!("{message}；恢复原快捷键失败：{rollback_error}");
+                self.set_runtime_error(Some(runtime_message.clone()));
+                let outcome = self.outcome_for(
+                    &self.config.snapshot(),
+                    false,
+                    edit_id,
+                    trace_id.to_string(),
+                    false,
+                    Some(RUNTIME_ROLLBACK_FAILED),
+                    &runtime_message,
+                );
+                self.log_terminal(
+                    &outcome,
+                    "rollback_failed",
+                    started,
+                    expected_revision,
+                    "failed",
+                );
+                metrics::counter!(
+                    "shortcut.operation.failed",
+                    "error_code" => RUNTIME_ROLLBACK_FAILED
+                )
+                .increment(1);
+                outcome
+            }
+        }
     }
 
-    fn suspend_engine(&self) {
-        if let Ok(engine) = self.engine_handle() {
-            engine.set_enabled(false);
+    fn interrupt_active_edit_locked(&self, source: &str, message: &str) {
+        let transaction = self.state.lock().ok().and_then(|mut state| state.edit.take());
+        let Some(transaction) = transaction else {
+            return;
+        };
+        let restore = self.restore_authoritative_runtime(false);
+        let (code, final_message) = match restore {
+            Ok(_) => {
+                self.set_runtime_error(None);
+                (HOOK_INTERRUPTED, message.to_string())
+            }
+            Err(error) => {
+                let final_message = format!("{message}；恢复快捷键失败：{error}");
+                self.set_runtime_error(Some(final_message.clone()));
+                (RUNTIME_ROLLBACK_FAILED, final_message)
+            }
+        };
+        let outcome = self.outcome_for(
+            &self.config.snapshot(),
+            false,
+            transaction.edit_id,
+            transaction.trace_id,
+            false,
+            Some(code),
+            &final_message,
+        );
+        log::warn!(
+            target: TRACE_TARGET,
+            "event=edit_interrupted traceId={} editId={} expectedRevision={} currentRevision={} source={} phase=interrupt totalDurationMs={} result=failed errorCode={} message={:?}",
+            outcome.trace_id,
+            outcome.edit_id,
+            transaction.expected_revision,
+            outcome.config_revision,
+            source,
+            transaction.started_at.elapsed().as_millis(),
+            code,
+            final_message
+        );
+        let _ = self.app.emit(
+            INTERRUPTED_EVENT,
+            ShortcutEditInterrupted {
+                outcome: outcome.clone(),
+            },
+        );
+    }
+
+    fn restore_authoritative_runtime(&self, force_reinstall: bool) -> Result<AppConfig, String> {
+        let current = self.config.snapshot();
+        let engine = self.engine_handle()?;
+        engine.set_enabled(false);
+        engine.set_binding(current.shortcut_binding.as_ref())?;
+        if current.enabled {
+            if current.shortcut_binding.is_none() {
+                return Err("当前快捷键无法映射为物理按键，运行时未恢复。".to_string());
+            }
+            engine
+                .ensure_runtime_ready(force_reinstall)
+                .map_err(|error| error.message)?;
+            engine.set_enabled(true);
         }
+        Ok(current)
     }
 
     fn engine_handle(&self) -> Result<Arc<WindowsKeyboardEngine>, String> {
@@ -1115,644 +1117,319 @@ impl ShortcutManager {
             .ok_or_else(|| "物理快捷键引擎未运行。".to_string())
     }
 
-    fn restore_authoritative_runtime_locked(
-        &self,
-        capture_id: Option<u64>,
-    ) -> Result<AppConfig, String> {
-        let current = self.config.snapshot();
-        let binding = current.shortcut_binding.as_ref();
-        let engine = self.engine_handle()?;
-        engine.cancel_capture(capture_id);
-        engine.set_binding(binding)?;
-        if current.enabled && binding.is_some() {
-            engine
-                .ensure_runtime_ready(false)
-                .map_err(|error| error.to_string())?;
-            engine.set_enabled(true);
-        } else {
-            engine.set_enabled(false);
-        }
-        Ok(current)
-    }
-
-    fn log_capture_diagnostics(&self, source: &str, operation_id: u64) {
-        let (phase, transaction_generation) = self
-            .state
-            .lock()
-            .map(|state| {
-                (
-                    state.lifecycle.operation_phase(operation_id),
-                    state.capture.as_ref().and_then(|capture| {
-                        (capture.operation_id == operation_id).then_some(capture.hook_generation)
-                    }),
-                )
-            })
-            .unwrap_or((None, None));
-        let Ok(engine) = self.engine_handle() else {
-            log::warn!(
-                "shortcut capture diagnostics operationId={} source={} phase={:?} engine=missing",
-                operation_id,
-                source,
-                phase
-            );
-            return;
+    fn runtime_state(&self, config: &AppConfig) -> ShortcutRuntimeState {
+        let Ok(state) = self.state.lock() else {
+            return ShortcutRuntimeState::Error;
         };
-        let diagnostics = engine.capture_diagnostics();
-        log::info!(
-            "shortcut capture diagnostics operationId={} source={} phase={:?} hookGeneration={} captureId={} observed={} emitted={} dropped={} hookAlive={} hookWorkerAlive={} dispatchAlive={}",
-            operation_id,
-            source,
-            phase,
-            transaction_generation.unwrap_or(diagnostics.hook_generation),
-            diagnostics.capture_id,
-            diagnostics.observed_events,
-            diagnostics.emitted_events,
-            diagnostics.dropped_events,
-            diagnostics.hook_alive,
-            diagnostics.hook_worker_alive,
-            diagnostics.dispatch_alive
-        );
+        if state.runtime_error.is_some() {
+            ShortcutRuntimeState::Error
+        } else if !config.enabled {
+            ShortcutRuntimeState::Disabled
+        } else if state.edit.is_some() {
+            ShortcutRuntimeState::Suspended
+        } else {
+            ShortcutRuntimeState::Active
+        }
     }
 
-    fn set_runtime_error(&self, message: String) {
-        metrics::counter!("shortcut.runtime.error").increment(1);
+    fn session_for(
+        &self,
+        config: &AppConfig,
+        edit_id: u64,
+        trace_id: String,
+        error_code: Option<&str>,
+        message: &str,
+    ) -> ShortcutEditSession {
+        ShortcutEditSession {
+            edit_id,
+            trace_id,
+            config_revision: config.revision,
+            active_label: config.shortcut.clone(),
+            active_binding: config.shortcut_binding.clone(),
+            runtime_state: self.runtime_state(config),
+            error_code: error_code.map(str::to_string),
+            message: message.to_string(),
+        }
+    }
+
+    fn outcome_for(
+        &self,
+        config: &AppConfig,
+        success: bool,
+        edit_id: u64,
+        trace_id: String,
+        changed: bool,
+        error_code: Option<&str>,
+        message: &str,
+    ) -> ShortcutEditOutcome {
+        ShortcutEditOutcome {
+            success,
+            edit_id,
+            trace_id,
+            config_revision: config.revision,
+            active_label: config.shortcut.clone(),
+            active_binding: config.shortcut_binding.clone(),
+            runtime_state: self.runtime_state(config),
+            changed,
+            error_code: error_code.map(str::to_string),
+            message: message.to_string(),
+        }
+    }
+
+    fn set_runtime_error(&self, message: Option<String>) {
+        if message.is_some() {
+            metrics::counter!("shortcut.runtime.error").increment(1);
+        }
         if let Ok(mut state) = self.state.lock() {
-            state.lifecycle.set_runtime_error(message);
+            state.runtime_error = message;
         }
         self.sync_voice_runtime_error();
-        self.publish_snapshot();
     }
 
     fn sync_voice_runtime_error(&self) {
-        let runtime_error = self.state.lock().ok().and_then(|state| {
-            let snapshot = state.lifecycle.snapshot();
-            (snapshot.runtime.state == ShortcutRuntimeState::Error)
-                .then_some(snapshot.runtime.message)
-        });
-        if let Ok(mut runtime) = self.runtime.lock() {
+        let runtime_error = self
+            .state
+            .lock()
+            .ok()
+            .and_then(|state| state.runtime_error.clone());
+        let payload = if let Ok(mut runtime) = self.runtime.lock() {
             runtime.shortcut_registration_error = runtime_error;
-        }
-    }
-
-    fn publish_snapshot(&self) {
-        let snapshot = match self.state.lock() {
-            Ok(state) => state.lifecycle.snapshot(),
-            Err(error) => {
-                log::error!("failed to publish shortcut lifecycle: {error}");
-                return;
-            }
+            Some(runtime.voice_state_payload())
+        } else {
+            None
         };
-        let should_log = self
-            .last_logged_sequence
-            .swap(snapshot.sequence, Ordering::AcqRel)
-            != snapshot.sequence;
-        if should_log {
-            if let Some(operation) = snapshot.operation.as_ref() {
-                if operation.phase.is_active() {
-                    log::info!(
-                        "shortcut lifecycle operationId={} kind={:?} phase={:?}",
-                        operation.operation_id,
-                        operation.kind,
-                        operation.phase
-                    );
+        if let Some(payload) = payload {
+            let _ = self.app.emit("voice_state_changed", payload);
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn log_engine(
+        &self,
+        event: &str,
+        trace_id: &str,
+        edit_id: u64,
+        expected_revision: u64,
+        current_revision: u64,
+        phase: &str,
+        duration_ms: u128,
+        result: &str,
+        error_code: &str,
+        rollback_result: &str,
+        candidate_label: &str,
+    ) {
+        match self.engine_handle() {
+            Ok(engine) => {
+                let diagnostics = engine.diagnostics();
+                let level = if error_code == RUNTIME_ROLLBACK_FAILED
+                    || event == "hook_reinstall_failed"
+                {
+                    log::Level::Error
+                } else if result == "failed" {
+                    log::Level::Warn
                 } else {
-                    log::info!(
-                        "shortcut lifecycle operationId={} kind={:?} phase={:?} errorCode={} changed={} candidate={}",
-                        operation.operation_id,
-                        operation.kind,
-                        operation.phase,
-                        operation.error_code.as_deref().unwrap_or("none"),
-                        match operation.changed {
-                            Some(true) => "true",
-                            Some(false) => "false",
-                            None => "none",
-                        },
-                        operation.candidate_label.as_deref().unwrap_or("none")
-                    );
-                }
+                    log::Level::Info
+                };
+                log::log!(
+                    target: TRACE_TARGET,
+                    level,
+                    "event={} traceId={} editId={} expectedRevision={} currentRevision={} phase={} durationMs={} totalDurationMs={} hookGeneration={} observed={} emitted={} dropped={} hookHealthy={} hookWorkerAlive={} dispatchAlive={} enabled={} candidateLabel={:?} result={} errorCode={} rollbackResult={}",
+                    event,
+                    trace_id,
+                    edit_id,
+                    expected_revision,
+                    current_revision,
+                    phase,
+                    duration_ms,
+                    duration_ms,
+                    diagnostics.hook_generation,
+                    diagnostics.observed_events,
+                    diagnostics.emitted_events,
+                    diagnostics.dropped_events,
+                    diagnostics.hook_healthy,
+                    diagnostics.hook_worker_alive,
+                    diagnostics.dispatch_alive,
+                    diagnostics.enabled,
+                    candidate_label,
+                    result,
+                    error_code,
+                    rollback_result,
+                );
+            }
+            Err(_) => {
+                let level = if error_code == RUNTIME_ROLLBACK_FAILED || result == "failed" {
+                    log::Level::Error
+                } else {
+                    log::Level::Info
+                };
+                log::log!(
+                    target: TRACE_TARGET,
+                    level,
+                    "event={} traceId={} editId={} expectedRevision={} currentRevision={} phase={} durationMs={} totalDurationMs={} engine=missing candidateLabel={:?} result={} errorCode={} rollbackResult={}",
+                    event,
+                    trace_id,
+                    edit_id,
+                    expected_revision,
+                    current_revision,
+                    phase,
+                    duration_ms,
+                    duration_ms,
+                    candidate_label,
+                    result,
+                    error_code,
+                    rollback_result,
+                );
             }
         }
-        if let Err(error) = self.app.emit(LIFECYCLE_EVENT, snapshot) {
-            log::warn!("failed to emit shortcut lifecycle: {error}");
-        }
+    }
+
+    fn log_terminal(
+        &self,
+        outcome: &ShortcutEditOutcome,
+        event: &str,
+        started: Instant,
+        expected_revision: u64,
+        rollback_result: &str,
+    ) {
+        self.log_engine(
+            event,
+            &outcome.trace_id,
+            outcome.edit_id,
+            expected_revision,
+            outcome.config_revision,
+            "terminal",
+            started.elapsed().as_millis(),
+            if outcome.success { "success" } else { "failed" },
+            outcome.error_code.as_deref().unwrap_or("none"),
+            rollback_result,
+            &outcome.active_label,
+        );
     }
 }
-
-fn binding_is_unchanged(
-    current: &AppConfig,
-    expected_revision: u64,
-    binding: &Option<ShortcutBinding>,
-) -> Result<bool, ApplyFailure> {
-    if current.revision != expected_revision {
-        return Err(ApplyFailure {
-            code: REVISION_CONFLICT,
-            message: "配置已被其他操作更新，请刷新后重试。".into(),
-            retryable: true,
-            runtime_error: None,
-        });
-    }
-    Ok(
-        match (current.shortcut_binding.as_ref(), binding.as_ref()) {
-            (Some(current), Some(candidate)) => current.physically_equivalent(candidate),
-            (None, None) => true,
-            _ => false,
-        },
-    )
-}
-
-fn commit_armed_capture(state: &mut ManagerState, receipt: CaptureArmReceipt) -> bool {
-    let transaction_matches = state.capture.as_ref().is_some_and(|capture| {
-        capture.operation_id == receipt.operation_id
-            && capture.hook_generation == receipt.hook_generation
-    });
-    transaction_matches
-        && state.lifecycle.transition(
-            receipt.operation_id,
-            ShortcutOperationPhase::Capturing,
-            "请按下新的物理快捷键，松开后自动保存。",
-        )
-}
-
-fn validate_captured(captured: &CapturedShortcut) -> Result<(), (&'static str, String)> {
-    captured
-        .binding
-        .validate()
-        .map_err(|message| (INVALID_BINDING, message))?;
-    if captured.label.ends_with("F12") {
-        return Err((
-            RESERVED_BINDING,
-            "F12 由 Windows 调试器保留，不能作为语音快捷键。".into(),
-        ));
-    }
-    let has_alt = captured
-        .binding
-        .modifiers
-        .iter()
-        .any(|modifier| modifier.kind == ModifierKind::Alt);
-    let has_ctrl = captured
-        .binding
-        .modifiers
-        .iter()
-        .any(|modifier| modifier.kind == ModifierKind::Control);
-    let has_shift = captured
-        .binding
-        .modifiers
-        .iter()
-        .any(|modifier| modifier.kind == ModifierKind::Shift);
-    if has_alt && !has_ctrl && !has_shift && captured.label.ends_with("Tab") {
-        return Err((RESERVED_BINDING, "Alt+Tab 是系统切换窗口快捷键。".into()));
-    }
-    if has_ctrl && has_alt && captured.label.ends_with("Delete") {
-        return Err((
-            RESERVED_BINDING,
-            "Ctrl+Alt+Delete 是系统安全快捷键。".into(),
-        ));
+fn validate_trace_id(trace_id: &str) -> Result<(), String> {
+    if trace_id.is_empty()
+        || trace_id.len() > 64
+        || !trace_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err("快捷键 traceId 无效。".into());
     }
     Ok(())
 }
 
-fn execute_binding_transaction(
-    store: &impl ShortcutConfigStore,
-    runtime: &impl ShortcutBindingRuntime,
-    binding: Option<ShortcutBinding>,
-    label: String,
-    expected_revision: u64,
-) -> Result<BindingCommit, ApplyFailure> {
-    let current = store.shortcut_snapshot();
-    if current.revision != expected_revision {
-        return Err(ApplyFailure {
-            code: REVISION_CONFLICT,
-            message: "配置已被其他操作更新，请刷新后重试。".into(),
-            retryable: true,
-            runtime_error: None,
+fn validate_candidate(binding: &ShortcutBinding) -> Result<(), EditFailure> {
+    binding.validate().map_err(|message| EditFailure {
+        code: INVALID_BINDING,
+        message,
+    })?;
+    let has = |kind| binding.modifiers.iter().any(|modifier| modifier.kind == kind);
+    let trigger = binding.trigger;
+    let reserved = if trigger == PhysicalKeyId::new(0x58, false) {
+        Some("F12 由 Windows 调试器保留，不能作为语音快捷键。")
+    } else if trigger == PhysicalKeyId::new(0x53, true)
+        && has(ModifierKind::Control)
+        && has(ModifierKind::Alt)
+    {
+        Some("Ctrl+Alt+Delete 是系统安全快捷键。")
+    } else if trigger == PhysicalKeyId::new(0x01, false)
+        && has(ModifierKind::Control)
+        && has(ModifierKind::Shift)
+    {
+        Some("Ctrl+Shift+Escape 是系统任务管理器快捷键。")
+    } else if trigger == PhysicalKeyId::new(0x0f, false) && has(ModifierKind::Alt) {
+        Some("Alt+Tab 是系统切换窗口快捷键。")
+    } else if trigger == PhysicalKeyId::new(0x3e, false) && has(ModifierKind::Alt) {
+        Some("Alt+F4 是系统关闭窗口快捷键。")
+    } else if trigger == PhysicalKeyId::new(0x26, false) && has(ModifierKind::Win) {
+        Some("Win+L 是系统锁屏快捷键。")
+    } else {
+        None
+    };
+    if let Some(message) = reserved {
+        return Err(EditFailure {
+            code: RESERVED_BINDING,
+            message: message.into(),
         });
     }
-    let old_binding = current.shortcut_binding.clone();
-    let old_label = current.shortcut.clone();
-    let enabled = current.enabled;
-    runtime
-        .replace_binding(binding.as_ref())
-        .map_err(|message| ApplyFailure {
-            code: HOOK_UNAVAILABLE,
-            message,
-            retryable: true,
-            runtime_error: None,
-        })?;
-    runtime.enable_binding(enabled && binding.is_some());
-
-    let mut next = current;
-    next.shortcut = label;
-    next.shortcut_binding = binding;
-    next.schema_version = CURRENT_SCHEMA_VERSION;
-    next.revision = next.revision.saturating_add(1);
-    match store.commit_shortcut(expected_revision, next) {
-        Ok(config) => Ok(BindingCommit {
-            config,
-            old_binding,
-            old_label,
-        }),
-        Err(error) => {
-            let (code, message) = match error {
-                ShortcutStoreFailure::Conflict => (
-                    REVISION_CONFLICT,
-                    "配置已被其他操作更新，请刷新后重试。".into(),
-                ),
-                ShortcutStoreFailure::Storage(message) => (PERSISTENCE_FAILED, message),
-            };
-            let rollback = runtime.replace_binding(old_binding.as_ref()).map(|()| {
-                runtime.enable_binding(enabled && old_binding.is_some());
-            });
-            match rollback {
-                Ok(()) => Err(ApplyFailure {
-                    code,
-                    message,
-                    retryable: true,
-                    runtime_error: None,
-                }),
-                Err(rollback_error) => Err(ApplyFailure {
-                    code: RUNTIME_ROLLBACK_FAILED,
-                    message: format!("{message}；恢复原快捷键失败：{rollback_error}"),
-                    retryable: false,
-                    runtime_error: Some(format!(
-                        "快捷键配置保存失败，且原运行时绑定恢复失败：{rollback_error}"
-                    )),
-                }),
-            }
-        }
-    }
-}
-
-fn capture_timeout_matches(
-    capture: &CaptureTransaction,
-    operation_id: u64,
-    hook_generation: u64,
-    phase: Option<ShortcutOperationPhase>,
-    capture_attempt: Option<u64>,
-) -> bool {
-    capture.operation_id == operation_id
-        && capture.hook_generation == hook_generation
-        && phase == Some(ShortcutOperationPhase::Capturing)
-        && match capture_attempt {
-            Some(attempt) => {
-                capture.release_timeout_started && capture.capture_attempt == attempt
-            }
-            None => !capture.release_timeout_started,
-        }
+    Ok(())
 }
 
 #[cfg(test)]
-mod transaction_tests {
+mod tests {
     use super::*;
-    use crate::physical_shortcut::PhysicalKeyId;
-    use std::cell::{Cell, RefCell};
+    use crate::physical_shortcut::{ModifierBinding, ModifierSide};
 
-    #[derive(Clone, Copy)]
-    enum CommitMode {
-        Success,
-        Conflict,
-        Storage,
-    }
-
-    struct FakeStore {
-        current: RefCell<AppConfig>,
-        mode: CommitMode,
-    }
-
-    impl ShortcutConfigStore for FakeStore {
-        fn shortcut_snapshot(&self) -> AppConfig {
-            self.current.borrow().clone()
-        }
-
-        fn commit_shortcut(
-            &self,
-            expected_revision: u64,
-            next: AppConfig,
-        ) -> Result<AppConfig, ShortcutStoreFailure> {
-            match self.mode {
-                CommitMode::Conflict => Err(ShortcutStoreFailure::Conflict),
-                CommitMode::Storage => Err(ShortcutStoreFailure::Storage("disk full".into())),
-                CommitMode::Success => {
-                    if self.current.borrow().revision != expected_revision {
-                        return Err(ShortcutStoreFailure::Conflict);
-                    }
-                    *self.current.borrow_mut() = next.clone();
-                    Ok(next)
-                }
-            }
+    fn binding(
+        modifier: Option<ModifierKind>,
+        trigger: PhysicalKeyId,
+    ) -> ShortcutBinding {
+        ShortcutBinding {
+            modifiers: modifier
+                .map(|kind| {
+                    vec![ModifierBinding {
+                        kind,
+                        side: ModifierSide::Left,
+                    }]
+                })
+                .unwrap_or_default(),
+            trigger,
         }
     }
 
-    struct FakeRuntime {
-        binding: RefCell<Option<ShortcutBinding>>,
-        enabled: Cell<bool>,
-        replace_calls: Cell<usize>,
-        fail_on_call: Option<usize>,
-    }
-
-    impl ShortcutBindingRuntime for FakeRuntime {
-        fn replace_binding(&self, binding: Option<&ShortcutBinding>) -> Result<(), String> {
-            let call = self.replace_calls.get() + 1;
-            self.replace_calls.set(call);
-            if self.fail_on_call == Some(call) {
-                return Err(format!("runtime replace {call} failed"));
-            }
-            *self.binding.borrow_mut() = binding.cloned();
-            Ok(())
-        }
-
-        fn enable_binding(&self, enabled: bool) {
-            self.enabled.set(enabled);
+    #[test]
+    fn reserved_windows_combinations_are_rejected() {
+        for candidate in [
+            binding(Some(ModifierKind::Alt), PhysicalKeyId::new(0x0f, false)),
+            binding(Some(ModifierKind::Alt), PhysicalKeyId::new(0x3e, false)),
+            binding(Some(ModifierKind::Win), PhysicalKeyId::new(0x26, false)),
+            binding(None, PhysicalKeyId::new(0x58, false)),
+        ] {
+            assert_eq!(
+                validate_candidate(&candidate).unwrap_err().code,
+                RESERVED_BINDING
+            );
         }
     }
 
-    fn fixture(
-        mode: CommitMode,
-        fail_on_call: Option<usize>,
-    ) -> (FakeStore, FakeRuntime, ShortcutBinding, ShortcutBinding) {
-        let mut current = AppConfig::default();
-        current.revision = 3;
-        current.enabled = true;
-        let old = ShortcutBinding::default_physical();
-        current.shortcut = DEFAULT_SHORTCUT_LABEL.into();
-        current.shortcut_binding = Some(old.clone());
-        let mut next = old.clone();
-        next.trigger = PhysicalKeyId::new(0x2f, false);
-        (
-            FakeStore {
-                current: RefCell::new(current),
-                mode,
-            },
-            FakeRuntime {
-                binding: RefCell::new(Some(old.clone())),
-                enabled: Cell::new(true),
-                replace_calls: Cell::new(0),
-                fail_on_call,
-            },
-            old,
-            next,
-        )
-    }
-
     #[test]
-    fn runtime_replace_failure_does_not_touch_config() {
-        let (store, runtime, old, next) = fixture(CommitMode::Success, Some(1));
-        let failure = execute_binding_transaction(&store, &runtime, Some(next), "next".into(), 3)
-            .unwrap_err();
-        assert_eq!(failure.code, HOOK_UNAVAILABLE);
-        assert_eq!(store.shortcut_snapshot().revision, 3);
-        assert_eq!(runtime.binding.borrow().clone(), Some(old));
-    }
-
-    #[test]
-    fn stale_revision_is_rejected_before_runtime_replacement() {
-        let (store, runtime, old, next) = fixture(CommitMode::Success, None);
-        let failure = execute_binding_transaction(&store, &runtime, Some(next), "next".into(), 2)
-            .unwrap_err();
-        assert_eq!(failure.code, REVISION_CONFLICT);
-        assert_eq!(runtime.replace_calls.get(), 0);
-        assert_eq!(runtime.binding.borrow().clone(), Some(old));
-    }
-
-    #[test]
-    fn persistence_failure_restores_old_runtime_binding() {
-        let (store, runtime, old, next) = fixture(CommitMode::Storage, None);
-        let failure = execute_binding_transaction(&store, &runtime, Some(next), "next".into(), 3)
-            .unwrap_err();
-        assert_eq!(failure.code, PERSISTENCE_FAILED);
-        assert_eq!(runtime.replace_calls.get(), 2);
-        assert_eq!(runtime.binding.borrow().clone(), Some(old));
-        assert!(runtime.enabled.get());
-    }
-
-    #[test]
-    fn rollback_failure_is_a_runtime_error() {
-        let (store, runtime, _old, next) = fixture(CommitMode::Storage, Some(2));
-        let failure =
-            execute_binding_transaction(&store, &runtime, Some(next.clone()), "next".into(), 3)
-                .unwrap_err();
-        assert_eq!(failure.code, RUNTIME_ROLLBACK_FAILED);
-        assert!(failure.runtime_error.is_some());
-        assert_eq!(runtime.binding.borrow().clone(), Some(next));
-    }
-
-    #[test]
-    fn commit_time_conflict_rolls_runtime_back() {
-        let (store, runtime, old, next) = fixture(CommitMode::Conflict, None);
-        let failure = execute_binding_transaction(&store, &runtime, Some(next), "next".into(), 3)
-            .unwrap_err();
-        assert_eq!(failure.code, REVISION_CONFLICT);
-        assert_eq!(runtime.binding.borrow().clone(), Some(old));
-    }
-
-    #[test]
-    fn successful_transaction_updates_runtime_and_config_together() {
-        let (store, runtime, _old, next) = fixture(CommitMode::Success, None);
-        let committed =
-            execute_binding_transaction(&store, &runtime, Some(next.clone()), "next".into(), 3)
-                .unwrap();
-        assert_eq!(committed.config.revision, 4);
-        assert_eq!(committed.config.shortcut_binding, Some(next.clone()));
-        assert_eq!(runtime.binding.borrow().clone(), Some(next));
-        assert!(runtime.enabled.get());
-    }
-
-    #[test]
-    fn unchanged_binding_is_detected_before_runtime_or_config_mutation() {
-        let (store, runtime, old, _next) = fixture(CommitMode::Success, None);
-        let current = store.shortcut_snapshot();
-        assert!(binding_is_unchanged(&current, 3, &Some(old)).unwrap());
-        assert_eq!(runtime.replace_calls.get(), 0);
-        assert_eq!(store.shortcut_snapshot().revision, 3);
-    }
-
-    #[test]
-    fn unchanged_binding_still_honors_expected_revision() {
-        let (store, _runtime, old, _next) = fixture(CommitMode::Success, None);
-        let failure = binding_is_unchanged(&store.shortcut_snapshot(), 2, &Some(old)).unwrap_err();
-        assert_eq!(failure.code, REVISION_CONFLICT);
-    }
-
-    #[test]
-    fn capturing_is_not_public_until_the_matching_arm_receipt_is_committed() {
-        let binding = ShortcutBinding::default_physical();
-        let mut state = ManagerState {
-            lifecycle: ShortcutLifecycleCoordinator::new(
-                3,
-                true,
-                DEFAULT_SHORTCUT_LABEL.into(),
-                Some(binding),
-                None,
-            ),
-            capture: None,
-            undo: None,
-        };
-        let (operation_id, created) = state
-            .lifecycle
-            .begin(ShortcutOperationKind::Capture, "正在准备快捷键录制。");
-        assert!(created);
-        state.capture = Some(CaptureTransaction {
-            operation_id,
-            hook_generation: 7,
-            expected_revision: 3,
-            capture_attempt: 1,
-            release_timeout_started: false,
-        });
-        assert_eq!(
-            state
-                .lifecycle
-                .query_snapshot(Some(operation_id))
-                .operation
-                .unwrap()
-                .phase,
-            ShortcutOperationPhase::Starting
-        );
-        assert!(!commit_armed_capture(
-            &mut state,
-            CaptureArmReceipt {
-                operation_id,
-                hook_generation: 6,
-            }
-        ));
-        assert_eq!(
-            state
-                .lifecycle
-                .query_snapshot(Some(operation_id))
-                .operation
-                .unwrap()
-                .phase,
-            ShortcutOperationPhase::Starting
-        );
-        assert!(commit_armed_capture(
-            &mut state,
-            CaptureArmReceipt {
-                operation_id,
-                hook_generation: 7,
-            }
-        ));
-        assert_eq!(
-            state
-                .lifecycle
-                .query_snapshot(Some(operation_id))
-                .operation
-                .unwrap()
-                .phase,
-            ShortcutOperationPhase::Capturing
-        );
-    }
-
-    #[test]
-    fn undo_to_an_unmapped_legacy_binding_disables_runtime_consistently() {
-        let (store, runtime, _old, _next) = fixture(CommitMode::Success, None);
-        let committed =
-            execute_binding_transaction(&store, &runtime, None, "legacy".into(), 3).unwrap();
-        assert_eq!(committed.config.shortcut_binding, None);
-        assert_eq!(runtime.binding.borrow().clone(), None);
-        assert!(!runtime.enabled.get());
-    }
-
-    #[test]
-    fn capture_timeout_stops_after_main_selection_and_release_timeout_takes_over() {
-        let waiting = CaptureTransaction {
-            operation_id: 9,
-            hook_generation: 4,
-            expected_revision: 3,
-            capture_attempt: 1,
-            release_timeout_started: false,
-        };
-        assert!(capture_timeout_matches(
-            &waiting,
-            9,
-            4,
-            Some(ShortcutOperationPhase::Capturing),
+    fn ordinary_copy_and_standalone_space_are_allowed() {
+        assert!(validate_candidate(&binding(
+            Some(ModifierKind::Control),
+            PhysicalKeyId::new(0x2e, false),
+        ))
+        .is_ok());
+        assert!(validate_candidate(&binding(
             None,
-        ));
-        let releasing = CaptureTransaction {
-            release_timeout_started: true,
-            ..waiting
-        };
-        assert!(!capture_timeout_matches(
-            &releasing,
-            9,
-            4,
-            Some(ShortcutOperationPhase::Capturing),
-            None,
-        ));
-        assert!(capture_timeout_matches(
-            &releasing,
-            9,
-            4,
-            Some(ShortcutOperationPhase::Capturing),
-            Some(1),
-        ));
-        assert!(!capture_timeout_matches(
-            &releasing,
-            8,
-            4,
-            Some(ShortcutOperationPhase::Capturing),
-            Some(1),
-        ));
-        assert!(!capture_timeout_matches(
-            &releasing,
-            9,
-            3,
-            Some(ShortcutOperationPhase::Capturing),
-            Some(1),
-        ));
+            PhysicalKeyId::new(0x39, false),
+        ))
+        .is_ok());
     }
 
     #[test]
-    fn capture_validation_accepts_right_modifier_single_key_and_modifier_chord() {
-        let right_control = CapturedShortcut {
-            capture_id: 1,
-            hook_generation: 1,
-            binding: ShortcutBinding {
-                modifiers: Vec::new(),
-                trigger: PhysicalKeyId::new(0x1d, true),
-            },
-            label: "右 Ctrl".into(),
+    fn frontend_trace_is_bounded_but_preserves_raw_key_content() {
+        let input = ShortcutEditTraceInput {
+            trace_id: "123e4567-e89b-12d3-a456-426614174000".into(),
+            edit_id: None,
+            event_seq: 2,
+            elapsed_ms: 14,
+            event: ShortcutTraceEvent::DomKeydown,
+            code: Some("KeyK".into()),
+            key: Some("k".into()),
+            location: Some(0),
+            repeat: Some(false),
+            ctrl: Some(true),
+            alt: Some(false),
+            shift: Some(false),
+            meta: Some(false),
+            alt_graph: Some(false),
+            held_codes: vec!["ControlLeft".into()],
+            candidate_label: Some("左 Ctrl+K".into()),
+            candidate_binding: None,
+            reason_code: None,
         };
-        assert!(validate_captured(&right_control).is_ok());
-
-        let chord = CapturedShortcut {
-            capture_id: 2,
-            hook_generation: 1,
-            binding: crate::physical_shortcut::modifier_only_binding(
-                crate::physical_shortcut::RIGHT_CTRL | crate::physical_shortcut::RIGHT_SHIFT,
-            )
-            .unwrap(),
-            label: "右 Ctrl+右 Shift".into(),
-        };
-        assert!(validate_captured(&chord).is_ok());
-    }
-
-    #[test]
-    fn capture_validation_rejects_left_modifier_single_key_but_accepts_modified_escape() {
-        let left_control = CapturedShortcut {
-            capture_id: 3,
-            hook_generation: 1,
-            binding: ShortcutBinding {
-                modifiers: Vec::new(),
-                trigger: PhysicalKeyId::new(0x1d, false),
-            },
-            label: "左 Ctrl".into(),
-        };
-        assert_eq!(
-            validate_captured(&left_control).unwrap_err().0,
-            INVALID_BINDING
-        );
-
-        let control_escape = CapturedShortcut {
-            capture_id: 4,
-            hook_generation: 1,
-            binding: ShortcutBinding {
-                modifiers: vec![crate::physical_shortcut::ModifierBinding {
-                    kind: ModifierKind::Control,
-                    side: crate::physical_shortcut::ModifierSide::Left,
-                }],
-                trigger: PhysicalKeyId::new(0x01, false),
-            },
-            label: "左 Ctrl+Escape".into(),
-        };
-        assert!(validate_captured(&control_escape).is_ok());
+        assert!(input.validate().is_ok());
+        let mut oversized = input;
+        oversized.key = Some("x".repeat(65));
+        assert!(oversized.validate().is_err());
     }
 }

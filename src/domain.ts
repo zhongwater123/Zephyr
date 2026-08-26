@@ -109,15 +109,6 @@ export type ShortcutBinding = {
 };
 
 export type ShortcutRuntimeState = "active" | "suspended" | "disabled" | "error";
-export type ShortcutOperationKind = "capture" | "restore_default" | "undo";
-export type ShortcutOperationPhase =
-  | "starting"
-  | "capturing"
-  | "validating"
-  | "applying"
-  | "succeeded"
-  | "failed"
-  | "cancelled";
 export type ShortcutErrorCode =
   | "invalid_binding"
   | "reserved_binding"
@@ -129,28 +120,68 @@ export type ShortcutErrorCode =
   | "hook_interrupted"
   | "runtime_rollback_failed";
 
-export type ShortcutLifecycleSnapshot = {
-  sequence: number;
+export type ShortcutEditSession = {
+  editId: number;
+  traceId: string;
   configRevision: number;
-  runtime: {
-    state: ShortcutRuntimeState;
-    activeLabel: string;
-    activeBinding: ShortcutBinding | null;
-    message: string;
-  };
-  operation: {
-    operationId: number;
-    kind: ShortcutOperationKind;
-    phase: ShortcutOperationPhase;
-    candidateLabel?: string;
-    candidateBinding?: ShortcutBinding;
-    message: string;
-    errorCode?: ShortcutErrorCode;
-    retryable: boolean;
-    changed?: boolean;
-  } | null;
+  activeLabel: string;
+  activeBinding: ShortcutBinding | null;
+  runtimeState: ShortcutRuntimeState;
+  errorCode?: ShortcutErrorCode;
+  message: string;
 };
 
+export type ShortcutEditOutcome = {
+  success: boolean;
+  editId: number;
+  traceId: string;
+  configRevision: number;
+  activeLabel: string;
+  activeBinding: ShortcutBinding | null;
+  runtimeState: ShortcutRuntimeState;
+  changed: boolean;
+  errorCode?: ShortcutErrorCode;
+  message: string;
+};
+
+export type ShortcutEditInterrupted = {
+  outcome: ShortcutEditOutcome;
+};
+
+export type ShortcutTraceEvent =
+  | "ui_capture_started"
+  | "dom_keydown"
+  | "dom_keyup"
+  | "candidate_rejected"
+  | "candidate_finalized"
+  | "begin_acknowledged"
+  | "commit_dispatched"
+  | "commit_completed"
+  | "optimistic_rollback"
+  | "cancel_requested"
+  | "focus_lost"
+  | "edit_interrupted";
+
+export type ShortcutEditTraceInput = {
+  traceId: string;
+  editId?: number | null;
+  eventSeq: number;
+  elapsedMs: number;
+  event: ShortcutTraceEvent;
+  code?: string | null;
+  key?: string | null;
+  location?: number | null;
+  repeat?: boolean | null;
+  ctrl?: boolean | null;
+  alt?: boolean | null;
+  shift?: boolean | null;
+  meta?: boolean | null;
+  altGraph?: boolean | null;
+  heldCodes?: string[];
+  candidateLabel?: string | null;
+  candidateBinding?: ShortcutBinding | null;
+  reasonCode?: string | null;
+};
 export type VoiceStatePayload = {
   state: string;
   message: string;

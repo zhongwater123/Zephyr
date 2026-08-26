@@ -73,7 +73,7 @@ effects. Successful injection is the commit point.
 preinput overlay. This keeps settings, history, and Three.js code out of the preinput bundle.
 
 - `src/ipc/client.ts`: typed clients grouped by config, history, hotwords, pending, shortcut, provider, and preinput.
-- `src/app/AppShell.tsx`: layout, global voice state, config snapshot, and global notices.
+- `src/app/AppShellV2.tsx`: layout, global voice state, config snapshot, and global notices.
 - `src/features/*`: feature UI and feature-owned form, loading, error, and editing state controllers.
 - `src/app/useRevisionedConfigMutation.ts`: revision sequencing, late-response rejection, conflict reload, and error normalization.
 - `src/domain.ts`: stable Tauri DTO types and defaults.

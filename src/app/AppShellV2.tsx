@@ -30,7 +30,7 @@ import {
   type MoreSettingsSection,
 } from "../features/settings/MoreSettingsPanel";
 import { useHistoryController } from "../features/history/useHistoryController";
-import { useShortcutLifecycleController } from "../features/shortcut/useShortcutLifecycleController";
+import { useShortcutBindingController } from "../features/shortcut/useShortcutBindingController";
 import { useHotwordController } from "../features/hotwords/useHotwordController";
 
 const ZephyrAsciiField = lazy(() =>
@@ -151,12 +151,13 @@ export function AppShell() {
 
   const {
     shortcutView,
-    shortcutRequestPending,
-    shortcutTransportError,
-    beginShortcutCapture,
-    cancelShortcutOperation,
-    closeShortcutSession,
-  } = useShortcutLifecycleController(config, setConfig, setNotice, configMutation.describeError);
+    shortcutToast,
+    clearShortcutToast,
+    beginShortcutEdit,
+    cancelShortcutEdit,
+    handleShortcutKeyDown,
+    handleShortcutKeyUp,
+  } = useShortcutBindingController(config, setConfig, setNotice, configMutation.describeError);
 
   useEffect(() => {
     void configApi.get()
@@ -207,13 +208,13 @@ export function AppShell() {
   }
 
   function closeDrawer() {
-    void closeShortcutSession();
+    void cancelShortcutEdit("focus_lost");
     setDrawerOpen(false);
     window.setTimeout(() => menuRef.current?.focus(), 0);
   }
 
   function openPanel(panel: SettingsPanel) {
-    void closeShortcutSession();
+    void cancelShortcutEdit("focus_lost");
     setDrawerOpen(false);
     setActivePanel(panel);
     if (panel === "personalization") {
@@ -493,8 +494,6 @@ export function AppShell() {
         configStatus={configStatus}
         voiceStatus={voiceStatus}
         shortcutView={shortcutView}
-        shortcutRequestPending={shortcutRequestPending}
-        shortcutTransportError={shortcutTransportError}
         optionPool={asrOptionPool}
         optionSaving={asrOptionSaving}
         optionSavingMap={asrSavingOptions}
@@ -506,8 +505,10 @@ export function AppShell() {
         moreSettingsRef={moreSettingsRef}
         onClose={closeDrawer}
         onEnabled={(enabled) => void setEnabled(enabled)}
-        onShortcutCapture={() => void beginShortcutCapture()}
-        onShortcutCancel={() => void cancelShortcutOperation()}
+        onShortcutCapture={beginShortcutEdit}
+        onShortcutCancel={(source) => void cancelShortcutEdit(source)}
+        onShortcutKeyDown={handleShortcutKeyDown}
+        onShortcutKeyUp={handleShortcutKeyUp}
         onOption={(optionId, value) => {
           void setAsrOption(optionId, value).then(() => configApi.get().then((next) => setConfig(normalizeConfig(next))));
         }}
@@ -623,6 +624,12 @@ export function AppShell() {
         </ModalShell>
       ) : null}
 
+      {shortcutToast ? (
+        <div className="shortcut-error-toast" role="alert">
+          <span>{shortcutToast}</span>
+          <button type="button" aria-label="关闭快捷键错误提示" onClick={clearShortcutToast}>×</button>
+        </div>
+      ) : null}
       <div className="sr-only" aria-live="polite">{notice}</div>
     </main>
   );

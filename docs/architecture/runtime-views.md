@@ -47,16 +47,17 @@ sequenceDiagram
     VC-->>OVL: hide current session
 ```
 
-### 快捷键捕获与提交
+### 快捷键录入与提交
 
-设置页通过 `expectedRevision` 请求一次 operation，后端 `ShortcutLifecycleCoordinator` 是 `sequence + configRevision + runtime + operation` 的唯一权威状态源，并只发布 `shortcut_lifecycle_changed`。运行状态（active / suspended / disabled / error）与操作阶段（starting / capturing / validating / applying / terminal）相互独立；前端只接受当前 `operationId` 的更高 `sequence`，事件为主通道，活动 operation 每 250ms 查询一次快照补偿丢失事件。
+用户点击快捷键字段时，前端在同一帧进入 `capturing`，生成 `traceId` 并聚焦字段；`begin_shortcut_edit(traceId, expectedRevision)` 在后台暂停旧运行时 binding，但 DOM 录入不等待 begin 回执。旧快捷键暂停只切换引擎 matching 状态，不卸载或重装 Hook。
 
-捕获开始即暂停旧绑定。Hook 通过有界队列在每个修饰键按下时实时上报累积候选，主键按下后上报完整组合；释放过程不缩减候选。右 Ctrl、右 Alt、右 Shift 可作为单键 trigger，两个及以上左右修饰键也可组成无普通主键的 chord；普通单键会先显示候选再由验证拒绝。裸 Escape 请求权威取消，带修饰键的 Escape 作为候选。全部参与键松开后进入 validating，操作从此上锁并只能返回 succeeded 或 failed；starting/capturing 阶段仍允许输入框重点击、外部点击或裸 Escape 取消。
+字段内 `KeyboardEvent.code` 唯一负责候选：左右 Ctrl/Alt/Shift/Win 分开记录，修饰键逐键更新键帽，普通组合在主键 `keydown` 时完成；纯修饰键至少按住 200ms 并在全部释放时完成。裸 Escape、字段外点击和再次点击取消；带修饰键 Escape 可进入保留组合校验。非法候选留在录入状态并显示短暂警告，下一次按键直接重新组装。合法候选立即退出录入外观并乐观显示，提交期间字段短暂禁用但不显示保存动画或成功提示。
 
-工作线程按 validating → applying 顺序验证物理组合和系统保留组合。物理 binding 与当前 active binding 相同时不替换 Hook、不写配置、不增加 revision，并以 `changed=false` 返回“快捷键未发生变化”；其余操作先替换运行时绑定，再以 expected revision 做配置 CAS。持久化失败时恢复旧运行时绑定，只有两侧都成功才更新 active binding。操作失败、取消、30 秒捕获超时或选键后的 10 秒释放超时都保留候选与稳定错误码，并恢复仍有效的旧绑定；只有运行时回滚或 Hook 本身不可用才把 runtime 标记为 error。语音输入关闭时仍可保存 binding，但终态明确提示开启后生效。
+begin 成功后，前端以会话返回的 `editId + configRevision` 提交现有 `ShortcutBinding`。Manager 重新验证物理键、最多三个键和 Windows 保留组合；配置启用时才强制执行 Hook generation 重装确认，然后在监听关闭状态下应用新 binding、恢复监听，最后以 expected revision 原子持久化。未变化候选不写磁盘、不增加 revision，但仍确认启用状态下的 Hook 健康。
 
-窗口隐藏、失焦、最小化和托盘运行不会改变监听。显式关闭语音输入只将常驻 Hook 切换为全量放行；系统恢复、会话解锁和重新启用时校验 Hook 健康状态并按需重装。
+Hook、运行时切换或持久化失败时，Manager 以当前权威配置恢复旧 binding 和 enabled 状态；恢复成功返回普通失败，前端弹轻量错误并回滚乐观标签。恢复失败返回 `runtime_rollback_failed` 并将运行时标记为 error，界面不得声称旧快捷键仍有效。外部启停和系统 resume 会中断 edit，并通过唯一事件 `shortcut_edit_interrupted` 让前端退出。Hook 不生成候选事件，前端不监听快捷键 lifecycle event，也不执行 250ms 轮询。
 
+换绑专用 `shortcut_edit_trace` 日志用 `traceId/editId/eventSeq` 串联 DOM 原始按键、规范化候选、begin、Hook generation、运行时应用、持久化和回滚。Hook 回调本身不写日志；dispatch 只记录真正匹配到的运行时 Pressed/Released。
 ### 并发与终止条件
 
 - 120 秒 deadline 和真实 Released 进入相同的幂等 finalize 路径。

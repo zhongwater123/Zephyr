@@ -50,7 +50,7 @@ flowchart TB
 
 `ProviderService` 在构建 ASR provider 时先检查 endpoint trust，再读取 CredentialStore。热词 Agent adapter 遵循相同顺序。
 
-`VoiceInputService` 是语音输入启停和通用配置保存的应用层协调器。它按固定顺序协调配置 CAS、会话取消、运行状态、provider 重建、快捷键生命周期和状态事件；对应 command 只保留窗口权限校验、参数转发和错误 DTO 映射。
+`VoiceInputService` 是语音输入启停和通用配置保存的应用层协调器。它按固定顺序协调配置 CAS、会话取消、运行状态、provider 重建、快捷键运行时和状态事件；对应 command 只保留窗口权限校验、参数转发和错误 DTO 映射。
 
 ### VoiceSessionController
 
@@ -60,11 +60,11 @@ flowchart TB
 
 ### ShortcutManager
 
-`ShortcutLifecycleCoordinator` 是纯领域状态机，单一维护 runtime/operation 分离、合法阶段转换、单调 sequence、config revision 与 operation 隔离；它不访问磁盘、Hook 或 Tauri。`ShortcutManager` 只编排启停、捕获、配置 CAS、运行时替换/回滚和 `shortcut_lifecycle_changed` 事件适配。同一时刻最多一个活动 operation，失败的换绑不会把仍可工作的旧绑定标记为运行故障。
+`ShortcutManager` 以快捷键领域门闩串行化 edit、启停、resume 和 shutdown，并只维护一个 `ShortcutEditTransaction`。`begin_shortcut_edit` 校验 revision、保存旧配置事实并立即暂停运行时监听，不安装或重装 Hook；`commit_shortcut_edit` 重新执行权威物理键与 Windows 保留组合校验，在配置启用时强制确认 Hook generation，再切换运行时 binding、恢复监听并持久化。持久化或运行时步骤失败时按当前权威配置回滚；回滚失败才进入 runtime error。前端只接收 `shortcut_edit_interrupted`，已知业务失败通过 edit outcome 返回，不存在生命周期快照、候选事件或轮询。
 
-`WindowsKeyboardEngine` 在专用消息线程安装 `WH_KEYBOARD_LL`，按 `scanCode + extended` 匹配物理位置并区分左右修饰键。物理 binding 保持 `modifiers + trigger` 持久化结构；trigger 可以是普通主键，也可以规范表示右侧单修饰键或纯修饰键组合。捕获时修饰键候选按下即实时进入有界队列，候选只累积、不因释放缩减；全部参与键释放后提交，裸 Escape 转为取消请求。Hook 回调只更新原子状态并 `try_send`，不格式化、不访问磁盘也不发送 UI 事件；工作线程才生成标签、验证 binding，并把正常快捷键转换为 `SessionEvent::Pressed/Released` 或把捕获事实交给 Manager。
+设置界面的 `KeyboardEvent.code` 是换绑录入的唯一输入源，负责左右修饰键、实时键帽、AltGr 修正、200ms 纯修饰键和同步候选校验；后端不从 DOM 之外生成换绑候选。物理 binding 仍保持 `modifiers + trigger` 的 `scanCode + extended` 持久化结构，配置 schema 不变。
 
-引擎允许第三方注入事件，只过滤带应用专用 `dwExtraInfo` 标记的自身 `SendInput`。Hook 随进程保持安装，语音输入显式关闭时全量放行；它不覆盖安全桌面、驱动或更早吞键的钩子。
+`WindowsKeyboardEngine` 只负责应用运行期间的全局物理快捷键，在专用消息线程安装 `WH_KEYBOARD_LL` 并把匹配结果转换为 `SessionEvent::Pressed/Released`。Hook 回调只更新原子状态并 `try_send`，不等待锁、不格式化、不访问磁盘也不发送 UI 事件。初次安装失败保留 degraded worker；commit、重新启用和系统 resume 通过 generation 回执强制重装，已退出的 Hook worker 可在进程内回收重启。引擎允许第三方注入事件，只过滤带应用专用 `dwExtraInfo` 标记的自身 `SendInput`；语音输入显式关闭时 Hook 保持安装但全量放行。
 
 ### StreamingPipeline
 

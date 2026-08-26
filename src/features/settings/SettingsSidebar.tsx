@@ -1,7 +1,7 @@
-import type { RefObject } from "preact";
+import type { JSX, RefObject } from "preact";
 import type { AppConfig, AsrOptionPool, ConfigStatus, ConfigValue, VoiceStatePayload } from "../../domain";
 import { ShortcutCaptureField } from "../shortcut/ShortcutCaptureField";
-import type { ShortcutLifecycleViewModel } from "../shortcut/shortcutLifecycle";
+import type { ShortcutBindingViewModel } from "../shortcut/useShortcutBindingController";
 import { BehaviorSwitch } from "./BehaviorSwitch";
 import { OptionPoolRenderer } from "./OptionPoolRenderer";
 
@@ -28,8 +28,7 @@ export function SettingsSidebar({
   configStatus,
   voiceStatus,
   shortcutView,
-  shortcutRequestPending,
-  shortcutTransportError,
+
   optionPool,
   optionSaving,
   optionSavingMap,
@@ -43,6 +42,8 @@ export function SettingsSidebar({
   onEnabled,
   onShortcutCapture,
   onShortcutCancel,
+  onShortcutKeyDown,
+  onShortcutKeyUp,
   onOption,
   onLaunch,
 }: {
@@ -50,9 +51,8 @@ export function SettingsSidebar({
   config: AppConfig;
   configStatus: ConfigStatus;
   voiceStatus: VoiceStatePayload;
-  shortcutView: ShortcutLifecycleViewModel;
-  shortcutRequestPending: boolean;
-  shortcutTransportError: string;
+  shortcutView: ShortcutBindingViewModel;
+
   optionPool: AsrOptionPool | null;
   optionSaving: boolean;
   optionSavingMap: Record<string, boolean>;
@@ -65,7 +65,9 @@ export function SettingsSidebar({
   onClose: () => void;
   onEnabled: (enabled: boolean) => void;
   onShortcutCapture: () => void;
-  onShortcutCancel: () => void;
+  onShortcutCancel: (source?: string) => void;
+  onShortcutKeyDown: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
+  onShortcutKeyUp: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
   onOption: (optionId: string, value: ConfigValue) => void;
   onLaunch: (panel: "personalization" | "more_settings") => void;
 }) {
@@ -104,10 +106,10 @@ export function SettingsSidebar({
 
         <ShortcutCaptureField
           view={shortcutView}
-          requestPending={shortcutRequestPending}
-          transportError={shortcutTransportError}
           onStart={onShortcutCapture}
           onCancel={onShortcutCancel}
+          onKeyDown={onShortcutKeyDown}
+          onKeyUp={onShortcutKeyUp}
         />
 
         <OptionPoolRenderer
