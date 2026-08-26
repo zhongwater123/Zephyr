@@ -6,6 +6,7 @@
   --z-accent: #1f7181;
   --z-accent-soft: rgba(31, 113, 129, 0.1);
   --z-success: #2e8b64;
+  --z-warning: #9a6a16;
   --z-danger: #a23b32;
   --z-line: rgba(31, 43, 53, 0.13);
   --z-line-strong: rgba(31, 43, 53, 0.22);
@@ -366,53 +367,152 @@
   opacity: 0.5;
 }
 
-.shortcut-row {
+.shortcut-setting {
   display: grid;
   width: 100%;
-  min-height: 68px;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-height: 76px;
+  grid-template-columns: minmax(0, 1fr) minmax(168px, auto);
   align-items: center;
-  gap: 12px;
+  gap: 14px;
   margin-bottom: 8px;
-  border: 0;
   border-bottom: 1px solid var(--z-line);
-  border-radius: 0;
-  background: transparent;
-  padding: 8px 4px;
-  color: var(--z-text);
-  text-align: left;
+  padding: 10px 4px 12px;
 }
 
-.shortcut-row:hover:not(:disabled) {
-  background: rgba(31, 113, 129, 0.045);
+.shortcut-setting-copy {
+  min-width: 0;
 }
 
-.shortcut-row strong,
-.shortcut-row small {
+.shortcut-setting-copy strong,
+.shortcut-setting-copy small,
+.shortcut-setting-notice {
   display: block;
 }
 
-.shortcut-row small {
-  margin-top: 3px;
-  color: var(--z-muted);
-  font-size: 12px;
+.shortcut-setting-copy strong {
+  font-size: 13px;
+  line-height: 1.35;
 }
 
-.shortcut-row kbd {
+.shortcut-setting-copy small {
+  margin-top: 4px;
+  color: var(--z-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.shortcut-setting-notice {
+  margin-top: 5px;
+  color: var(--z-accent);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.shortcut-key-field {
+  display: flex;
+  min-width: 168px;
+  min-height: 46px;
+  max-width: 230px;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 9px;
+  border: 1px solid var(--z-line-strong);
+  border-radius: 10px;
+  background: rgba(255, 255, 252, 0.58);
+  padding: 7px 10px;
+  color: var(--z-text);
+  text-align: left;
+  transition:
+    border-color 140ms ease,
+    background 140ms ease,
+    box-shadow 140ms ease;
+}
+
+.shortcut-key-field:hover {
+  border-color: color-mix(in srgb, var(--z-accent) 52%, var(--z-line-strong));
+  background: rgba(255, 255, 252, 0.82);
+}
+
+.shortcut-key-field:focus-visible,
+.shortcut-setting.is-preparing .shortcut-key-field,
+.shortcut-setting.is-capturing .shortcut-key-field {
+  border-color: var(--z-accent);
+  outline: 0;
+  background: rgba(255, 255, 252, 0.92);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--z-accent) 18%, transparent);
+}
+
+.shortcut-setting.is-warning .shortcut-setting-notice {
+  color: var(--z-warning);
+}
+
+.shortcut-setting.is-warning .shortcut-key-field {
+  border-color: color-mix(in srgb, var(--z-warning) 72%, var(--z-line-strong));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--z-warning) 14%, transparent);
+}
+
+.shortcut-setting.is-error .shortcut-setting-notice {
+  color: var(--z-danger);
+}
+
+.shortcut-setting.is-error .shortcut-key-field {
+  border-color: color-mix(in srgb, var(--z-danger) 72%, var(--z-line-strong));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--z-danger) 12%, transparent);
+}
+
+.shortcut-keycaps {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.shortcut-keycaps kbd {
   border: 1px solid var(--z-line-strong);
   border-bottom-width: 2px;
-  border-radius: 5px;
-  background: rgba(255, 255, 252, 0.8);
-  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 252, 0.92);
+  padding: 4px 7px;
   color: var(--z-text);
   font-family: "Cascadia Mono", Consolas, monospace;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 650;
   white-space: nowrap;
 }
 
-.row-chevron {
+.shortcut-placeholder {
   color: var(--z-muted);
-  font-size: 22px;
+  font-size: 13px;
+}
+
+.shortcut-capture-indicator {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--z-accent);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--z-accent) 42%, transparent);
+  animation: shortcut-capture-pulse 1.2s ease-out infinite;
+}
+
+@keyframes shortcut-capture-pulse {
+  70% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@media (max-width: 420px) {
+  .shortcut-setting {
+    grid-template-columns: 1fr;
+  }
+
+  .shortcut-key-field {
+    width: 100%;
+    max-width: none;
+  }
 }
 
 .settings-sidebar .console-block {

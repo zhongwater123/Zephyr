@@ -10,7 +10,7 @@ flowchart TB
         bootstrap["Component<br/>Bootstrap + Platform Startup<br/><small>lib.rs, platform/tray.rs</small>"]
         commands["Component<br/>Thin IPC Commands<br/><small>commands/*, CommandError</small>"]
         services["Component<br/>Application Services<br/><small>VoiceInputService, ConfigService, ProviderService</small>"]
-        shortcut["Component<br/>Shortcut Manager<br/><small>RegisterHotKey + WH_KEYBOARD_LL</small>"]
+        shortcut["Component<br/>Shortcut Manager<br/><small>physical scan code + WH_KEYBOARD_LL</small>"]
         controller["Component<br/>VoiceSessionController<br/><small>bounded event loop, state, session</small>"]
         streaming["Component<br/>StreamingPipeline<br/><small>audio, provider, preview, overflow</small>"]
         delivery["Component<br/>DeliveryService<br/><small>target, text, inject, Pending, commit</small>"]
@@ -60,9 +60,11 @@ flowchart TB
 
 ### ShortcutManager
 
-`hotkey.rs` 单一拥有正式快捷键、设置预览和当前后端。标准模式先用备用 ID 完成 `RegisterHotKey` 并持续占有，提交时再提升为正式注册；独占模式由 `low_level_hook.rs` 的专用消息线程安装 `WH_KEYBOARD_LL`，只有完整组合的主键按下、重复和松开会被吞掉。修饰键与其他按键始终继续传播，回调只更新原子状态并 `try_send` 到有界队列。
+`ShortcutLifecycleCoordinator` 是纯领域状态机，单一维护 runtime/operation 分离、合法阶段转换、单调 sequence、config revision 与 operation 隔离；它不访问磁盘、Hook 或 Tauri。`ShortcutManager` 只编排启停、捕获、配置 CAS、运行时替换/回滚和 `shortcut_lifecycle_changed` 事件适配。同一时刻最多一个活动 operation，失败的换绑不会把仍可工作的旧绑定标记为运行故障。
 
-独占模式允许第三方注入事件，只过滤带应用专用 `dwExtraInfo` 标记的自身 `SendInput`。它不覆盖安全桌面、驱动或更早吞键的钩子；语音输入显式关闭时正式快捷键会注销或失活并放行。
+`WindowsKeyboardEngine` 在专用消息线程安装 `WH_KEYBOARD_LL`，按 `scanCode + extended` 匹配物理位置并区分左右修饰键。物理 binding 保持 `modifiers + trigger` 持久化结构；trigger 可以是普通主键，也可以规范表示右侧单修饰键或纯修饰键组合。捕获时修饰键候选按下即实时进入有界队列，候选只累积、不因释放缩减；全部参与键释放后提交，裸 Escape 转为取消请求。Hook 回调只更新原子状态并 `try_send`，不格式化、不访问磁盘也不发送 UI 事件；工作线程才生成标签、验证 binding，并把正常快捷键转换为 `SessionEvent::Pressed/Released` 或把捕获事实交给 Manager。
+
+引擎允许第三方注入事件，只过滤带应用专用 `dwExtraInfo` 标记的自身 `SendInput`。Hook 随进程保持安装，语音输入显式关闭时全量放行；它不覆盖安全桌面、驱动或更早吞键的钩子。
 
 ### StreamingPipeline
 

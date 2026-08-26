@@ -4,12 +4,11 @@ mod commands;
 mod config;
 mod delivery;
 mod history;
-mod physical_shortcut;
 mod hotwords;
 mod incident;
 mod inject;
-mod shortcut_manager;
 mod overlay;
+mod physical_shortcut;
 mod platform;
 mod preview;
 mod provider;
@@ -18,12 +17,14 @@ mod repositories;
 mod runtime_metrics;
 mod services;
 mod session;
-mod windows_keyboard;
+mod shortcut_lifecycle;
+mod shortcut_manager;
 mod state;
 mod streaming_pipeline;
 mod target;
 mod voice_controller;
 mod voice_input_service;
+mod windows_keyboard;
 
 use audio::Recorder;
 use config::{AppConfig, ConfigRecovery};
@@ -207,9 +208,10 @@ pub fn run() {
             commands::incident::set_incident_pinned,
             commands::incident::record_frontend_incident,
             commands::shortcut::start_shortcut_capture,
-            commands::shortcut::cancel_shortcut_capture,
+            commands::shortcut::cancel_shortcut_operation,
             commands::shortcut::undo_last_shortcut_change,
-            commands::shortcut::get_shortcut_status,
+            commands::shortcut::get_shortcut_lifecycle,
+            commands::shortcut::restore_default_shortcut,
             commands::hotwords::get_hotword_state,
             commands::hotwords::save_hotword_settings,
             commands::hotwords::save_manual_hotwords,
@@ -230,8 +232,11 @@ pub fn run() {
             commands::provider::test_provider
         ])
         .setup(move |app| {
-            let (controller, shortcut_manager) =
-                shortcut_manager::ShortcutManager::initialize(app, runtime.clone(), voice_services.clone())?;
+            let (controller, shortcut_manager) = shortcut_manager::ShortcutManager::initialize(
+                app,
+                runtime.clone(),
+                voice_services.clone(),
+            )?;
             let voice_input = voice_input_service::VoiceInputService::new(
                 runtime.clone(),
                 voice_services.config.clone(),
@@ -255,12 +260,14 @@ pub fn run() {
         .expect("error while building tauri application");
     app.run(move |app_handle, event| match event {
         tauri::RunEvent::Resumed => {
-            if let Some(manager) = app_handle.try_state::<Arc<shortcut_manager::ShortcutManager>>() {
+            if let Some(manager) = app_handle.try_state::<Arc<shortcut_manager::ShortcutManager>>()
+            {
                 manager.resume();
             }
         }
         tauri::RunEvent::Exit => {
-            if let Some(manager) = app_handle.try_state::<Arc<shortcut_manager::ShortcutManager>>() {
+            if let Some(manager) = app_handle.try_state::<Arc<shortcut_manager::ShortcutManager>>()
+            {
                 manager.shutdown();
             }
             shutdown_incidents.shutdown();

@@ -32,6 +32,7 @@ flowchart TB
     revision --> ipc
     ipc -->|"invoke"| tauri
     tauri -->|"voice_state_changed / pending_outputs_changed"| shell
+    tauri -->|"shortcut_lifecycle_changed"| features
     tauri -->|"targeted overlay payload"| overlay
 ```
 
@@ -39,6 +40,7 @@ flowchart TB
 
 - `AppShell` 只共享当前配置、配置状态、语音状态、全局 notice 和 revision 协调。
 - 每个 feature controller 自持表单、loading、notice、选择和编辑状态。
+- Shortcut feature 的 reducer/selector 只保存最新权威生命周期快照；Hook 额外只保存 IPC pending 与 transport error。候选、阶段、失败原因、是否实际发生变更和运行健康不得由多个布尔值或 notice 字符串拼装。捕获控件在 `starting/capturing` 消费输入框外第一次点击并请求取消，`validating/applying` 则消费交互但不允许取消；侧栏是否展开与换绑 operation 相互独立。
 - `useRevisionedConfigMutation` 统一携带 expected revision，拒绝迟到响应，并在冲突时回载当前配置。
 - `src/ipc/client.ts` 是组件调用 command 的唯一字符串入口；业务组件不散落 `invoke("...")`。
 - `PreInputOverlay` 只按 session ID 与 seq 接受当前会话更新；它不会装载设置、历史或 Three.js bundle。

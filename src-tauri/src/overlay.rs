@@ -10,8 +10,8 @@ pub const PREINPUT_LABEL: &str = "preinput";
 const PREINPUT_SHOW_EVENT: &str = "preinput_show";
 const PREINPUT_UPDATE_EVENT: &str = "preinput_update";
 const PREINPUT_HIDE_EVENT: &str = "preinput_hide";
-const PREINPUT_WIDTH: f64 = 520.0;
-const PREINPUT_HEIGHT: f64 = 124.0;
+const PREINPUT_WIDTH: f64 = 360.0;
+const PREINPUT_HEIGHT: f64 = 88.0;
 const PREINPUT_EMIT_COALESCE_MS: u64 = 30;
 static PREINPUT_STORE: OnceLock<Mutex<PreInputStore>> = OnceLock::new();
 
@@ -235,6 +235,7 @@ fn ensure_preinput_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
     .resizable(false)
     .decorations(false)
     .transparent(true)
+    .shadow(false)
     .always_on_top(true)
     .skip_taskbar(true)
     .focused(false)

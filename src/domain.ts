@@ -35,7 +35,7 @@ export type AppConfig = {
   revision: number;
   enabled: boolean;
   shortcut: string;
-  shortcut_mode: ShortcutMode;
+  shortcut_binding?: ShortcutBinding | null;
   asr: ProviderConfigEnvelope;
   history_enabled: boolean;
   incident_recovery_enabled: boolean;
@@ -95,30 +95,60 @@ export type CommandErrorPayload = {
   };
 };
 
-export type ShortcutMode = "standard" | "exclusive_hook";
-
-export type ShortcutPreviewState =
-  | "reserved_standard"
-  | "occupied"
-  | "awaiting_hook_test"
-  | "hook_verified"
-  | "invalid";
-
-export type ShortcutPreview = {
-  previewId: number;
-  shortcut: string;
-  normalized: string;
-  mode: ShortcutMode;
-  state: ShortcutPreviewState;
-  reason: string;
+export type PhysicalKeyId = {
+  scanCode: number;
+  extended: boolean;
 };
 
-export type ShortcutRuntimeStatus = {
-  shortcut: string;
-  mode: ShortcutMode;
-  backend: "register_hotkey" | "low_level_hook" | "none";
-  state: "active" | "inactive" | "occupied" | "verifying" | "error";
-  message: string;
+export type ShortcutBinding = {
+  modifiers: Array<{
+    kind: "control" | "alt" | "shift" | "win";
+    side: "any" | "left" | "right";
+  }>;
+  trigger: PhysicalKeyId;
+};
+
+export type ShortcutRuntimeState = "active" | "suspended" | "disabled" | "error";
+export type ShortcutOperationKind = "capture" | "restore_default" | "undo";
+export type ShortcutOperationPhase =
+  | "starting"
+  | "capturing"
+  | "validating"
+  | "applying"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+export type ShortcutErrorCode =
+  | "invalid_binding"
+  | "reserved_binding"
+  | "revision_conflict"
+  | "hook_unavailable"
+  | "persistence_failed"
+  | "capture_timeout"
+  | "release_timeout"
+  | "hook_interrupted"
+  | "runtime_rollback_failed";
+
+export type ShortcutLifecycleSnapshot = {
+  sequence: number;
+  configRevision: number;
+  runtime: {
+    state: ShortcutRuntimeState;
+    activeLabel: string;
+    activeBinding: ShortcutBinding | null;
+    message: string;
+  };
+  operation: {
+    operationId: number;
+    kind: ShortcutOperationKind;
+    phase: ShortcutOperationPhase;
+    candidateLabel?: string;
+    candidateBinding?: ShortcutBinding;
+    message: string;
+    errorCode?: ShortcutErrorCode;
+    retryable: boolean;
+    changed?: boolean;
+  } | null;
 };
 
 export type VoiceStatePayload = {
@@ -190,11 +220,17 @@ export type HotwordState = {
 };
 
 export const defaultConfig: AppConfig = {
-  schema_version: 5,
+  schema_version: 6,
   revision: 0,
   enabled: true,
-  shortcut: "Ctrl+Shift+Space",
-  shortcut_mode: "standard",
+  shortcut: "左 Ctrl+左 Shift+Space",
+  shortcut_binding: {
+    modifiers: [
+      { kind: "control", side: "left" },
+      { kind: "shift", side: "left" },
+    ],
+    trigger: { scanCode: 57, extended: false },
+  },
   history_enabled: true,
   incident_recovery_enabled: false,
   incident_consent_version: 0,

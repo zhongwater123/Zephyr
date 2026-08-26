@@ -47,11 +47,15 @@ sequenceDiagram
     VC-->>OVL: hide current session
 ```
 
-### 快捷键准备与提交
+### 快捷键捕获与提交
 
-设置快捷键使用带 `previewId` 的事务。标准模式先注册候选键并保持到保存、换键或取消；独占模式先设置预览钩子匹配，只有用户再次完整按下并松开组合键后才进入可提交状态。提交顺序是：确认新后端能力 → revision CAS 持久化 → 停用旧后端；录音或识别中的提交、过期预览和 revision 冲突都会被拒绝。
+设置页通过 `expectedRevision` 请求一次 operation，后端 `ShortcutLifecycleCoordinator` 是 `sequence + configRevision + runtime + operation` 的唯一权威状态源，并只发布 `shortcut_lifecycle_changed`。运行状态（active / suspended / disabled / error）与操作阶段（starting / capturing / validating / applying / terminal）相互独立；前端只接受当前 `operationId` 的更高 `sequence`，事件为主通道，活动 operation 每 250ms 查询一次快照补偿丢失事件。
 
-窗口隐藏、失焦、最小化和托盘运行不会改变监听。显式关闭语音输入会注销标准热键或禁用钩子匹配；系统恢复时低级钩子消息线程重新安装钩子。
+捕获开始即暂停旧绑定。Hook 通过有界队列在每个修饰键按下时实时上报累积候选，主键按下后上报完整组合；释放过程不缩减候选。右 Ctrl、右 Alt、右 Shift 可作为单键 trigger，两个及以上左右修饰键也可组成无普通主键的 chord；普通单键会先显示候选再由验证拒绝。裸 Escape 请求权威取消，带修饰键的 Escape 作为候选。全部参与键松开后进入 validating，操作从此上锁并只能返回 succeeded 或 failed；starting/capturing 阶段仍允许输入框重点击、外部点击或裸 Escape 取消。
+
+工作线程按 validating → applying 顺序验证物理组合和系统保留组合。物理 binding 与当前 active binding 相同时不替换 Hook、不写配置、不增加 revision，并以 `changed=false` 返回“快捷键未发生变化”；其余操作先替换运行时绑定，再以 expected revision 做配置 CAS。持久化失败时恢复旧运行时绑定，只有两侧都成功才更新 active binding。操作失败、取消、30 秒捕获超时或选键后的 10 秒释放超时都保留候选与稳定错误码，并恢复仍有效的旧绑定；只有运行时回滚或 Hook 本身不可用才把 runtime 标记为 error。语音输入关闭时仍可保存 binding，但终态明确提示开启后生效。
+
+窗口隐藏、失焦、最小化和托盘运行不会改变监听。显式关闭语音输入只将常驻 Hook 切换为全量放行；系统恢复、会话解锁和重新启用时校验 Hook 健康状态并按需重装。
 
 ### 并发与终止条件
 

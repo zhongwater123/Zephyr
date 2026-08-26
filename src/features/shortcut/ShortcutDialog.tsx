@@ -1,40 +1,41 @@
 import type { JSX } from "preact";
 import { useEffect, useRef } from "preact/hooks";
-import type { ShortcutPreview } from "../../domain";
+import type { ShortcutLifecycleViewModel } from "./shortcutLifecycle";
 
 export function ShortcutDialog({
   open,
-  currentShortcut,
-  draft,
-  preview,
-  checking,
-  notice,
+  view,
+  requestPending,
+  transportError,
+  canRestoreDefault,
   onClose,
   onCapture,
-  onExclusive,
   onRetry,
+  onRestoreDefault,
 }: {
   open: boolean;
-  currentShortcut: string;
-  draft: string;
-  preview: ShortcutPreview | null;
-  checking: boolean;
-  notice: string;
+  view: ShortcutLifecycleViewModel;
+  requestPending: boolean;
+  transportError: string;
+  canRestoreDefault: boolean;
   onClose: () => void;
   onCapture: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
-  onExclusive: () => void;
   onRetry: () => void;
+  onRestoreDefault: () => void;
 }) {
   const captureRef = useRef<HTMLButtonElement>(null);
+  const active = view.busy || requestPending;
+  const preparing = view.phase === "starting" || (requestPending && !view.busy);
+  const capturing = view.phase === "capturing";
+  const notice = transportError || view.message;
+  const validationWarning = capturing && !transportError && Boolean(view.errorCode);
+  const failure = Boolean(transportError || (view.errorCode && !validationWarning));
+  const issue = validationWarning || failure;
   useEffect(() => {
-    if (open && preview?.state !== "occupied") {
-      window.setTimeout(() => captureRef.current?.focus(), 0);
-    }
-  }, [open, preview?.state]);
+    if (open) window.setTimeout(() => captureRef.current?.focus(), 0);
+  }, [open, active]);
   if (!open) return null;
 
-  const occupied = preview?.state === "occupied";
-  const failed = preview?.state === "invalid";
   return (
     <section className="history-backdrop" onClick={onClose}>
       <div className="history-card shortcut-card" role="dialog" aria-label="设置快捷键"
@@ -47,31 +48,39 @@ export function ShortcutDialog({
           <button type="button" className="drawer-close" onClick={onClose}>关闭</button>
         </header>
 
-        <p className="shortcut-current">
-          当前：<kbd>{currentShortcut}</kbd>
-        </p>
+        <p className="shortcut-current">当前：<kbd>{view.activeLabel}</kbd></p>
 
         <button type="button" className="shortcut-capture-box" ref={captureRef}
-          onKeyDown={onCapture} aria-busy={checking}>
-          <span>按下新的快捷键</span>
-          <kbd>{draft || "等待输入"}</kbd>
-          <small>系统会自动检查并保存。</small>
+          onKeyDown={onCapture} aria-busy={active} aria-invalid={issue}>
+          <span>{preparing
+            ? "正在准备换绑"
+            : capturing
+              ? "请按下新的快捷键"
+              : active
+                ? "正在验证并应用快捷键"
+                : view.phase === "failed" ? "换绑失败" : "快捷键状态"}</span>
+          <kbd>{preparing
+            ? "正在准备…"
+            : view.displayLabel || (capturing ? "等待输入" : view.activeLabel)}</kbd>
+          <small>{preparing
+            ? "键盘 Hook 就绪后才会开始录入。"
+            : capturing
+              ? "按一次完整组合，全部松开后自动保存。"
+              : "当前未录入新的按键。"}</small>
         </button>
 
-        {occupied ? (
-          <div className="shortcut-conflict" role="alert">
-            <strong>这个快捷键已被其他应用占用</strong>
-            <p>如果无法在对方应用中释放，可以让本应用优先响应这个组合键。</p>
-            <div>
-              <button type="button" onClick={onExclusive}>使用独占模式</button>
-              <button type="button" className="secondary" onClick={onRetry}>换一个快捷键</button>
-            </div>
+        <p className={`shortcut-state${validationWarning ? " warning" : failure ? " blocked" : ""}`} role={issue ? "alert" : "status"}>
+          {notice}
+        </p>
+
+        {!active ? (
+          <div className="shortcut-dialog-actions">
+            <button type="button" onClick={onRetry}>重新设置</button>
+            {canRestoreDefault ? (
+              <button type="button" className="secondary" onClick={onRestoreDefault}>恢复默认</button>
+            ) : null}
           </div>
-        ) : (
-          <p className={`shortcut-state ${failed ? "blocked" : ""}`} role="status">
-            {checking ? "正在检查…" : notice}
-          </p>
-        )}
+        ) : null}
       </div>
     </section>
   );

@@ -28,7 +28,7 @@ import { useAsrOptionPool } from "../features/settings/useAsrOptionPool";
 import { HistoryDialog } from "../features/history/HistoryDialog";
 import { useHistoryController } from "../features/history/useHistoryController";
 import { ShortcutDialog } from "../features/shortcut/ShortcutDialog";
-import { useShortcutController } from "../features/shortcut/useShortcutController";
+import { useShortcutLifecycleController } from "../features/shortcut/useShortcutLifecycleController";
 import { PendingOutputsPanel } from "../features/pending/PendingOutputsPanel";
 import { usePendingOutputs } from "../features/pending/usePendingOutputs";
 import { HotwordDialog } from "../features/hotwords/HotwordDialog";
@@ -79,17 +79,17 @@ export function AppShell() {
     updateAppContextDraft, saveExistingAppContext,
   } = useHotwordController(config, setConfig);
   const {
-    shortcutOpen, shortcutDraft, shortcutPreview, shortcutStatus, shortcutNotice,
-    shortcutChecking, openShortcutPanel, captureShortcut, closeShortcutPanel,
-    takeExclusiveControl, clearShortcutDraft,
-  } = useShortcutController(config, setConfig, setNotice, applyMutationError);
+    shortcutOpen, shortcutView, shortcutRequestPending, shortcutTransportError,
+    canRestoreDefault, openShortcutPanel, captureShortcut, closeShortcutSession,
+    retryShortcutCapture, restoreDefaultShortcut,
+  } = useShortcutLifecycleController(config, setConfig, setNotice, applyMutationError);
 
   useEffect(() => {
     configApi.get()
       .then((nextConfig) => {
         setConfig({
           ...nextConfig,
-          schema_version: nextConfig.schema_version ?? 2,
+          schema_version: nextConfig.schema_version ?? 6,
           revision: nextConfig.revision ?? 0,
           trusted_endpoints: nextConfig.trusted_endpoints ?? [],
           injection_overrides: nextConfig.injection_overrides ?? [],
@@ -643,15 +643,14 @@ export function AppShell() {
 
       <ShortcutDialog
         open={shortcutOpen}
-        currentShortcut={config.shortcut}
-        draft={shortcutDraft}
-        preview={shortcutPreview}
-        checking={shortcutChecking}
-        notice={shortcutNotice}
-        onClose={closeShortcutPanel}
+        view={shortcutView}
+        requestPending={shortcutRequestPending}
+        transportError={shortcutTransportError}
+        canRestoreDefault={canRestoreDefault}
+        onClose={() => void closeShortcutSession()}
         onCapture={captureShortcut}
-        onExclusive={takeExclusiveControl}
-        onRetry={clearShortcutDraft}
+        onRetry={() => void retryShortcutCapture()}
+        onRestoreDefault={() => void restoreDefaultShortcut()}
       />
 
       <HotwordDialog

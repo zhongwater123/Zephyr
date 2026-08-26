@@ -4,6 +4,7 @@ import { createRef } from "preact";
 import { cleanup, fireEvent, render, screen } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { defaultConfig, type AsrOptionPool } from "../../domain";
+import { selectShortcutLifecycle } from "../shortcut/shortcutLifecycle";
 import { SettingsSidebar } from "./SettingsSidebar";
 
 const pool: AsrOptionPool = {
@@ -31,19 +32,16 @@ afterEach(cleanup);
 describe("SettingsSidebar", () => {
   it("keeps the C-end root hierarchy focused on the primary job", () => {
     const onLaunch = vi.fn();
+    const onShortcutCapture = vi.fn();
     render(
       <SettingsSidebar
         open
         config={defaultConfig}
         configStatus={{ provider_ready: true, provider_message: "ok" }}
         voiceStatus={{ state: "Idle", message: "准备就绪" }}
-        shortcutStatus={{
-          shortcut: "Ctrl+Shift+Space",
-          mode: "standard",
-          backend: "register_hotkey",
-          state: "active",
-          message: "标准快捷键已生效。",
-        }}
+        shortcutView={selectShortcutLifecycle(null, defaultConfig.shortcut)}
+        shortcutRequestPending={false}
+        shortcutTransportError=""
         optionPool={pool}
         optionSaving={false}
         optionSavingMap={{}}
@@ -55,14 +53,15 @@ describe("SettingsSidebar", () => {
         moreSettingsRef={createRef()}
         onClose={vi.fn()}
         onEnabled={vi.fn()}
-        onShortcut={vi.fn()}
+        onShortcutCapture={onShortcutCapture}
+        onShortcutCancel={vi.fn()}
         onOption={vi.fn()}
         onLaunch={onLaunch}
       />,
     );
 
     expect(screen.getByText("已就绪")).toBeTruthy();
-    expect(screen.getByText("快捷键")).toBeTruthy();
+    expect(screen.getByText("\u8bed\u97f3\u8f93\u5165\u5feb\u6377\u952e")).toBeTruthy();
     expect(screen.getByText("输入效果")).toBeTruthy();
     expect(screen.getByText("自动标点")).toBeTruthy();
     expect(screen.queryByText("供应商名称不应在一级出现")).toBeNull();
@@ -70,6 +69,9 @@ describe("SettingsSidebar", () => {
     expect(screen.queryByText(/所有修改均已自动保存/)).toBeNull();
     expect(screen.queryByRole("button", { name: "保存" })).toBeNull();
     expect(screen.queryByRole("button", { name: /冒烟测试/ })).toBeNull();
+    expect(onShortcutCapture).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: /点击重新设置/ }));
+    expect(onShortcutCapture).toHaveBeenCalledOnce();
 
     fireEvent.click(screen.getByRole("button", { name: /个性化/ }));
     expect(onLaunch).toHaveBeenCalledWith("personalization");
@@ -84,7 +86,9 @@ describe("SettingsSidebar", () => {
         config={defaultConfig}
         configStatus={{ provider_ready: false, provider_message: "offline" }}
         voiceStatus={{ state: "Recording", message: "正在听" }}
-        shortcutStatus={null}
+        shortcutView={selectShortcutLifecycle(null, defaultConfig.shortcut)}
+        shortcutRequestPending={false}
+        shortcutTransportError=""
         optionPool={pool}
         optionSaving={false}
         optionSavingMap={{}}
@@ -96,7 +100,8 @@ describe("SettingsSidebar", () => {
         moreSettingsRef={createRef()}
         onClose={vi.fn()}
         onEnabled={vi.fn()}
-        onShortcut={vi.fn()}
+        onShortcutCapture={vi.fn()}
+        onShortcutCancel={vi.fn()}
         onOption={vi.fn()}
         onLaunch={vi.fn()}
       />,

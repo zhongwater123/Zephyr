@@ -117,7 +117,8 @@
         "frontend.ipc"
       ],
       "publicContracts": [
-        "Feature-owned loading, notice, form and editing state"
+        "Feature-owned loading, notice, form and editing state",
+        "Shortcut lifecycle reducer and view-model selectors"
       ]
     },
     {
@@ -152,7 +153,11 @@
       "name": "Preinput overlay",
       "kind": "component",
       "source": [
-        "src/preinput/PreInputOverlay.tsx"
+        "src/preinput/PreInputOverlay.tsx",
+        "src/preinput/RoseCurveLoader.tsx",
+        "src/preinput/preInputModel.ts",
+        "src/preinput/preinput.css",
+        "src/preinput/usePreInputPayload.ts"
       ],
       "docs": [
         "docs/architecture/c4-components-frontend.md",
@@ -415,9 +420,10 @@
       "name": "Shortcut adapter",
       "kind": "component-group",
       "source": [
-        "src-tauri/src/hotkey.rs",
-        "src-tauri/src/low_level_hook.rs",
-        "src-tauri/src/shortcut.rs"
+        "src-tauri/src/physical_shortcut.rs",
+        "src-tauri/src/shortcut_lifecycle.rs",
+        "src-tauri/src/shortcut_manager.rs",
+        "src-tauri/src/windows_keyboard.rs"
       ],
       "docs": [
         "docs/architecture/c4-components-backend.md",
@@ -427,7 +433,7 @@
         "docs/architecture/adr/0002-single-owner-bounded-voice-session.md"
       ],
       "changeTriggers": [
-        "热键 ID、RegisterHotKey 预占、低级钩子过滤、替换事务或事件语义变化"
+        "物理键模型、低级钩子传播决策、捕获事务或事件语义变化"
       ],
       "owner": "windows-maintainers",
       "status": "active",
@@ -436,10 +442,12 @@
         "platform.windows"
       ],
       "publicContracts": [
-        "Normalized shortcut syntax",
+        "Physical scan-code binding contract",
+        "sided modifier-key trigger and modifier-only chord contract",
+        "shortcut_lifecycle_changed authoritative snapshot contract",
         "Pressed and Released SessionEvent translation",
         "transactional shortcut replacement",
-        "best-effort WH_KEYBOARD_LL exclusive mode"
+        "best-effort WH_KEYBOARD_LL physical-key engine"
       ]
     },
     {
@@ -517,7 +525,7 @@
         "src-tauri/src/overlay.rs",
         "src-tauri/src/target.rs",
         "src-tauri/src/inject.rs",
-        "src-tauri/src/hotkey.rs"
+        "src-tauri/src/windows_keyboard.rs"
       ],
       "docs": [
         "docs/architecture/c4-container.md",

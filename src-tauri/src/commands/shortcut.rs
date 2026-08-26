@@ -1,6 +1,6 @@
 use crate::command_error::{self, CommandError, CommandResult};
-use crate::config::AppConfig;
-use crate::shortcut_manager::{ShortcutCaptureSession, ShortcutManager, ShortcutRuntimeStatus};
+use crate::shortcut_lifecycle::ShortcutLifecycleSnapshot;
+use crate::shortcut_manager::ShortcutManager;
 use std::sync::Arc;
 use tauri::{State, WebviewWindow};
 
@@ -9,23 +9,23 @@ pub fn start_shortcut_capture(
     expected_revision: u64,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
-) -> CommandResult<ShortcutCaptureSession> {
+) -> CommandResult<ShortcutLifecycleSnapshot> {
     command_error::require_window(&window, "main")?;
     manager
         .start_capture(expected_revision)
-        .map_err(|error| CommandError::new("shortcut_capture_failed", error))
+        .map_err(|error| CommandError::new("shortcut_lifecycle_failed", error))
 }
 
 #[tauri::command]
-pub fn cancel_shortcut_capture(
-    capture_id: Option<u64>,
+pub fn cancel_shortcut_operation(
+    operation_id: u64,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
-) -> CommandResult<()> {
+) -> CommandResult<ShortcutLifecycleSnapshot> {
     command_error::require_window(&window, "main")?;
     manager
-        .cancel_capture(capture_id)
-        .map_err(|error| CommandError::new("shortcut_cancel_failed", error))
+        .cancel_operation(operation_id)
+        .map_err(|error| CommandError::new("shortcut_lifecycle_failed", error))
 }
 
 #[tauri::command]
@@ -34,18 +34,33 @@ pub fn undo_last_shortcut_change(
     expected_revision: u64,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
-) -> CommandResult<AppConfig> {
+) -> CommandResult<ShortcutLifecycleSnapshot> {
     command_error::require_window(&window, "main")?;
     manager
         .undo(change_id, expected_revision)
-        .map_err(|error| CommandError::new("shortcut_undo_failed", error))
+        .map_err(|error| CommandError::new("shortcut_lifecycle_failed", error))
 }
 
 #[tauri::command]
-pub fn get_shortcut_status(
+pub fn get_shortcut_lifecycle(
+    operation_id: Option<u64>,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
-) -> CommandResult<ShortcutRuntimeStatus> {
+) -> CommandResult<ShortcutLifecycleSnapshot> {
     command_error::require_window(&window, "main")?;
-    Ok(manager.status())
+    manager
+        .lifecycle(operation_id)
+        .map_err(|error| CommandError::new("shortcut_lifecycle_failed", error))
+}
+
+#[tauri::command]
+pub fn restore_default_shortcut(
+    expected_revision: u64,
+    window: WebviewWindow,
+    manager: State<'_, Arc<ShortcutManager>>,
+) -> CommandResult<ShortcutLifecycleSnapshot> {
+    command_error::require_window(&window, "main")?;
+    manager
+        .restore_default(expected_revision)
+        .map_err(|error| CommandError::new("shortcut_lifecycle_failed", error))
 }

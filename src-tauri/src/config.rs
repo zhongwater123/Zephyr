@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::physical_shortcut::{ShortcutBinding, DEFAULT_SHORTCUT_LABEL};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -582,8 +582,9 @@ mod tests {
         save_config_to_path(&path, &config).unwrap();
         let json = fs::read_to_string(path).unwrap();
 
-        assert!(json.contains("Ctrl+Shift+Space"));
-        assert!(json.contains("\"shortcut_mode\": \"standard\""));
+        assert!(json.contains("左 Ctrl+左 Shift+Space"));
+        assert!(json.contains("\"shortcut_binding\""));
+        assert!(!json.contains("shortcut_mode"));
         assert!(!json.contains("api_key"));
         assert!(!json.contains("access_key"));
         assert!(!json.contains("app_key"));
@@ -627,7 +628,7 @@ mod tests {
         assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(config.revision, 0);
         assert_eq!(config.shortcut, "Ctrl+Alt+Space");
-        assert_eq!(config.shortcut_mode, ShortcutMode::Standard);
+        assert!(config.shortcut_binding.is_some());
     }
 
     #[test]
@@ -703,14 +704,35 @@ mod tests {
         assert!(config.incident_save_failed_audio);
         assert!(config.incident_save_failed_text);
         assert_eq!(config.shortcut, "Ctrl+Alt+Space");
-        assert_eq!(config.shortcut_mode, ShortcutMode::Standard);
+        assert!(config.shortcut_binding.is_some());
     }
 
     #[test]
-    fn new_install_uses_safe_standard_default_shortcut() {
+    fn unmappable_legacy_shortcut_is_preserved_without_silent_default() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("config.json");
+        let legacy = serde_json::json!({
+            "schema_version": 5,
+            "enabled": true,
+            "shortcut": "Ctrl+DefinitelyUnknown",
+            "history_enabled": true,
+            "asr": default_asr_config()
+        });
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+
+        let config = read_and_migrate_config(&path).unwrap();
+
+        assert_eq!(config.shortcut, "Ctrl+DefinitelyUnknown");
+        assert!(config.shortcut_binding.is_none());
+    }
+    #[test]
+    fn new_install_uses_exact_left_physical_default_shortcut() {
         let config = AppConfig::default();
-        assert_eq!(config.schema_version, 5);
-        assert_eq!(config.shortcut, "Ctrl+Shift+Space");
-        assert_eq!(config.shortcut_mode, ShortcutMode::Standard);
+        assert_eq!(config.schema_version, 6);
+        assert_eq!(config.shortcut, DEFAULT_SHORTCUT_LABEL);
+        assert_eq!(
+            config.shortcut_binding,
+            Some(ShortcutBinding::default_physical())
+        );
     }
 }

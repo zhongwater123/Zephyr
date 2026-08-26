@@ -11,9 +11,7 @@ import type {
   HotwordState,
   PendingOutput,
   PreInputPayload,
-  ShortcutMode,
-  ShortcutPreview,
-  ShortcutRuntimeStatus,
+  ShortcutLifecycleSnapshot,
   VoiceStatePayload,
 } from "../domain";
 
@@ -89,16 +87,22 @@ export const incidentApi = {
     invoke<void>("record_frontend_incident", { input }),
 };
 
-export const shortcutApi = {
-  prepare: (shortcut: string, mode: ShortcutMode) =>
-    invoke<ShortcutPreview>("prepare_shortcut", { shortcut, mode }),
-  commit: (previewId: number, expectedRevision: number) =>
-    invoke<AppConfig>("commit_shortcut", { previewId, expectedRevision }),
-  cancel: (previewId?: number | null) =>
-    invoke<void>("cancel_shortcut_preview", { previewId: previewId ?? null }),
-  preview: (previewId: number) =>
-    invoke<ShortcutPreview>("get_shortcut_preview", { previewId }),
-  status: () => invoke<ShortcutRuntimeStatus>("get_shortcut_status"),
+export const shortcutLifecycleApi = {
+  startCapture: (expectedRevision: number) =>
+    invoke<ShortcutLifecycleSnapshot>("start_shortcut_capture", { expectedRevision }),
+  cancelOperation: (operationId: number) =>
+    invoke<ShortcutLifecycleSnapshot>("cancel_shortcut_operation", { operationId }),
+  get: (operationId?: number | null) =>
+    invoke<ShortcutLifecycleSnapshot>("get_shortcut_lifecycle", {
+      operationId: operationId ?? null,
+    }),
+  restoreDefault: (expectedRevision: number) =>
+    invoke<ShortcutLifecycleSnapshot>("restore_default_shortcut", { expectedRevision }),
+  undo: (changeId: number, expectedRevision: number) =>
+    invoke<ShortcutLifecycleSnapshot>("undo_last_shortcut_change", {
+      changeId,
+      expectedRevision,
+    }),
 };
 
 export const hotwordApi = {

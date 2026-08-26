@@ -1,6 +1,6 @@
 use crate::config::{self, AppConfig, CredentialUpdates, InjectionStrategy};
-use crate::shortcut_manager::ShortcutManager;
 use crate::services::{ConfigService, ConfigServiceError, ProviderService};
+use crate::shortcut_manager::ShortcutManager;
 use crate::voice_controller::VoiceSessionController;
 use crate::SharedRuntime;
 use std::sync::Arc;

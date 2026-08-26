@@ -1,5 +1,7 @@
 import type { RefObject } from "preact";
-import type { AppConfig, AsrOptionPool, ConfigStatus, ConfigValue, ShortcutRuntimeStatus, VoiceStatePayload } from "../../domain";
+import type { AppConfig, AsrOptionPool, ConfigStatus, ConfigValue, VoiceStatePayload } from "../../domain";
+import { ShortcutCaptureField } from "../shortcut/ShortcutCaptureField";
+import type { ShortcutLifecycleViewModel } from "../shortcut/shortcutLifecycle";
 import { BehaviorSwitch } from "./BehaviorSwitch";
 import { OptionPoolRenderer } from "./OptionPoolRenderer";
 
@@ -25,7 +27,9 @@ export function SettingsSidebar({
   config,
   configStatus,
   voiceStatus,
-  shortcutStatus,
+  shortcutView,
+  shortcutRequestPending,
+  shortcutTransportError,
   optionPool,
   optionSaving,
   optionSavingMap,
@@ -37,7 +41,8 @@ export function SettingsSidebar({
   moreSettingsRef,
   onClose,
   onEnabled,
-  onShortcut,
+  onShortcutCapture,
+  onShortcutCancel,
   onOption,
   onLaunch,
 }: {
@@ -45,7 +50,9 @@ export function SettingsSidebar({
   config: AppConfig;
   configStatus: ConfigStatus;
   voiceStatus: VoiceStatePayload;
-  shortcutStatus: ShortcutRuntimeStatus | null;
+  shortcutView: ShortcutLifecycleViewModel;
+  shortcutRequestPending: boolean;
+  shortcutTransportError: string;
   optionPool: AsrOptionPool | null;
   optionSaving: boolean;
   optionSavingMap: Record<string, boolean>;
@@ -57,7 +64,8 @@ export function SettingsSidebar({
   moreSettingsRef: RefObject<HTMLButtonElement>;
   onClose: () => void;
   onEnabled: (enabled: boolean) => void;
-  onShortcut: () => void;
+  onShortcutCapture: () => void;
+  onShortcutCancel: () => void;
   onOption: (optionId: string, value: ConfigValue) => void;
   onLaunch: (panel: "personalization" | "more_settings") => void;
 }) {
@@ -94,14 +102,13 @@ export function SettingsSidebar({
           {enabledError ? <p className="field-error" role="alert">{enabledError}</p> : null}
         </section>
 
-        <button type="button" className="shortcut-row" onClick={onShortcut}>
-          <span>
-            <strong>快捷键</strong>
-            <small>{shortcutStatus?.message || "正在读取生效状态"}</small>
-          </span>
-          <kbd>{config.shortcut}{config.shortcut_mode === "exclusive_hook" ? " · 独占" : ""}</kbd>
-          <span className="row-chevron" aria-hidden="true">›</span>
-        </button>
+        <ShortcutCaptureField
+          view={shortcutView}
+          requestPending={shortcutRequestPending}
+          transportError={shortcutTransportError}
+          onStart={onShortcutCapture}
+          onCancel={onShortcutCancel}
+        />
 
         <OptionPoolRenderer
           pool={optionPool}

@@ -30,8 +30,7 @@ import {
   type MoreSettingsSection,
 } from "../features/settings/MoreSettingsPanel";
 import { useHistoryController } from "../features/history/useHistoryController";
-import { ShortcutDialog } from "../features/shortcut/ShortcutDialog";
-import { useShortcutController } from "../features/shortcut/useShortcutController";
+import { useShortcutLifecycleController } from "../features/shortcut/useShortcutLifecycleController";
 import { useHotwordController } from "../features/hotwords/useHotwordController";
 
 const ZephyrAsciiField = lazy(() =>
@@ -43,8 +42,7 @@ const currentWindow = getCurrentWindow();
 function normalizeConfig(next: AppConfig): AppConfig {
   return {
     ...next,
-    schema_version: next.schema_version ?? 5,
-    shortcut_mode: next.shortcut_mode ?? "standard",
+    schema_version: next.schema_version ?? 6,
     revision: next.revision ?? 0,
     trusted_endpoints: next.trusted_endpoints ?? [],
     injection_overrides: next.injection_overrides ?? [],
@@ -152,18 +150,13 @@ export function AppShell() {
   } = useHotwordController(config, setConfig);
 
   const {
-    shortcutOpen,
-    shortcutDraft,
-    shortcutPreview,
-    shortcutStatus,
-    shortcutNotice,
-    shortcutChecking,
-    openShortcutPanel,
-    captureShortcut,
-    closeShortcutPanel,
-    takeExclusiveControl,
-    clearShortcutDraft,
-  } = useShortcutController(config, setConfig, setNotice, configMutation.describeError);
+    shortcutView,
+    shortcutRequestPending,
+    shortcutTransportError,
+    beginShortcutCapture,
+    cancelShortcutOperation,
+    closeShortcutSession,
+  } = useShortcutLifecycleController(config, setConfig, setNotice, configMutation.describeError);
 
   useEffect(() => {
     void configApi.get()
@@ -214,11 +207,13 @@ export function AppShell() {
   }
 
   function closeDrawer() {
+    void closeShortcutSession();
     setDrawerOpen(false);
     window.setTimeout(() => menuRef.current?.focus(), 0);
   }
 
   function openPanel(panel: SettingsPanel) {
+    void closeShortcutSession();
     setDrawerOpen(false);
     setActivePanel(panel);
     if (panel === "personalization") {
@@ -460,7 +455,7 @@ export function AppShell() {
     if (event.detail === 2) void currentWindow.toggleMaximize();
   }
 
-  const overlayOpen = drawerOpen || activePanel !== null || shortcutOpen;
+  const overlayOpen = drawerOpen || activePanel !== null;
 
   return (
     <main className={"zephyr-app zephyr-v2 " + (overlayOpen ? "surface-open" : "")}>
@@ -484,7 +479,8 @@ export function AppShell() {
           aria-controls="config-drawer"
           onClick={(event) => {
             event.stopPropagation();
-            setDrawerOpen((open) => !open);
+            if (drawerOpen) closeDrawer();
+            else setDrawerOpen(true);
           }}
         >
           <svg className="menu-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
@@ -496,7 +492,9 @@ export function AppShell() {
         config={config}
         configStatus={configStatus}
         voiceStatus={voiceStatus}
-        shortcutStatus={shortcutStatus}
+        shortcutView={shortcutView}
+        shortcutRequestPending={shortcutRequestPending}
+        shortcutTransportError={shortcutTransportError}
         optionPool={asrOptionPool}
         optionSaving={asrOptionSaving}
         optionSavingMap={asrSavingOptions}
@@ -508,7 +506,8 @@ export function AppShell() {
         moreSettingsRef={moreSettingsRef}
         onClose={closeDrawer}
         onEnabled={(enabled) => void setEnabled(enabled)}
-        onShortcut={openShortcutPanel}
+        onShortcutCapture={() => void beginShortcutCapture()}
+        onShortcutCancel={() => void cancelShortcutOperation()}
         onOption={(optionId, value) => {
           void setAsrOption(optionId, value).then(() => configApi.get().then((next) => setConfig(normalizeConfig(next))));
         }}
@@ -623,19 +622,6 @@ export function AppShell() {
           />
         </ModalShell>
       ) : null}
-
-      <ShortcutDialog
-        open={shortcutOpen}
-        currentShortcut={config.shortcut}
-        draft={shortcutDraft}
-        preview={shortcutPreview}
-        checking={shortcutChecking}
-        notice={shortcutNotice}
-        onClose={closeShortcutPanel}
-        onCapture={captureShortcut}
-        onExclusive={takeExclusiveControl}
-        onRetry={clearShortcutDraft}
-      />
 
       <div className="sr-only" aria-live="polite">{notice}</div>
     </main>
