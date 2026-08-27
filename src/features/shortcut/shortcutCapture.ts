@@ -249,6 +249,18 @@ export function buildMainCandidate(
   if (!trigger) {
     return rejected("invalid_binding", "暂不支持按键 " + triggerCode + "。", label);
   }
+  const candidate: ShortcutCandidate = {
+    binding: {
+      modifiers: modifiers.map(modifierBinding),
+      trigger: { scanCode: trigger.scanCode, extended: trigger.extended },
+    },
+    label,
+    codes: [...modifiers, triggerCode],
+  };
+  const validated = validateCandidate(candidate, triggerCode);
+  if (validated.error) {
+    return validated;
+  }
   if (modifiers.length === 0 && !trigger.standalone) {
     return rejected(
       "invalid_binding",
@@ -256,17 +268,7 @@ export function buildMainCandidate(
       label,
     );
   }
-  return validateCandidate(
-    {
-      binding: {
-        modifiers: modifiers.map(modifierBinding),
-        trigger: { scanCode: trigger.scanCode, extended: trigger.extended },
-      },
-      label,
-      codes: [...modifiers, triggerCode],
-    },
-    triggerCode,
-  );
+  return validated;
 }
 
 export function buildModifierCandidate(codes: Iterable<string>): CandidateResult {

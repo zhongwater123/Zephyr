@@ -170,6 +170,15 @@ impl StreamingTranscriptionProvider for UnavailableProvider {
 mod tests {
     use super::*;
 
+    fn stream_info() -> AudioStreamInfo {
+        AudioStreamInfo {
+            sample_rate: 16_000,
+            channels: 1,
+            encoding: "pcm_s16le",
+            chunk_duration_ms: 200,
+        }
+    }
+
     #[tokio::test]
     async fn mock_provider_normalizes_empty_and_unfinished_audio() {
         for chunk in [
@@ -190,21 +199,90 @@ mod tests {
             drop(tx);
             assert_eq!(
                 MockProvider
-                    .transcribe_stream(
-                        AudioStreamInfo {
-                            sample_rate: 16_000,
-                            channels: 1,
-                            encoding: "pcm_s16le",
-                            chunk_duration_ms: 200,
-                        },
-                        rx,
-                        event_tx,
-                        None,
-                    )
+                    .transcribe_stream(stream_info(), rx, event_tx, None)
                     .await
                     .unwrap_err(),
                 ProviderError::NoSpeech
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn mock_provider_emits_final_event_for_complete_audio() {
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        let (event_tx, event_rx) = tokio::sync::watch::channel(None);
+        tx.send(AudioChunk {
+            bytes: Bytes::from_static(&[1, 2, 3]),
+            duration_ms: 200,
+            is_final: false,
+        })
+        .await
+        .unwrap();
+        tx.send(AudioChunk {
+            bytes: Bytes::from_static(&[4, 5, 6]),
+            duration_ms: 200,
+            is_final: true,
+        })
+        .await
+        .unwrap();
+        drop(tx);
+
+        let transcript = MockProvider
+            .transcribe_stream(stream_info(), rx, event_tx, None)
+            .await
+            .unwrap();
+
+        assert_eq!(transcript, "模拟识别结果（2 个音频包）");
+        assert_eq!(
+            event_rx.borrow().clone(),
+            Some(TranscriptEvent {
+                text: transcript,
+                is_final: true,
+                utterances: Vec::new(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn unavailable_provider_preserves_configuration_failure() {
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        let (event_tx, _) = tokio::sync::watch::channel(None);
+
+        let error = UnavailableProvider::new("missing credential")
+            .transcribe_stream(stream_info(), rx, event_tx, None)
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error,
+            ProviderError::InvalidConfiguration("missing credential".to_string())
+        );
+    }
+
+    #[test]
+    fn provider_errors_have_stable_cancel_reasons() {
+        let cases = [
+            (ProviderError::NoSpeech, "no_speech"),
+            (
+                ProviderError::AuthenticationRejected("rejected".to_string()),
+                "authentication_rejected",
+            ),
+            (
+                ProviderError::QuotaExceeded("exhausted".to_string()),
+                "quota_exceeded",
+            ),
+            (
+                ProviderError::InvalidConfiguration("invalid".to_string()),
+                "invalid_configuration",
+            ),
+            (ProviderError::Network("offline".to_string()), "network"),
+            (ProviderError::Protocol("bad frame".to_string()), "protocol"),
+            (ProviderError::Timeout, "timeout"),
+            (ProviderError::Cancelled, "cancelled"),
+        ];
+
+        for (error, expected) in cases {
+            assert_eq!(error.cancel_reason(), expected);
         }
     }
 }

@@ -19,17 +19,15 @@ jobs:
         with:
           components: clippy,rustfmt
       - name: Install frontend dependencies
+        run: npm ci
       - name: Test architecture documentation checks
         run: npm run architecture:test
       - name: Report architecture impact for pull request
         if: github.event_name == 'pull_request'
-        continue-on-error: true
         run: npm run architecture:impact -- --base "origin/${{ github.base_ref }}"
       - name: Report architecture impact for push
         if: github.event_name == 'push' && github.event.before != '0000000000000000000000000000000000000000'
-        continue-on-error: true
         run: npm run architecture:impact -- --base "${{ github.event.before }}"
-        run: npm ci
       - name: Check architecture documentation
         run: npm run architecture:check
       - name: Check ASR layer boundaries

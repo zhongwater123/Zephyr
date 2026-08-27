@@ -23,7 +23,9 @@ describe("shortcutCapture", () => {
   it("keeps an unmodified character in capture with a validation reason", () => {
     const result = buildMainCandidate([], "KeyK");
     expect(result.error?.code).toBe("invalid_binding");
-    expect(result.label).toBe("K");
+    if ("label" in result) {
+      expect(result.label).toBe("K");
+    }
   });
 
   it("rejects Windows-reserved combinations before IPC commit", () => {

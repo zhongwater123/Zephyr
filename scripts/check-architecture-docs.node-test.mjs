@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 
 import {
+  effectiveSliceFreshness,
   affectedValidationSlices,
   parseJsonFrontMatterText,
   validateFeatureDossiers,
@@ -37,15 +38,21 @@ function validator() {
 
 function metadata(overrides = {}) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     featureId: "FEAT-TEST",
     specStatus: "confirmed",
+    confirmation: {
+      confirmedBy: "test user",
+      confirmedAt: "2026-08-26",
+      sourceRef: "test fixture",
+    },
     implementationStatus: "implemented",
     validationStatus: "partial",
     components: ["frontend.features"],
     decisions: ["ADR-0010"],
-    validationSlices: [{ id: "AC-TEST-01", components: ["frontend.features"] }],
+    validationSlices: [{ id: "AC-TEST-01", components: ["frontend.features"], requiredEvidence: ["automated"] }],
     evidence: [],
+    impactAssessments: [],
     ...overrides,
   };
 }
@@ -94,6 +101,18 @@ test("valid dossier passes and invalid status is rejected", () => {
   assert.ok(invalidErrors.some((error) => error.includes("validationStatus")));
 });
 
+test("confirmed dossier requires a traceable confirmation source", () => {
+  const errors = [];
+  validateFeatureDossiers(
+    [dossier({ confirmation: undefined })],
+    validator(),
+    new Set(["frontend.features"]),
+    new Set(["ADR-0010"]),
+    errors,
+  );
+  assert.ok(errors.some((error) => error.includes("confirmation")));
+});
+
 test("unknown component and ADR references are rejected", () => {
   const errors = [];
   validateFeatureDossiers(
@@ -118,6 +137,9 @@ test("validated dossier requires current passing evidence for every slice", () =
         method: "automated",
         result: "pass",
         freshness: "stale",
+        capabilities: ["automated"],
+        scope: "Node test fixture",
+        limitations: ["Does not exercise WebView2"],
         sourceRevision: "7026768",
         worktreeState: "dirty",
         changedPaths: ["scripts/check-architecture-docs.test.mjs"],
@@ -130,8 +152,42 @@ test("validated dossier requires current passing evidence for every slice", () =
     new Set(["ADR-0010"]),
     errors,
   );
-  assert.ok(errors.some((error) => error.includes("缺少当前成功证据")));
+  assert.ok(errors.some((error) => error.includes("缺少证据能力 automated")));
 });
+
+test("automated evidence cannot impersonate required target-environment evidence", () => {
+  const errors = [];
+  validateFeatureDossiers(
+    [dossier({
+      validationStatus: "validated",
+      validationSlices: [{
+        id: "AC-TEST-01",
+        components: ["frontend.features"],
+        requiredEvidence: ["automated", "windows_webview2"],
+      }],
+      evidence: [{
+        id: "EV-TEST-01",
+        acceptanceIds: ["AC-TEST-01"],
+        method: "automated",
+        result: "pass",
+        freshness: "current",
+        capabilities: ["automated"],
+        scope: "Reducer and component tests",
+        limitations: ["No real WebView2 input"],
+        sourceRevision: "7026768",
+        worktreeState: "clean",
+        environment: "Node test fixture",
+        validatedAt: "2026-08-26",
+      }],
+    })],
+    validator(),
+    new Set(["frontend.features"]),
+    new Set(["ADR-0010"]),
+    errors,
+  );
+  assert.ok(errors.some((error) => error.includes("缺少证据能力 windows_webview2")));
+});
+
 
 test("proposal references and postmortem normativity are checked", () => {
   const referenceErrors = [];
@@ -178,13 +234,55 @@ test("component impact maps to validation slices", () => {
   assert.deepEqual(affected, [{ featureId: "FEAT-TEST", sliceId: "AC-TEST-01" }]);
 });
 
-test("impact report is warning-only and does not rewrite dossiers", () => {
+test("impact report does not rewrite dossiers and partial features remain non-blocking", () => {
   const before = digestFeatureFiles();
-  const result = spawnSync(process.execPath, ["scripts/check-architecture-docs.mjs", "--impact"], {
+  const result = spawnSync(process.execPath, [
+    "scripts/check-architecture-docs.mjs",
+    "--impact",
+    "--base",
+    "7026768",
+  ], {
     cwd: root,
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Potentially Stale/);
   assert.equal(digestFeatureFiles(), before);
+  assert.match(result.stdout, /declaredStatus=partial; effectiveFreshness=potentially_stale/);
+});
+
+test("effective freshness detects source changes after otherwise current evidence", () => {
+  const entry = dossier({
+    evidence: [{
+      id: "EV-TEST-01",
+      acceptanceIds: ["AC-TEST-01"],
+      method: "automated",
+      result: "pass",
+      freshness: "current",
+      capabilities: ["automated"],
+      scope: "Shortcut frontend automation",
+      limitations: [],
+      sourceRevision: "7026768",
+      worktreeState: "clean",
+      environment: "Node test fixture",
+      validatedAt: "2026-08-26",
+    }],
+  });
+  const map = {
+    components: [{
+      id: "frontend.features",
+      source: ["src/features/shortcut"],
+      dependsOn: [],
+    }],
+  };
+  assert.equal(effectiveSliceFreshness(entry, entry.metadata.validationSlices[0], map), "potentially_stale");
+});
+
+test("user documentation describes Unicode SendInput as the default delivery path", () => {
+  const readme = readFileSync(path.join(root, "README.md"), "utf8");
+  const troubleshooting = readFileSync(path.join(root, "docs/troubleshooting.md"), "utf8");
+  assert.match(readme, /Unicode `SendInput`/);
+  assert.doesNotMatch(readme, /committed once through clipboard paste/i);
+  assert.match(troubleshooting, /Unicode `SendInput`/);
+  assert.match(troubleshooting, /compatibility/i);
 });

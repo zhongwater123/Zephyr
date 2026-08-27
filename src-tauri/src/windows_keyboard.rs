@@ -1,6 +1,6 @@
 use crate::physical_shortcut::{
-    modifier_bit, CompiledBinding, PhysicalKeyId, ShortcutBinding, LEFT_CTRL, LEFT_WIN,
-    RIGHT_ALT, RIGHT_WIN,
+    modifier_bit, CompiledBinding, PhysicalKeyId, ShortcutBinding, LEFT_CTRL, LEFT_WIN, RIGHT_ALT,
+    RIGHT_WIN,
 };
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -596,7 +596,9 @@ impl WindowsKeyboardEngine {
             return;
         }
         self.globals.shutting_down.store(true, Ordering::Release);
-        self.globals.interruption_pending.store(false, Ordering::Release);
+        self.globals
+            .interruption_pending
+            .store(false, Ordering::Release);
         self.globals.release_active();
         self.globals.enabled.store(false, Ordering::Release);
         self.globals.binding.store(0, Ordering::Release);
@@ -1009,6 +1011,30 @@ mod tests {
             0,
         ));
         assert!(matches!(rx.try_recv(), Ok(Signal::Pressed)));
+
+        let (right_globals, right_rx) = self::globals();
+        right_globals.binding.store(
+            pack_binding(left_ctrl_space().compile().unwrap()),
+            Ordering::Release,
+        );
+        right_globals.enabled.store(true, Ordering::Release);
+        assert!(!process_keyboard_event(
+            &right_globals,
+            PhysicalKeyId::new(0x1d, true),
+            true,
+            false,
+            20,
+            0,
+        ));
+        assert!(!process_keyboard_event(
+            &right_globals,
+            PhysicalKeyId::new(0x39, false),
+            true,
+            false,
+            21,
+            0,
+        ));
+        assert!(right_rx.try_recv().is_err());
     }
 
     #[test]

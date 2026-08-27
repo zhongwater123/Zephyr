@@ -32,7 +32,7 @@ Dossier 以 `---` 包围的 JSON 对象开头。JSON 同时是 YAML 的合法子
 ```markdown
 ---
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "featureId": "FEAT-EXAMPLE",
   "specStatus": "draft",
   "implementationStatus": "not_started",
@@ -40,9 +40,10 @@ Dossier 以 `---` 包围的 JSON 对象开头。JSON 同时是 YAML 的合法子
   "components": ["frontend.features"],
   "decisions": [],
   "validationSlices": [
-    { "id": "AC-EX-01", "components": ["frontend.features"] }
+    { "id": "AC-EX-01", "components": ["frontend.features"], "requiredEvidence": ["automated"] }
   ],
-  "evidence": []
+  "evidence": [],
+  "impactAssessments": []
 }
 ---
 ```
@@ -55,6 +56,12 @@ Dossier 以 `---` 包围的 JSON 对象开头。JSON 同时是 YAML 的合法子
 - 单条证据 `freshness`: `current | potentially_stale | stale | revalidated`
 
 `validated` 只允许用于所有关键验收均有当前目标环境证据的功能。单元测试通过但缺少真实环境验证时使用 `partial`。
+
+`confirmed` 不是作者自我声明。它必须包含 `confirmation.confirmedBy`、`confirmedAt` 和可追溯的 `sourceRef`；尚无确认来源时保持 `draft`。
+
+每个验收切片用 `requiredEvidence` 声明完成它真正需要的证据能力，例如 `automated`、`windows_webview2`、`runtime_hook`、`fault_injection`、`restart_persistence` 或 `external_app_interop`。证据用 `capabilities` 声明实际覆盖能力，并记录 `scope` 与 `limitations`。`method=automated` 本身不能证明真实 WebView2 或 Windows Hook。
+
+`validationStatus` 是作者声明；检查器还会根据证据 revision 之后传播到验收组件的源码变化计算 `effectiveFreshness`。声明为 `validated` 的功能若出现未处理的 `potentially_stale` 切片，结构检查和 CI 都会失败。
 
 ## 正文模板
 
@@ -85,4 +92,10 @@ Dossier 以 `---` 包围的 JSON 对象开头。JSON 同时是 YAML 的合法子
 
 ## 验证证据
 
-普通开发证据记录 source revision、worktree 状态、变更路径、环境和日期。发布级或关键系统验收再增加 build ID 和 artifact SHA-256。代码影响分析只能提示 `Potentially Stale`；是否真正失效由验收切片和人工复核决定。
+普通开发证据记录 source revision、worktree 状态、变更路径、环境和日期，并明确它证明的能力、范围和限制。发布级证据再增加 build ID 和 artifact SHA-256。
+
+影响分析不直接改写 Dossier。相关源码变化会使受影响切片的有效新鲜度变成 `potentially_stale`：
+
+- 功能仍为 `partial` 或 `unverified` 时只报告，不妨碍继续开发；
+- 功能声明为 `validated` 时会阻断门禁，直到补充重新验证证据；
+- 如果评审确认变更不影响既有证据，可以提交绑定评估 revision、验收切片和理由的 `impactAssessment`。检查器会继续追踪该评估之后的源码变化，路径匹配不能自行作最终语义判决。

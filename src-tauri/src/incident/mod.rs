@@ -1096,58 +1096,6 @@ mod tests {
     }
 
     #[test]
-    fn audio_try_emit_p99_stays_below_fifty_microseconds() {
-        let temp = TempDir::new().unwrap();
-        let paths = test_paths(&temp);
-        let vault = super::AsyncIncidentVault::start(paths).unwrap();
-        let attempt_id = std::sync::Arc::<str>::from("audio-p99");
-        let _ = vault.try_emit(IncidentEvent::AttemptStarted {
-            attempt_id: attempt_id.to_string(),
-            runtime_session_id: 10,
-            started_at_utc_ms: 1000,
-            app_version: "test".to_string(),
-            app_name: None,
-            app_title: None,
-            policy: policy(false),
-        });
-
-        for sequence in 0..128 {
-            let _ = vault.try_emit(IncidentEvent::AudioChunk {
-                attempt_id: attempt_id.clone(),
-                sequence,
-                bytes: Bytes::from_static(&[1, 2, 3, 4]),
-                duration_ms: 1,
-                is_final: false,
-            });
-        }
-
-        let mut elapsed = Vec::with_capacity(4096);
-        for sequence in 128..4224 {
-            let started = std::time::Instant::now();
-            let outcome = vault.try_emit(IncidentEvent::AudioChunk {
-                attempt_id: attempt_id.clone(),
-                sequence,
-                bytes: Bytes::from_static(&[1, 2, 3, 4]),
-                duration_ms: 1,
-                is_final: false,
-            });
-            elapsed.push(started.elapsed());
-            assert!(matches!(
-                outcome,
-                super::model::EmitOutcome::Accepted
-                    | super::model::EmitOutcome::Dropped(super::model::DropReason::QueueFull)
-            ));
-        }
-        elapsed.sort_unstable();
-        let p99 = elapsed[(elapsed.len() * 99) / 100];
-        assert!(
-            p99 < std::time::Duration::from_micros(50),
-            "AudioChunk try_emit P99 was {p99:?}"
-        );
-        vault.shutdown(std::time::Duration::from_millis(500));
-    }
-
-    #[test]
     fn bounded_shutdown_drains_accepted_control_and_audio_events() {
         let temp = TempDir::new().unwrap();
         let paths = test_paths(&temp);

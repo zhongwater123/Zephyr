@@ -38,14 +38,17 @@ const idleShortcutView: ShortcutBindingViewModel = {
 
 afterEach(cleanup);
 
+type LaunchHandler = (panel: "personalization" | "more_settings") => void;
+type ShortcutCaptureHandler = () => void;
+
 function renderSidebar(overrides: {
   providerReady?: boolean;
   voiceState?: "Idle" | "Recording";
-  onLaunch?: ReturnType<typeof vi.fn>;
-  onShortcutCapture?: ReturnType<typeof vi.fn>;
+  onLaunch?: LaunchHandler;
+  onShortcutCapture?: ShortcutCaptureHandler;
 } = {}) {
-  const onLaunch = overrides.onLaunch ?? vi.fn();
-  const onShortcutCapture = overrides.onShortcutCapture ?? vi.fn();
+  const onLaunch = overrides.onLaunch ?? vi.fn<LaunchHandler>();
+  const onShortcutCapture = overrides.onShortcutCapture ?? vi.fn<ShortcutCaptureHandler>();
   render(
     <SettingsSidebar
       open
@@ -83,8 +86,8 @@ function renderSidebar(overrides: {
 
 describe("SettingsSidebar", () => {
   it("keeps the C-end root hierarchy focused on the primary job", () => {
-    const onLaunch = vi.fn();
-    const onShortcutCapture = vi.fn();
+    const onLaunch = vi.fn<LaunchHandler>();
+    const onShortcutCapture = vi.fn<ShortcutCaptureHandler>();
     renderSidebar({ onLaunch, onShortcutCapture });
 
     expect(screen.getByText("已就绪")).toBeTruthy();

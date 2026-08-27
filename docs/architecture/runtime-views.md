@@ -55,19 +55,44 @@ sequenceDiagram
 
 - View status: `current`
 - Feature: [FEAT-SHORTCUT-BINDING](../features/shortcut-binding.md)
-- Decision: [ADR-0010](adr/0010-separate-focused-shortcut-editing.md)
+- Decisions: [ADR-0010](adr/0010-separate-focused-shortcut-editing.md), [ADR-0011](adr/0011-capability-aware-effective-validation.md)
 - Validation: `partial`
 
-用户点击快捷键字段时，前端在同一帧进入 `capturing`，生成 `traceId` 并聚焦字段；`begin_shortcut_edit(traceId, expectedRevision)` 在后台暂停旧运行时 binding，但 DOM 录入不等待 begin 回执。旧快捷键暂停只切换引擎 matching 状态，不卸载或重装 Hook。
+```mermaid
+sequenceDiagram
+    actor U as 用户
+    participant FE as 有焦点的设置录入
+    participant M as ShortcutManager
+    participant RT as 全局运行时监听
+    participant CFG as 配置存储
 
-字段内 `KeyboardEvent.code` 唯一负责候选：左右 Ctrl/Alt/Shift/Win 分开记录，修饰键逐键更新键帽，普通组合在主键 `keydown` 时完成；纯修饰键至少按住 200ms 并在全部释放时完成。裸 Escape、字段外点击和再次点击取消；带修饰键 Escape 可进入保留组合校验。非法候选留在录入状态并显示短暂警告，下一次按键直接重新组装。合法候选立即退出录入外观并乐观显示，提交期间字段短暂禁用但不显示保存动画或成功提示。
+    U->>FE: 点击快捷键字段
+    FE-->>U: 立即进入录入并显示本地观察到的按键
+    FE->>M: 开始编辑（异步）
+    M->>RT: 暂停旧绑定触发
+    U->>FE: 输入、取消或完成候选
+    FE-->>U: 持续显示完整候选或恢复旧显示
+    alt 用户取消
+        FE->>M: 取消编辑
+        M->>RT: 恢复旧绑定
+        M-->>FE: 原绑定未变化
+    else 提交候选
+        FE->>M: 提交候选与预期配置 revision
+        M->>M: 校验候选
+        M->>RT: 应用候选绑定
+        M->>CFG: 以预期 revision 持久化
+        alt 运行时与持久化均成功
+            M-->>FE: 新绑定已生效或已保存待启用
+            FE-->>U: 保留新值并反馈成功
+        else 任一步失败
+            M->>RT: 恢复权威旧绑定
+            M-->>FE: 返回失败与恢复结果
+            FE-->>U: 保留失败候选信息并恢复权威显示
+        end
+    end
+```
 
-begin 成功后，前端以会话返回的 `editId + configRevision` 提交现有 `ShortcutBinding`。Manager 重新验证物理键、最多三个键和 Windows 保留组合；配置启用时才强制执行 Hook generation 重装确认，然后在监听关闭状态下应用新 binding、恢复监听，最后以 expected revision 原子持久化。未变化候选不写磁盘、不增加 revision，但仍确认启用状态下的 Hook 健康。
-
-Hook、运行时切换或持久化失败时，Manager 以当前权威配置恢复旧 binding 和 enabled 状态；恢复成功返回普通失败，前端弹轻量错误并回滚乐观标签。恢复失败返回 `runtime_rollback_failed` 并将运行时标记为 error，界面不得声称旧快捷键仍有效。外部启停和系统 resume 会中断 edit，并通过唯一事件 `shortcut_edit_interrupted` 让前端退出。Hook 不生成候选事件，前端不监听快捷键 lifecycle event，也不执行 250ms 轮询。
-
-换绑专用 `shortcut_edit_trace` 日志用 `traceId/editId/eventSeq` 串联 DOM 原始按键、规范化候选、begin、Hook generation、运行时应用、持久化和回滚。Hook 回调本身不写日志；dispatch 只记录真正匹配到的运行时 Pressed/Released。
-完整的数据结构、状态机、成功/失败时序、Hook 恢复和日志排查见 [热键录入、换绑事务与 Windows 运行时链路](shortcut-editing.md)。
+设置录入负责即时反馈；后端负责校验、运行时应用、持久化和回滚；全局监听器只触发已提交绑定。具体 DOM 状态机、IPC 字段、Hook 恢复和日志排查见[非规范性 Implementation Guide](shortcut-editing.md)。
 
 ### 并发与终止条件
 

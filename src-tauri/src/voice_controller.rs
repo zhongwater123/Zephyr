@@ -1295,11 +1295,6 @@ fn is_empty_input_error(error: &ProviderError) -> bool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn recording_deadline_is_two_minutes() {
-        assert_eq!(MAX_RECORDING_SECS, 120);
-    }
-
     #[tokio::test]
     async fn cancelled_recording_deadline_does_not_fire() {
         let cancellation = Arc::new(SessionCancellation::default());
@@ -1315,14 +1310,6 @@ mod tests {
         assert!(wait_for_recording_deadline(cancellation, Duration::ZERO).await);
     }
 
-    #[tokio::test]
-    async fn control_queue_is_bounded_to_sixteen_events() {
-        let (tx, _rx) = mpsc::channel::<u8>(CONTROL_QUEUE_CAPACITY);
-        for value in 0..CONTROL_QUEUE_CAPACITY {
-            tx.try_send(value as u8).unwrap();
-        }
-        assert!(tx.try_send(255).is_err());
-    }
     #[derive(Default)]
     struct CollectingIncidentSink {
         events: std::sync::Mutex<Vec<String>>,

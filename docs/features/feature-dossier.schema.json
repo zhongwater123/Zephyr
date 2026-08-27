@@ -13,11 +13,22 @@
     "components",
     "decisions",
     "validationSlices",
-    "evidence"
+    "evidence",
+    "impactAssessments"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "featureId": { "type": "string", "pattern": "^FEAT-[A-Z0-9]+(?:-[A-Z0-9]+)*$" },
+    "confirmation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["confirmedBy", "confirmedAt", "sourceRef"],
+      "properties": {
+        "confirmedBy": { "type": "string", "minLength": 1 },
+        "confirmedAt": { "type": "string", "format": "date" },
+        "sourceRef": { "type": "string", "minLength": 1 }
+      }
+    },
     "specStatus": { "enum": ["draft", "confirmed", "superseded"] },
     "implementationStatus": {
       "enum": ["not_started", "in_progress", "implemented", "deprecated", "superseded"]
@@ -38,7 +49,7 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "components"],
+        "required": ["id", "components", "requiredEvidence"],
         "properties": {
           "id": { "type": "string", "pattern": "^AC-[A-Z0-9]+(?:-[A-Z0-9]+)*$" },
           "components": {
@@ -46,6 +57,14 @@
             "minItems": 1,
             "uniqueItems": true,
             "items": { "type": "string", "pattern": "^[a-z0-9]+(?:[.-][a-z0-9]+)*$" }
+          },
+          "requiredEvidence": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": ["static_review", "automated", "windows_webview2", "runtime_hook", "fault_injection", "restart_persistence", "external_app_interop", "release_artifact"]
+            }
           }
         }
       }
@@ -61,6 +80,9 @@
           "method",
           "result",
           "freshness",
+          "capabilities",
+          "scope",
+          "limitations",
           "sourceRevision",
           "worktreeState",
           "environment",
@@ -78,6 +100,20 @@
           "result": { "enum": ["pass", "fail", "partial"] },
           "freshness": { "enum": ["current", "potentially_stale", "stale", "revalidated"] },
           "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+          "capabilities": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "enum": ["static_review", "automated", "windows_webview2", "runtime_hook", "fault_injection", "restart_persistence", "external_app_interop", "release_artifact"]
+            }
+          },
+          "scope": { "type": "string", "minLength": 1 },
+          "limitations": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": { "type": "string", "minLength": 1 }
+          },
           "worktreeState": { "enum": ["clean", "dirty", "unknown"] },
           "changedPaths": {
             "type": "array",
@@ -90,12 +126,39 @@
           "validatedAt": { "type": "string", "format": "date" }
         }
       }
+    },
+    "impactAssessments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "acceptanceIds", "assessedRevision", "assessedAt", "outcome", "rationale"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^IA-[A-Z0-9]+(?:-[A-Z0-9]+)*$" },
+          "acceptanceIds": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "string", "pattern": "^AC-[A-Z0-9]+(?:-[A-Z0-9]+)*$" }
+          },
+          "assessedRevision": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+          "assessedAt": { "type": "string", "format": "date" },
+          "outcome": { "enum": ["evidence_still_valid", "revalidation_required"] },
+          "rationale": { "type": "string", "minLength": 1 }
+        }
+      }
     }
   },
   "allOf": [
     {
       "if": { "properties": { "specStatus": { "const": "confirmed" } } },
-      "then": { "properties": { "validationSlices": { "type": "array", "minItems": 1 } } }
+      "then": {
+        "required": ["confirmation"],
+        "properties": {
+          "confirmation": {},
+          "validationSlices": { "type": "array", "minItems": 1 }
+        }
+      }
     },
     {
       "if": { "properties": { "validationStatus": { "const": "validated" } } },

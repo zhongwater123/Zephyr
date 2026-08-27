@@ -2,7 +2,7 @@
 
 Zephyr is a Windows AI voice input assistant built with Tauri 2, Rust, Preact, and TypeScript.
 
-It is not a Windows TSF input method. It is a lightweight helper tool: hold a global shortcut, speak, watch a floating preview, and release to paste the final cloud ASR transcript into the active app.
+It is not a Windows TSF input method. It is a lightweight helper tool: hold a global shortcut, speak, watch a floating preview, and release to deliver the final cloud ASR transcript into the active app.
 
 ![Zephyr main interface](docs/picture1.png)
 
@@ -13,7 +13,7 @@ Zephyr focuses on a fast preview-first voice input flow. The core input path sta
 - Hold-to-talk global shortcut, default `Ctrl+Alt+Space`.
 - Volcengine bidirectional streaming ASR over WebSocket, default `bigmodel_async`.
 - Preview Mode: partial text appears in a non-focus-stealing floating preinput window.
-- Final text is committed once through clipboard paste.
+- Final text is delivered through Unicode `SendInput` by default, without modifying the clipboard.
 - Dynamic shortcut settings with conflict detection.
 - Recognition behavior switches for punctuation, ITN, semantic smoothing, and first-character acceleration.
 - Local history with search, edit, copy, delete, and clear.

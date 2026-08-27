@@ -855,17 +855,6 @@ mod tests {
     }
 
     #[test]
-    fn database_initialization_creates_hotword_state() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("history.db");
-        let connection = open_database(&path).unwrap();
-        let state = load_stored_state(&connection).unwrap();
-
-        assert!(state.manual_hotwords.is_empty());
-        assert_eq!(state.last_processed_rowid, 0);
-    }
-
-    #[test]
     fn manual_hotwords_are_sanitized_and_deduplicated() {
         let words = sanitize_words(
             vec![

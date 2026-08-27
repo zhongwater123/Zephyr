@@ -1156,6 +1156,14 @@ mod tests {
         }
     }
 
+    fn error_frame(code: u32, message: &str) -> Vec<u8> {
+        let mut frame = vec![0x11, 0xf0, 0x00, 0x00];
+        frame.extend_from_slice(&code.to_be_bytes());
+        frame.extend_from_slice(&(message.len() as u32).to_be_bytes());
+        frame.extend_from_slice(message.as_bytes());
+        frame
+    }
+
     #[test]
     fn full_client_request_matches_sauc_demo_framing() {
         let frame = build_full_client_request(
@@ -1387,5 +1395,144 @@ mod tests {
         server.read_exact(&mut header).await.unwrap();
 
         assert_eq!(header[0] & 0x0f, WS_OPCODE_BINARY);
+    }
+
+    #[test]
+    fn handshake_request_uses_credentials_for_selected_auth_mode() {
+        let mut config = provider_config();
+        config.auth_mode = VolcengineAuthMode::ApiKey;
+        let api_key_request = build_handshake_request(
+            "example.com",
+            443,
+            "/asr?mode=stream",
+            "websocket-key",
+            &config,
+            &VolcengineAuth {
+                api_key: Some("api-secret".to_string()),
+                ..VolcengineAuth::default()
+            },
+            "request-id",
+        )
+        .unwrap();
+        assert!(api_key_request.contains("GET /asr?mode=stream HTTP/1.1"));
+        assert!(api_key_request.contains("Host: example.com\r\n"));
+        assert!(api_key_request.contains("X-Api-Key: api-secret\r\n"));
+        assert!(!api_key_request.contains("X-Api-App-Key"));
+
+        config.auth_mode = VolcengineAuthMode::AppAccess;
+        let app_access_request = build_handshake_request(
+            "example.com",
+            8443,
+            "/asr",
+            "websocket-key",
+            &config,
+            &VolcengineAuth {
+                app_key: Some("app-key".to_string()),
+                access_key: Some("access-key".to_string()),
+                ..VolcengineAuth::default()
+            },
+            "request-id",
+        )
+        .unwrap();
+        assert!(app_access_request.contains("Host: example.com:8443\r\n"));
+        assert!(app_access_request.contains("X-Api-App-Key: app-key\r\n"));
+        assert!(app_access_request.contains("X-Api-Access-Key: access-key\r\n"));
+        assert!(!app_access_request.contains("X-Api-Key"));
+    }
+
+    #[test]
+    fn handshake_request_rejects_missing_credentials() {
+        let mut config = provider_config();
+        config.auth_mode = VolcengineAuthMode::ApiKey;
+        assert!(matches!(
+            build_handshake_request(
+                "example.com",
+                443,
+                "/asr",
+                "key",
+                &config,
+                &VolcengineAuth::default(),
+                "request-id",
+            ),
+            Err(ProviderError::InvalidConfiguration(message))
+                if message.contains("API credential")
+        ));
+
+        config.auth_mode = VolcengineAuthMode::AppAccess;
+        assert!(matches!(
+            build_handshake_request(
+                "example.com",
+                443,
+                "/asr",
+                "key",
+                &config,
+                &VolcengineAuth {
+                    app_key: Some("app-key".to_string()),
+                    ..VolcengineAuth::default()
+                },
+                "request-id",
+            ),
+            Err(ProviderError::InvalidConfiguration(message))
+                if message.contains("access credential")
+        ));
+    }
+
+    #[test]
+    fn server_error_response_maps_provider_failure_categories() {
+        let cases = [
+            (45_000_002, "silence", "no_speech"),
+            (429, "rate limit reached", "quota_exceeded"),
+            (403, "credential rejected", "authentication_rejected"),
+            (500, "unexpected failure", "protocol"),
+        ];
+
+        for (code, message, expected_reason) in cases {
+            let error = match parse_server_message(&error_frame(code, message)) {
+                Err(error) => error,
+                Ok(_) => panic!("expected provider error for code {code}"),
+            };
+            assert_eq!(error.cancel_reason(), expected_reason);
+        }
+    }
+
+    #[test]
+    fn server_response_rejects_truncated_payloads() {
+        assert!(matches!(
+            parse_server_message(&[0x11, 0x91, 0x11]),
+            Err(ProviderError::Protocol(message)) if message.contains("too short")
+        ));
+
+        let mut frame = vec![0x11, 0x91, 0x01, 0x00];
+        frame.extend_from_slice(&1_i32.to_be_bytes());
+        frame.extend_from_slice(&5_u32.to_be_bytes());
+        frame.extend_from_slice(&[1, 2]);
+        assert!(matches!(
+            parse_server_message(&frame),
+            Err(ProviderError::Protocol(message)) if message.contains("truncated")
+        ));
+    }
+
+    #[test]
+    fn corpus_context_ignores_blanks_and_respects_token_budget() {
+        let hotword = "a".repeat(99);
+        let context = build_corpus_context(&AsrSessionHints {
+            hotwords: vec!["   ".to_string(), hotword.clone(), "overflow".to_string()],
+            app_context: Some("应用上下文".to_string()),
+            profile_context: Some("用户上下文".to_string()),
+        })
+        .expect("non-empty hotword should produce context");
+        let value: Value = serde_json::from_str(&context).unwrap();
+
+        assert_eq!(
+            value.pointer("/hotwords/0/word").and_then(Value::as_str),
+            Some(hotword.as_str())
+        );
+        assert_eq!(
+            value
+                .pointer("/context_data/0/text")
+                .and_then(Value::as_str),
+            Some("应")
+        );
+        assert!(value.pointer("/context_data/1").is_none());
     }
 }

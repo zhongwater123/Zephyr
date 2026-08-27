@@ -49,7 +49,7 @@ flowchart TB
 - `src/ipc/client.ts` 是组件调用 command 的唯一字符串入口；业务组件不散落 `invoke("...")`。
 - `PreInputOverlay` 只按 session ID 与 seq 接受当前会话更新；它不会装载设置、历史或 Three.js bundle。
 
-热键字段的完整状态机、DOM 事件规则和前后端事务见 [热键录入、换绑事务与 Windows 运行时链路](shortcut-editing.md)。
+当前实现的详细状态机、DOM 事件规则和排障信息仅记录在[非规范性 Implementation Guide](shortcut-editing.md)；这些细节不定义组件长期责任。
 
 ## 异常恢复融合
 

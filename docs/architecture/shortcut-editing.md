@@ -1,19 +1,33 @@
+---
+{
+  "documentType": "implementation-guide",
+  "normative": false,
+  "viewStatus": "current",
+  "relatedFeatures": ["FEAT-SHORTCUT-BINDING"],
+  "sourceRevision": "dc4be390846b0a54e00cadf868db4b9c6db9686b",
+  "worktreeState": "dirty",
+  "changedPaths": ["docs/architecture/shortcut-editing.md", "docs/features/shortcut-binding.md", "src/features/shortcut", "src-tauri/src/shortcut_manager", "src-tauri/src/windows_keyboard.rs"],
+  "reviewStatus": "partial",
+  "reviewedAt": "2026-08-27"
+}
+---
+
 # 热键录入、换绑事务与 Windows 运行时链路
 
 [component:frontend.features] [component:frontend.ipc] [component:backend.commands] [component:backend.shortcut] [component:backend.services] [component:backend.voice-controller] [component:storage.local] [component:platform.windows]
 
-本文是当前热键功能的开发者事实文档，描述设置界面录入、Tauri IPC、`ShortcutManager` 事务、`WH_KEYBOARD_LL` 运行时匹配、配置持久化、失败回滚和诊断日志。源码仍是最终行为事实；本文不把拟议能力写成已实现能力。
+本文是非规范性的当前实现指南与排障手册，描述设置界面录入、Tauri IPC、`ShortcutManager` 事务、`WH_KEYBOARD_LL` 运行时匹配、配置持久化、失败回滚和诊断日志。源码仍是实现事实；产品行为以 Feature Dossier 为准，长期边界以 ADR 为准，关键跨边界时序以 Current Runtime View 为准。
 
-当前实现核对日期：2026-08-26。
+当前实现核对日期：2026-08-27。
 
 ## 1. 设计结论
 
 热键功能分为两条职责严格分离的链路：
 
-1. **编辑链路**：设置窗口获得焦点后，由 DOM `KeyboardEvent.code` 唯一负责录入、左右修饰键识别、实时键帽、候选校验和乐观显示。
+1. **编辑链路**：设置窗口获得焦点后，在本地输入边界形成候选并立即反馈；当前实现使用 DOM `KeyboardEvent.code` 完成左右修饰键识别、实时键帽、候选校验和乐观显示。
 2. **运行时链路**：Rust `WH_KEYBOARD_LL` 只负责应用运行期间的全局物理热键匹配，以及向 `VoiceSessionController` 发送 `Pressed` / `Released`。
 
-必须长期保持以下边界：
+当前实现及其稳定结果边界如下；DOM、具体 IPC 和 Hook generation 属于可替换的实现事实，不是永久技术约束：
 
 - Hook 不生成换绑候选，不维护 `captureId`，不向前端发送按键进度。
 - 前端不通过 Hook Event 或生命周期轮询获得键帽。
@@ -40,7 +54,7 @@
 | 前端契约 | `src/domain.ts` | `ShortcutBinding`、edit session/outcome、错误码和 trace DTO |
 | IPC client | `src/ipc/client.ts` | begin/commit/cancel/trace 四个唯一 command 字符串入口 |
 | Tauri commands | `src-tauri/src/commands/shortcut.rs` | 主窗口权限校验、阻塞任务边界和错误 DTO 映射 |
-| 事务协调 | `src-tauri/src/shortcut_manager.rs` | 单 edit 会话、operation gate、权威校验、运行时切换、持久化、回滚和 interruption |
+| 事务协调 | `src-tauri/src/shortcut_manager/` | `mod.rs` 组装 Tauri façade；`coordinator.rs` 保留 begin/cancel 与依赖组装；`state.rs` 管理 edit 状态；`commit.rs` 编排提交；`recovery.rs` 负责权威恢复；`runtime_lifecycle.rs` 处理启停、中断与恢复；其余文件承载契约、校验、端口和诊断 |
 | 物理模型 | `src-tauri/src/physical_shortcut.rs` | 扫描码、extended、左右修饰键、编译、显示标签和运行时匹配语义 |
 | Windows 引擎 | `src-tauri/src/windows_keyboard.rs` | Hook/dispatch Worker、generation 恢复、全局 Pressed/Released 和运行时诊断 |
 | 配置事务 | `src-tauri/src/services.rs`, `src-tauri/src/config.rs` | revision CAS、原子 JSON 写入、备份和内存权威快照 |
@@ -470,6 +484,20 @@ Worker 异常退出时设置 unhealthy、清空 thread ID，并通过有界 sign
 
 普通 cancel/rollback 只在缓存健康异常时重装，不无条件增加延迟。
 
+### 8.5 Hook 链与冲突应用
+
+Windows 为每种 Hook 类型维护独立链。`SetWindowsHookEx` 将新 Hook 放到链首；链上的 Hook 可以调用 `CallNextHookEx` 继续传递，也可以返回非零阻止后续 Hook 和目标窗口收到事件。因此 `WH_KEYBOARD_LL` 没有类似 `RegisterHotKey` 的永久所有权或冲突回执，Hook generation 只证明本应用本轮安装成功，不证明 Zephyr 在其他 Hook 之前，也不证明其他应用会继续传递事件。
+
+当前 Zephyr 的普通主键绑定在完整匹配时吞掉 trigger down/up；纯 Ctrl/Alt/Shift modifier 绑定触发 `Pressed` 后仍调用下一 Hook，只有绑定中包含的 Win modifier 会被吞掉。由此可推导：链首位置、各应用是否吞键和具体绑定类型共同决定“都触发、只触发一个或系统也收到”的结果。
+
+2026-08-26 的目标环境观察暂记为待验证：Z 与 T 同绑 `RightAlt`，`T → Z` 启动时两者都触发，`Z → T` 启动时只有 T 触发，退出 T 后 Z 恢复触发。它与 `Z → T` 时 T 位于链首并阻断后续传播、`T → Z` 时 Z 位于链首但继续传递 `RightAlt` 的模型一致；这仍是基于 Windows 规范和 Zephyr 源码的推断，不等同于已经证明 Typeless 使用了哪一种内部 API。验证项见 Dossier `AC-SC-08`。
+
+规范依据：
+
+- [Microsoft Hooks Overview](https://learn.microsoft.com/en-us/windows/win32/winmsg/about-hooks)
+- [Microsoft LowLevelKeyboardProc](https://learn.microsoft.com/en-us/windows/win32/winmsg/lowlevelkeyboardproc)
+- [Microsoft CallNextHookEx](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-callnexthookex)
+
 ## 9. 配置持久化与权威状态
 
 `ConfigService` 是配置 revision 的唯一进程内权威：
@@ -623,6 +651,10 @@ Hook Worker 可以回收并重启；dispatch 使用固定的 `SyncSender/Receive
 
 核心 begin/commit/cancel、Hook generation、持久化和回滚已有 `shortcut_edit_trace` 串联，但部分外围 interruption、运行时信号或早期错误分支携带的字段并不完全一致。分析日志时以 `traceId`、`editId`、phase 和时间顺序联合判断，不能只依赖单一字段。
 
+### 11.11 Hook 链优先级与纯修饰键传递
+
+当前实现不承诺在其他应用更晚安装并吞掉相同 `WH_KEYBOARD_LL` 事件后仍能收到该键，也无法从安装成功回执判断链中是否存在这种上游阻断。纯 Ctrl/Alt/Shift 绑定当前触发后继续传递，因此同键应用可能同时触发；普通主键匹配和 Win modifier 则存在吞键行为。产品尚未统一确认哪些绑定应独占、应传播或在运行时不可交付时应 fail-open。周期性重装 Hook 只能改变瞬时链顺序，会形成跨应用抢占竞赛，不是稳定解决方案。
+
 ## 12. 当前测试覆盖与缺口
 
 ### 12.1 已有前端覆盖
@@ -639,17 +671,17 @@ Hook Worker 可以回收并重启；dispatch 使用固定的 `SyncSender/Receive
 
 ### 12.2 已有后端覆盖
 
-后端现有测试主要验证数据转换、绑定规则和少量 Manager 行为；Windows 引擎也有部分信号、匹配与 generation 辅助逻辑覆盖。它们能够防止基础模型回退，但还不能证明完整 Windows 恢复链路在真实消息循环中可靠。
+后端现有测试除数据转换、绑定规则和 Windows 引擎的信号、匹配与 generation 辅助逻辑外，还通过内存配置、运行时与观察端口直接覆盖 `EditCoordinator` 的成功提交、运行时应用失败不持久化、持久化失败恢复、恢复失败进入 runtime error、revision 冲突、cancel、disabled 不启用 Hook，以及 unchanged 只恢复必要启用状态、不强制重装、不重写 binding、不写配置。前端控制器测试还覆盖 disabled 保存后的“快捷键已保存，开启后生效”状态提示。它们能够保护进程内事务与 DOM 控制器不变量，但没有经过生产 `ConfigService`、Tauri façade 或真实 Windows Hook 消息循环。
 
 ### 12.3 尚缺的关键自动化覆盖
 
-- begin 成功、commit 成功、配置持久化的完整 Manager 事务；
-- Hook 重装失败、2 秒超时、Worker 退出后重启；
-- dispatch callback panic 后继续消费；
-- 持久化失败后的旧运行时恢复，以及恢复失败进入 runtime error；
+- 从 Tauri command 经生产 `ConfigService`、`EditCoordinator` 到真实 Windows Hook 的纵向事务；
+- Hook 重装失败、2 秒超时、Worker 退出后重启与 Manager 恢复的真实线程链路；
+- Windows/WebView2 中 disabled 保存提示的实际可见性，以及随后 enable 使用新绑定；
 - begin pending 时取消和 IPC 传输失败对账；
 - 渲染进程异常退出后的孤儿 edit session；
 - Windows AltGr、窗口失焦、休眠恢复的端到端行为。
+- 与其他低级键盘监听应用同绑时，覆盖两种启动顺序、任一应用重启/退出、Zephyr Hook generation 重装和不同吞键策略的目标环境矩阵。
 
 编译成功只能说明类型、链接和平台 API 使用成立，不能替代这些事务与实机验收。
 
@@ -670,6 +702,7 @@ Hook Worker 可以回收并重启；dispatch 使用固定的 `SyncSender/Receive
 11. 应用重启后读取的是最后一次成功持久化的 binding 和 revision。
 12. 验证左右 Ctrl/Alt/Shift/Win、AltGr、纯右修饰键、快速连按和按键 repeat。
 13. 从日志能唯一判断故障发生在 DOM、begin、校验、Hook、运行时应用、持久化还是回滚。
+14. 与真实冲突应用同绑 `RightAlt`，分别验证 `对方 → Zephyr`、`Zephyr → 对方`、双方各自重启与退出；记录双方实际触发、系统按键行为、Zephyr generation 和 runtime Pressed/Released，不将单次启动顺序结果外推为永久优先级。
 
 人工验证命令由开发者按需执行：
 
@@ -682,8 +715,8 @@ cargo check
 
 ## 14. 后续修改规则
 
-- DOM `KeyboardEvent` 是设置页录入候选的唯一来源；不得把候选捕获重新放回低级 Hook。
-- `WH_KEYBOARD_LL` 只负责已提交绑定的全局运行时匹配、Pressed/Released 和健康恢复。
+- 设置页候选必须在有焦点的本地输入边界即时形成，且不依赖正式全局监听器的健康状态或异步后端往返；当前实现使用 DOM `KeyboardEvent`。
+- 当前 `WH_KEYBOARD_LL` 实现只负责已提交绑定的全局运行时匹配、Pressed/Released 和健康恢复；替换底层 API 时仍须保持编辑面与运行面的故障隔离。
 - begin 只能暂停运行时，不得强制重装 Hook；generation 确认属于 commit、disabled→enabled、resume 或异常恢复。
 - 前端可乐观显示，但后端配置只在运行时确认后持久化；任何失败都必须明确区分“已恢复旧运行时”和“runtime error”。
 - 新增 IPC 必须延续主窗口授权、traceId/editId/revision 核对和领域门闩。

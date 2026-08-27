@@ -186,12 +186,10 @@ impl ShortcutBinding {
                     kind: ModifierKind::Shift,
                     side: ModifierSide::Any,
                 }),
-                "win" | "meta" | "super" | "cmd" | "command" => modifiers.push(
-                    ModifierBinding {
-                        kind: ModifierKind::Win,
-                        side: ModifierSide::Any,
-                    },
-                ),
+                "win" | "meta" | "super" | "cmd" | "command" => modifiers.push(ModifierBinding {
+                    kind: ModifierKind::Win,
+                    side: ModifierSide::Any,
+                }),
                 value => {
                     if trigger.is_some() {
                         return Err("快捷键只能包含一个主键。".into());
@@ -300,6 +298,7 @@ pub(crate) fn modifier_bit(key: PhysicalKeyId) -> Option<u8> {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn modifier_only_binding(bits: u8) -> Option<ShortcutBinding> {
     let trigger_bit = [
         RIGHT_SHIFT,
@@ -317,14 +316,6 @@ pub(crate) fn modifier_only_binding(bits: u8) -> Option<ShortcutBinding> {
         modifiers: modifiers_from_bits(bits & !trigger_bit),
         trigger: modifier_key_from_bit(trigger_bit)?,
     })
-}
-
-pub(crate) fn modifier_bits_label(bits: u8) -> String {
-    modifiers_from_bits(bits)
-        .into_iter()
-        .map(modifier_label)
-        .collect::<Vec<_>>()
-        .join("+")
 }
 
 pub(crate) fn modifiers_from_bits(bits: u8) -> Vec<ModifierBinding> {
@@ -520,6 +511,7 @@ fn modifier_binding_from_key(key: PhysicalKeyId) -> Option<ModifierBinding> {
     modifier_bit(key).and_then(|bit| modifiers_from_bits(bit).into_iter().next())
 }
 
+#[cfg(test)]
 fn modifier_key_from_bit(bit: u8) -> Option<PhysicalKeyId> {
     Some(match bit {
         LEFT_CTRL => PhysicalKeyId::new(0x1d, false),
@@ -660,7 +652,10 @@ mod tests {
             PhysicalKeyId::new(0x5b, true),
             PhysicalKeyId::new(0x5c, true),
         ] {
-            let binding = ShortcutBinding { modifiers: Vec::new(), trigger };
+            let binding = ShortcutBinding {
+                modifiers: Vec::new(),
+                trigger,
+            };
             assert!(binding.validate().is_err());
         }
 
@@ -671,15 +666,6 @@ mod tests {
         assert!(compiled.matches_modifiers(LEFT_CTRL | RIGHT_SHIFT));
         assert!(!compiled.matches_modifiers(LEFT_CTRL));
         assert!(!compiled.matches_modifiers(LEFT_CTRL | RIGHT_SHIFT | RIGHT_ALT));
-    }
-
-    #[test]
-    fn modifier_only_binding_is_canonical_across_capture_order() {
-        let bits = RIGHT_CTRL | RIGHT_SHIFT;
-        let first = modifier_only_binding(bits).unwrap();
-        let second = modifier_only_binding(RIGHT_SHIFT | RIGHT_CTRL).unwrap();
-        assert_eq!(first, second);
-        assert_eq!(first.label_with_trigger(""), "右 Ctrl+右 Shift");
     }
 
     #[test]

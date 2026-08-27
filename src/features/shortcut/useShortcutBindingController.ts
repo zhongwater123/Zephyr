@@ -278,7 +278,7 @@ export function useShortcutBindingController(
       commitStartedRef.current = false;
       applyOutcome(outcome);
       if (outcome.success) {
-        setMessage("");
+        setMessage(outcome.runtimeState === "disabled" ? outcome.message : "");
         setErrorCode(undefined);
         setPhase("idle");
         traceIdRef.current = null;

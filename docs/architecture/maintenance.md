@@ -13,6 +13,7 @@
 | 源码与运行配置 | 当前实现实际做什么 |
 | Current C4 / Runtime View / arc42 | 如何理解当前实现 |
 | Proposed architecture | 尚未成为实现事实的设计方案 |
+| Implementation Guide / runbook | 绑定源码 revision 的非规范性实现快照与排障信息 |
 | Test / manual evidence | 哪些行为在哪个版本与环境得到证明 |
 | Assumption | 尚未确认但会影响设计或验收的判断 |
 
@@ -34,7 +35,7 @@ npm run architecture:impact
 npm run architecture:impact -- --base origin/main
 ```
 
-脚本合并已暂存、未暂存、未跟踪文件和可选 Git base diff。源码命中组件后沿 `dependsOn` 反向传播，并列出相关 Dossier 验收切片为 `Potentially Stale`。该结果只提示复核，不修改证据状态，也不阻断开发。
+脚本合并已暂存、未暂存、未跟踪文件和可选 Git base diff。源码命中组件后沿 `dependsOn` 反向传播，并计算相关 Dossier 验收切片的 `effectiveFreshness`。脚本不修改 Dossier；`partial` / `unverified` 只告警，只有已声明 `validated` 且缺少重新验证或有效 `impactAssessment` 时阻断门禁。
 
 ### 2. 设计中：隔离 Proposed
 
@@ -63,10 +64,10 @@ npm run architecture:check
 
 结构检查覆盖：
 
-- 当前架构必需文件、Dossier、Proposal、Postmortem 和兼容入口；
+- 当前架构必需文件、Dossier、Proposal、Postmortem、非规范性 Implementation Guide 和兼容入口；
 - 代码地图 Schema、组件覆盖、路径、依赖和 marker；
-- Dossier 元数据、状态、组件、ADR、验收切片和证据引用；
-- Current/Proposed 状态隔离，以及 Postmortem 的非规范性声明；
+- Dossier 元数据、确认来源、组件、ADR、验收切片、requiredEvidence、证据能力和影响评估引用；
+- Current/Proposed 状态隔离，以及 Postmortem / Implementation Guide 的非规范性声明；
 - ADR 编号、状态、索引和新元数据；
 - Rust 架构事实、Markdown 链接、围栏和 Mermaid 语法。
 
@@ -76,9 +77,10 @@ npm run architecture:check
 
 - 只有跨组件、高风险或依赖目标环境验证的功能创建 Dossier。
 - 规格状态、实现状态和验证状态独立维护。
-- `validated` 要求所有关键验收存在当前、成功且带版本/环境的证据。
-- 普通开发证据记录 revision、worktree、变更路径、环境和日期；发布级证据再记录 build ID 与 artifact SHA-256。
-- 影响分析只能将相关切片提示为 `Potentially Stale`；人工复核后再改为 `stale` 或 `revalidated`。
+- `confirmed` 必须记录确认人、日期和来源，不允许作者自行升级。
+- `validated` 要求所有关键验收的 requiredEvidence 都有成功、带版本/环境且有效新鲜的证据能力。
+- 普通开发证据记录 revision、worktree、变更路径、环境、日期、scope 和 limitations；发布级证据再记录 build ID 与 artifact SHA-256。
+- 相关源码变化产生 `potentially_stale` 的有效状态；可以重新验证，或提交绑定 revision、切片和理由的 `impactAssessment`。
 
 ## Current 与 Proposed
 
@@ -86,6 +88,8 @@ npm run architecture:check
 - Proposal 必须声明 owner、创建日期、复核条件和关联 Feature。
 - `code-map.json` 只连接当前源码、Current 文档和 Accepted/相关 ADR，不登记 Proposal。
 - 如果某个实现细节改变而组件责任和关系不变，该细节通常不属于 C4。
+- 详细状态机、日志和排障快照属于 `normative=false` 的 Implementation Guide；代码地图通过 `implementationGuides` 单独引用，不得放入 Current `docs` 冒充架构规范。
+- Implementation Guide 必须绑定 source revision、工作树状态、复核状态和关联 Feature；它可以过期，不能覆盖 Dossier、ADR 或源码事实。
 
 ## ADR
 
@@ -115,6 +119,6 @@ Accepted ADR 可以依赖 Open Assumption，但必须在 `Revisit when` 中说�
 - Current C4 与实际进程、组件和外部边界一致；
 - 用户行为变化已进入 Dossier，关键验收有对应测试或明确 Pending；
 - 关键决策变化已形成 ADR；
-- 旧验证证据已经复核为 Current、Potentially Stale、Stale 或 Revalidated；
+- 每个验收切片的声明状态与计算出的有效新鲜度一致；已验证切片不存在未处理的 `potentially_stale`；
 - `npm run architecture:check` 通过；
 - 完成声明与 Dossier 的 validation status 一致。

@@ -1,16 +1,16 @@
 ---
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "featureId": "FEAT-INCIDENT-VAULT",
   "specStatus": "draft",
   "implementationStatus": "implemented",
   "validationStatus": "partial",
   "components": ["frontend.features", "backend.incident-vault", "backend.repositories", "storage.local"],
-  "decisions": ["ADR-0008"],
+  "decisions": ["ADR-0008", "ADR-0011"],
   "validationSlices": [
-    { "id": "AC-IV-01", "components": ["backend.incident-vault"] },
-    { "id": "AC-IV-02", "components": ["backend.incident-vault", "storage.local"] },
-    { "id": "AC-IV-03", "components": ["frontend.features", "backend.incident-vault"] }
+    { "id": "AC-IV-01", "components": ["backend.incident-vault"], "requiredEvidence": ["automated"] },
+    { "id": "AC-IV-02", "components": ["backend.incident-vault", "storage.local"], "requiredEvidence": ["automated"] },
+    { "id": "AC-IV-03", "components": ["frontend.features", "backend.incident-vault"], "requiredEvidence": ["automated", "windows_webview2"] }
   ],
   "evidence": [
     {
@@ -19,12 +19,16 @@
       "method": "automated",
       "result": "partial",
       "freshness": "potentially_stale",
+      "capabilities": ["automated"],
+      "scope": "Historical automated implementation checks for IncidentVault boundaries and storage behavior",
+      "limitations": ["Artifact identity and target-environment UI validation were not retained"],
       "sourceRevision": "8206806efa9ab3169daa3059e6929f20419c84bd",
       "worktreeState": "unknown",
       "environment": "Windows development workspace; artifact identity not recorded",
       "validatedAt": "2026-08-25"
     }
-  ]
+  ],
+  "impactAssessments": []
 }
 ---
 

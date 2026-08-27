@@ -84,11 +84,11 @@ The app rejects known reserved system combinations and attempts real registratio
 
 Some combinations may already be owned by Windows or another app.
 
-## Clipboard Text Changes During Paste
+## Text Delivery or Clipboard Compatibility Issues
 
-The app temporarily writes final transcript text to the clipboard and simulates `Ctrl+V`.
+By default, the app delivers final transcript text through Unicode `SendInput` and does not modify the clipboard. If the target application rejects Unicode input or Windows blocks the injection, the transcript remains pending instead of silently falling back to clipboard paste.
 
-The MVP restores text clipboard content when possible. Non-text clipboard formats are not fully snapshotted yet.
+Clipboard paste is used only for an executable whose compatibility mode was explicitly enabled. That mode snapshots the complete OLE clipboard object and checks the clipboard sequence before restoring it; if a safe snapshot or restore cannot be guaranteed, the operation fails visibly rather than overwriting newer clipboard data.
 
 ## DeepSeek Hotword Agent Says It Is Not Enabled
 

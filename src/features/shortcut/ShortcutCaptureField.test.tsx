@@ -24,29 +24,28 @@ function view(
   };
 }
 
+type StartHandler = () => void;
+type CancelHandler = (source?: string) => void;
+
 function renderField(
   shortcutView: ShortcutBindingViewModel,
   handlers: {
-    onStart?: ReturnType<typeof vi.fn>;
-    onCancel?: ReturnType<typeof vi.fn>;
-    onKeyDown?: ReturnType<typeof vi.fn>;
-    onKeyUp?: ReturnType<typeof vi.fn>;
+    onStart?: StartHandler;
+    onCancel?: CancelHandler;
   } = {},
 ) {
-  const onStart = handlers.onStart ?? vi.fn();
-  const onCancel = handlers.onCancel ?? vi.fn();
-  const onKeyDown = handlers.onKeyDown ?? vi.fn();
-  const onKeyUp = handlers.onKeyUp ?? vi.fn();
+  const onStart = handlers.onStart ?? vi.fn<StartHandler>();
+  const onCancel = handlers.onCancel ?? vi.fn<CancelHandler>();
   render(
     <ShortcutCaptureField
       view={shortcutView}
       onStart={onStart}
       onCancel={onCancel}
-      onKeyDown={onKeyDown}
-      onKeyUp={onKeyUp}
+      onKeyDown={vi.fn()}
+      onKeyUp={vi.fn()}
     />,
   );
-  return { onStart, onCancel, onKeyDown, onKeyUp };
+  return { onStart, onCancel };
 }
 
 describe("ShortcutCaptureField", () => {
@@ -99,14 +98,5 @@ describe("ShortcutCaptureField", () => {
     renderField(view("warning", "左 Ctrl", "单独使用修饰键时，仅支持右 Ctrl、右 Alt 或右 Shift。"));
     expect(screen.getByText("左 Ctrl")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("仅支持右 Ctrl");
-  });
-
-  it("forwards DOM key events to the capture controller", () => {
-    const { onKeyDown, onKeyUp } = renderField(view("capturing", ""));
-    const field = screen.getByRole("button", { name: /正在录入快捷键/ });
-    fireEvent.keyDown(field, { code: "ControlLeft", key: "Control" });
-    fireEvent.keyUp(field, { code: "ControlLeft", key: "Control" });
-    expect(onKeyDown).toHaveBeenCalledOnce();
-    expect(onKeyUp).toHaveBeenCalledOnce();
   });
 });

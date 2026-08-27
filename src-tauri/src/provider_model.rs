@@ -278,13 +278,56 @@ mod tests {
     }
 
     #[test]
-    fn unknown_options_and_wrong_types_are_rejected() {
+    fn unknown_options_are_rejected() {
         let model = VolcengineProviderModel;
         let mut envelope = VolcengineProviderModel::default_envelope();
         assert!(matches!(
             model.set_option(&mut envelope, "unknown", ConfigValue::Boolean(true)),
             Err(ProviderModelError::UnknownOption(_))
         ));
+    }
+
+    #[test]
+    fn incompatible_provider_envelopes_are_rejected() {
+        let model = VolcengineProviderModel;
+        let mut wrong_provider = VolcengineProviderModel::default_envelope();
+        wrong_provider.provider_id = "other-provider".to_string();
+        assert_eq!(
+            model.normalize(&mut wrong_provider),
+            Err(ProviderModelError::ProviderMismatch {
+                expected: VOLCENGINE_PROVIDER_ID.to_string(),
+                actual: "other-provider".to_string(),
+            })
+        );
+
+        let mut future_schema = VolcengineProviderModel::default_envelope();
+        future_schema.schema_version = VOLCENGINE_SCHEMA_VERSION + 1;
+        assert_eq!(
+            model.normalize(&mut future_schema),
+            Err(ProviderModelError::UnsupportedSchema {
+                supported: VOLCENGINE_SCHEMA_VERSION,
+                actual: VOLCENGINE_SCHEMA_VERSION + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn option_pool_normalizes_defaults_without_mutating_source_envelope() {
+        let model = VolcengineProviderModel;
+        let envelope = ProviderConfigEnvelope {
+            provider_id: VOLCENGINE_PROVIDER_ID.to_string(),
+            schema_version: 0,
+            revision: 7,
+            values: BTreeMap::new(),
+        };
+
+        let pool = model.option_pool(&envelope).unwrap();
+
+        assert_eq!(pool.schema_version, VOLCENGINE_SCHEMA_VERSION);
+        assert_eq!(pool.revision, 7);
+        assert_eq!(pool.values.len(), 4);
+        assert!(envelope.values.is_empty());
+        assert_eq!(envelope.schema_version, 0);
     }
 
     #[test]

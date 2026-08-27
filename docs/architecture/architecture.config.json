@@ -5,7 +5,7 @@
   "featureSchema": "docs/features/feature-dossier.schema.json",
   "proposalDir": "docs/architecture/proposals",
   "postmortemDir": "docs/postmortems",
-  "knowledgeEntries": ["docs/architecture.md"],
+  "knowledgeEntries": ["README.md", "docs/architecture.md", "docs/troubleshooting.md"],
   "codeMap": "docs/architecture/code-map.json",
   "codeMapSchema": "docs/architecture/code-map.schema.json",
   "facts": "docs/architecture/architecture-facts.json",

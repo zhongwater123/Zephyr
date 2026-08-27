@@ -1,6 +1,6 @@
 {
   "$schema": "./code-map.schema.json",
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "system": "gy-typing",
   "components": [
     {
@@ -104,8 +104,10 @@
       ],
       "docs": [
         "docs/architecture/c4-components-frontend.md",
-        "docs/architecture/shortcut-editing.md",
         "docs/architecture/code-map.md"
+      ],
+      "implementationGuides": [
+        "docs/architecture/shortcut-editing.md"
       ],
       "adrs": [
         "docs/architecture/adr/0010-separate-focused-shortcut-editing.md"
@@ -423,12 +425,14 @@
       "kind": "component-group",
       "source": [
         "src-tauri/src/physical_shortcut.rs",
-        "src-tauri/src/shortcut_manager.rs",
+        "src-tauri/src/shortcut_manager",
         "src-tauri/src/windows_keyboard.rs"
       ],
       "docs": [
         "docs/architecture/c4-components-backend.md",
-        "docs/architecture/runtime-views.md",
+        "docs/architecture/runtime-views.md"
+      ],
+      "implementationGuides": [
         "docs/architecture/shortcut-editing.md"
       ],
       "adrs": [

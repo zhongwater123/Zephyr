@@ -14,6 +14,7 @@ ADR 记录已经影响代码边界、数据安全或演进成本的决策。Acce
 | [ADR-0008](0008-incident-vault-isolated-recovery.md) | Accepted | 产品前端融合、后端隔离的本地异常恢复 |
 | [ADR-0009](0009-evidence-aware-document-governance.md) | Accepted | 按材料角色、状态和带版本证据治理文档 |
 | [ADR-0010](0010-separate-focused-shortcut-editing.md) | Accepted | 分离有焦点的设置录入与全局运行时监听 |
+| [ADR-0011](0011-capability-aware-effective-validation.md) | Accepted | 按验收能力计算有效验证状态并隔离非规范性实现指南 |
 
 ## 状态
 

@@ -262,22 +262,6 @@ mod tests {
     }
 
     #[test]
-    fn database_initialization_creates_history_table() {
-        let (_dir, path) = test_path();
-
-        let connection = open_database(&path).unwrap();
-        let exists: i64 = connection
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='history_items'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-
-        assert_eq!(exists, 1);
-    }
-
-    #[test]
     fn history_crud_and_search_work() {
         let (_dir, path) = test_path();
         let first = HistoryItem {

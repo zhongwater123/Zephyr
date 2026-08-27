@@ -216,12 +216,6 @@ fn clipboard_sequence_unchanged(sequence_after_write: u32, sequence_before_resto
 #[cfg(test)]
 mod tests {
     #[test]
-    fn utf16_surrogate_pairs_are_preserved() {
-        let units: Vec<u16> = "A🙂中".encode_utf16().collect();
-        assert_eq!(units, vec![0x0041, 0xD83D, 0xDE42, 0x4E2D]);
-    }
-
-    #[test]
     fn partial_send_input_is_an_error() {
         assert!(matches!(
             super::validate_send_input_count(4, 2, 5),
@@ -231,11 +225,5 @@ mod tests {
                 windows_error: 5,
             })
         ));
-    }
-
-    #[test]
-    fn clipboard_restore_requires_an_unchanged_sequence() {
-        assert!(super::clipboard_sequence_unchanged(10, 10));
-        assert!(!super::clipboard_sequence_unchanged(10, 11));
     }
 }

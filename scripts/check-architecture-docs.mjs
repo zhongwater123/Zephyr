@@ -101,7 +101,76 @@ function changedFiles(base) {
     ...gitLines(["ls-files", "--others", "--exclude-standard"]),
   ];
   if (base) files.push(...gitLines(["diff", "--name-only", `${base}...HEAD`]));
+
   return new Set(files);
+}
+
+function sourceAffectedIds(map, changed) {
+  const affected = new Set();
+  for (const component of map.components) {
+    if ([...changed].some((file) => component.source.some((entry) => sourceMatches(repoPath(entry), file)))) {
+      affected.add(component.id);
+    }
+  }
+
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const component of map.components) {
+      if (affected.has(component.id)) continue;
+      if (component.dependsOn.some((id) => affected.has(id))) {
+        affected.add(component.id);
+        expanded = true;
+      }
+    }
+  }
+  return affected;
+}
+
+function changedSourceFilesSince(revision) {
+  return new Set([
+    ...gitLines(["diff", "--name-only", `${revision}...HEAD`]),
+    ...gitLines(["diff", "--name-only"]),
+    ...gitLines(["diff", "--name-only", "--cached"]),
+    ...gitLines(["ls-files", "--others", "--exclude-standard"]),
+  ]);
+}
+
+function revisionStillCoversSlice(revision, slice, map, cache = new Map()) {
+  if (!cache.has(revision)) {
+    try {
+      cache.set(revision, sourceAffectedIds(map, changedSourceFilesSince(revision)));
+    } catch {
+      cache.set(revision, null);
+    }
+  }
+  const affected = cache.get(revision);
+  return affected instanceof Set && !slice.components.some((id) => affected.has(id));
+}
+
+function effectiveSliceFreshness(dossier, slice, map, cache = new Map()) {
+  const coveredCapabilities = new Set();
+  for (const evidence of dossier.metadata.evidence ?? []) {
+    if (
+      evidence.acceptanceIds.includes(slice.id) &&
+      evidence.result === "pass" &&
+      ["current", "revalidated"].includes(evidence.freshness) &&
+      revisionStillCoversSlice(evidence.sourceRevision, slice, map, cache)
+    ) {
+      for (const capability of evidence.capabilities) coveredCapabilities.add(capability);
+    }
+  }
+  if (slice.requiredEvidence.every((capability) => coveredCapabilities.has(capability))) {
+    return "current";
+  }
+
+  const assessment = (dossier.metadata.impactAssessments ?? []).find(
+    (entry) =>
+      entry.outcome === "evidence_still_valid" &&
+      entry.acceptanceIds.includes(slice.id) &&
+      revisionStillCoversSlice(entry.assessedRevision, slice, map, cache),
+  );
+  return assessment ? "current_by_assessment" : "potentially_stale";
 }
 
 function sourceMatches(source, changed) {
@@ -140,7 +209,7 @@ function runImpact(architecture) {
     if ([...changed].some((file) => component.source.some((entry) => sourceMatches(repoPath(entry), file)))) {
       directSource.add(component.id);
     }
-    const narrative = [...component.docs, ...component.adrs].map(repoPath);
+    const narrative = [...component.docs, ...(component.implementationGuides ?? []), ...component.adrs].map(repoPath);
     if ([...changed].some((file) => narrative.includes(file))) directDocs.add(component.id);
   }
 
@@ -190,11 +259,25 @@ function runImpact(architecture) {
   }
 
   const affectedIds = new Set(affected.map((component) => component.id));
-  const slices = affectedValidationSlices(dossiers, affectedIds);
-  if (slices.length > 0) {
+  const impacted = dossiers.flatMap((dossier) =>
+    dossier.metadata.validationSlices
+      .filter((slice) => slice.components.some((id) => affectedIds.has(id)))
+      .map((slice) => ({ dossier, slice })),
+  );
+  if (impacted.length > 0) {
     console.log("\nPotentially Stale 验收切片（仅提示，不自动修改证据状态）：");
-    for (const slice of slices) {
-      console.log(`- ${slice.featureId} / ${slice.sliceId}`);
+    const cache = new Map();
+    const blocking = [];
+    for (const { dossier, slice } of impacted) {
+      const effectiveFreshness = effectiveSliceFreshness(dossier, slice, map, cache);
+      console.log(`- ${dossier.metadata.featureId} / ${slice.id} — declaredStatus=${dossier.metadata.validationStatus}; effectiveFreshness=${effectiveFreshness}`);
+      if (dossier.metadata.validationStatus === "validated" && effectiveFreshness === "potentially_stale") {
+        blocking.push(`${dossier.metadata.featureId}/${slice.id}`);
+      }
+    }
+    if (blocking.length > 0) {
+      console.error(`\nValidated 功能存在未评估的受影响验收：${blocking.join(", ")}`);
+      process.exitCode = 1;
     }
   }
 }
@@ -462,6 +545,7 @@ function validateFeatureDossiers(dossiers, validateFeature, componentIds, adrIds
 
     const evidenceIds = new Set();
     for (const evidence of metadata.evidence) {
+
       if (evidenceIds.has(evidence.id)) errors.push(`${label}: 重复证据 ID ${evidence.id}`);
       evidenceIds.add(evidence.id);
       for (const acceptanceId of evidence.acceptanceIds) {
@@ -469,15 +553,29 @@ function validateFeatureDossiers(dossiers, validateFeature, componentIds, adrIds
       }
     }
 
+    const assessmentIds = new Set();
+    for (const assessment of metadata.impactAssessments) {
+      if (assessmentIds.has(assessment.id)) errors.push(`${label}: 重复影响评估 ID ${assessment.id}`);
+      assessmentIds.add(assessment.id);
+      for (const acceptanceId of assessment.acceptanceIds) {
+        if (!sliceIds.has(acceptanceId)) errors.push(`${label}: ${assessment.id} 引用未知验收 ${acceptanceId}`);
+      }
+    }
+
     if (metadata.validationStatus === "validated") {
       for (const slice of metadata.validationSlices) {
-        const currentPass = metadata.evidence.some(
-          (evidence) =>
-            evidence.acceptanceIds.includes(slice.id) &&
-            evidence.result === "pass" &&
-            ["current", "revalidated"].includes(evidence.freshness),
+        const capabilities = new Set(
+          metadata.evidence
+            .filter(
+              (evidence) =>
+                evidence.acceptanceIds.includes(slice.id) &&
+                evidence.result === "pass" &&
+                ["current", "revalidated"].includes(evidence.freshness),
+            )
+            .flatMap((evidence) => evidence.capabilities),
         );
-        if (!currentPass) errors.push(`${label}: validated 但 ${slice.id} 缺少当前成功证据`);
+        const missing = slice.requiredEvidence.filter((capability) => !capabilities.has(capability));
+        if (missing.length > 0) errors.push(`${label}: validated 但 ${slice.id} 缺少证据能力 ${missing.join(", ")}`);
       }
     }
 
@@ -555,6 +653,52 @@ function validateProposalReferences(map, proposalPrefix, errors) {
   }
 }
 
+function validateImplementationGuides(map, featureIds, errors) {
+  const guidePaths = new Set(
+    map.components.flatMap((component) => component.implementationGuides ?? []).map(repoPath),
+  );
+  for (const relative of guidePaths) {
+    const file = path.resolve(root, relative);
+    const { metadata } = parseJsonFrontMatter(file);
+    if (
+      metadata.documentType !== "implementation-guide" ||
+      metadata.normative !== false ||
+      metadata.viewStatus !== "current"
+    ) {
+      errors.push(`${relative}: Implementation Guide 必须声明 documentType=implementation-guide、normative=false、viewStatus=current`);
+    }
+    const sourceRevision = metadata.sourceRevision ?? "";
+    if (!/^[0-9a-f]{7,40}$/.test(sourceRevision)) {
+      errors.push(`${relative}: sourceRevision 必须是 Git revision`);
+    } else {
+      try {
+        gitLines(["rev-parse", "--verify", `${sourceRevision}^{commit}`]);
+      } catch {
+        errors.push(`${relative}: sourceRevision 无法解析到本仓库提交 ${sourceRevision}`);
+      }
+    }
+    if (!['clean', 'dirty'].includes(metadata.worktreeState)) {
+      errors.push(`${relative}: worktreeState 必须是 clean 或 dirty`);
+    }
+    if (!['partial', 'reviewed', 'stale'].includes(metadata.reviewStatus)) {
+      errors.push(`${relative}: reviewStatus 必须是 partial、reviewed 或 stale`);
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(metadata.reviewedAt ?? "")) {
+      errors.push(`${relative}: reviewedAt 必须是 ISO 日期`);
+    }
+    if (!Array.isArray(metadata.relatedFeatures)) {
+      errors.push(`${relative}: relatedFeatures 必须是数组`);
+    } else {
+      for (const featureId of metadata.relatedFeatures) {
+        if (!featureIds.has(featureId)) errors.push(`${relative}: 引用未知 Feature ${featureId}`);
+      }
+    }
+    if (metadata.worktreeState === "dirty" && (!Array.isArray(metadata.changedPaths) || metadata.changedPaths.length === 0)) {
+      errors.push(`${relative}: dirty Implementation Guide 必须记录 changedPaths`);
+    }
+  }
+}
+
 async function runCheck(architecture) {
   const {
     config,
@@ -592,7 +736,7 @@ async function runCheck(architecture) {
   for (const component of map.components ?? []) {
     if (ids.has(component.id)) errors.push(`code-map.json: 重复组件 ID ${component.id}`);
     ids.add(component.id);
-    for (const field of ["source", "docs", "adrs"]) {
+    for (const field of ["source", "docs", "implementationGuides", "adrs"]) {
       for (const relativeValue of component[field] ?? []) {
         const relative = repoPath(relativeValue);
         const absolute = path.resolve(root, relative);
@@ -647,6 +791,15 @@ async function runCheck(architecture) {
   validatePostmortems(postmortemDir, errors);
   validateRelativeLinks(markdownFiles, errors);
   validateFences(markdownFiles, errors);
+  validateImplementationGuides(map, featureIds, errors);
+  const freshnessCache = new Map();
+  for (const dossier of dossiers.filter((entry) => entry.metadata.validationStatus === "validated")) {
+    for (const slice of dossier.metadata.validationSlices) {
+      if (effectiveSliceFreshness(dossier, slice, map, freshnessCache) === "potentially_stale") {
+        errors.push(`${dossier.metadata.featureId}/${slice.id}: declared validated 但有效证据为 potentially_stale；请重新验证或提交 impactAssessment`);
+      }
+    }
+  }
   const mermaidCount = await validateMermaid(markdownFiles, errors);
   const adrCount = validateAdrs(architectureDir, errors);
   const factCount = validateFacts(facts, currentMarkdownFiles, errors);
@@ -675,4 +828,4 @@ if (isMain) {
   }
 }
 
-export { affectedValidationSlices, parseJsonFrontMatterText, validateFeatureDossiers, validatePostmortems, validateProposalReferences, validateProposals };
+export { affectedValidationSlices, effectiveSliceFreshness, parseJsonFrontMatterText, validateFeatureDossiers, validatePostmortems, validateProposalReferences, validateProposals };

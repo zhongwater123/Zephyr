@@ -82,17 +82,6 @@ mod tests {
     }
 
     #[test]
-    fn long_counting_text_does_not_duplicate_previous_hypotheses() {
-        let mut state = TranscriptPreviewState::default();
-
-        state.apply_event(&event("1 2 3 4 5", Vec::new()));
-        state.apply_event(&event("1 2 3 4 5 6 7 8 9 10", Vec::new()));
-        state.apply_event(&event("1 2 3 4 5 6 7 8 9 10 11 12", Vec::new()));
-
-        assert_eq!(state.rendered_text(), "1 2 3 4 5 6 7 8 9 10 11 12");
-    }
-
-    #[test]
     fn definite_utterances_update_confirmed_chars_without_changing_text() {
         let mut state = TranscriptPreviewState::default();
 

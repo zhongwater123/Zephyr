@@ -82,8 +82,14 @@ function outcome(
   };
 }
 
-function Harness({ onNotice = vi.fn() }: { onNotice?: (message: string) => void }) {
-  const [config, setConfig] = useState(defaultConfig);
+function Harness({
+  onNotice = vi.fn(),
+  initialConfig = defaultConfig,
+}: {
+  onNotice?: (message: string) => void;
+  initialConfig?: typeof defaultConfig;
+}) {
+  const [config, setConfig] = useState(initialConfig);
   const controller = useShortcutBindingController(
     config,
     setConfig,
@@ -271,6 +277,39 @@ describe("useShortcutBindingController", () => {
     expect(screen.getByText("Space")).toBeTruthy();
     expect(onNotice).toHaveBeenCalledWith("无法注册快捷键。");
   });
+
+  it("shows that a disabled shortcut was saved for the next enable", async () => {
+    const disabledConfig = { ...defaultConfig, enabled: false };
+    const nextBinding = {
+      modifiers: [{ kind: "control" as const, side: "left" as const }],
+      trigger: { scanCode: 0x25, extended: false },
+    };
+    mocks.begin.mockResolvedValue({ ...session(), runtimeState: "disabled" });
+    mocks.commit.mockResolvedValue(
+      outcome(true, "左 Ctrl+K", nextBinding, {
+        runtimeState: "disabled",
+        message: "快捷键已保存，开启后生效。",
+      }),
+    );
+
+    render(<Harness initialConfig={disabledConfig} />);
+    fireEvent.click(screen.getByRole("button", { name: /点击更改/ }));
+    let field = screen.getByRole("button", { name: /正在录入快捷键/ });
+    fireEvent.keyDown(field, {
+      code: "ControlLeft",
+      key: "Control",
+      location: 1,
+      ctrlKey: true,
+    });
+    field = screen.getByRole("button", { name: /正在录入快捷键/ });
+    fireEvent.keyDown(field, { code: "KeyK", key: "k", ctrlKey: true });
+
+    await waitFor(() =>
+      expect(screen.getByText("快捷键已保存，开启后生效。")).toBeTruthy(),
+    );
+    expect(screen.getByTestId("saved-shortcut").textContent).toBe("左 Ctrl+K");
+  });
+
   it("cancels a backend edit on bare Escape", async () => {
     mocks.begin.mockResolvedValue(session());
     render(<Harness />);
@@ -332,11 +371,11 @@ describe("useShortcutBindingController", () => {
         },
       });
     });
-    await waitFor(() =>
+    await waitFor(() => {
       expect(screen.getAllByRole("alert").some((item) =>
         item.textContent?.includes("键盘 Hook 已中断"),
-      ).toBe(true),
-    );
+      )).toBe(true);
+    });
     expect(screen.queryByRole("button", { name: /正在录入快捷键/ })).toBeNull();
   });
 
