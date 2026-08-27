@@ -153,6 +153,9 @@ function effectiveSliceFreshness(dossier, slice, map, cache = new Map()) {
   for (const evidence of dossier.metadata.evidence ?? []) {
     if (
       evidence.acceptanceIds.includes(slice.id) &&
+      evidence.acceptanceCoverage?.some(
+        (coverage) => coverage.acceptanceId === slice.id && coverage.coverage === "full",
+      ) &&
       evidence.result === "pass" &&
       ["current", "revalidated"].includes(evidence.freshness) &&
       revisionStillCoversSlice(evidence.sourceRevision, slice, map, cache)
@@ -527,6 +530,15 @@ function validateFeatureDossiers(dossiers, validateFeature, componentIds, adrIds
     if (featureIds.has(metadata.featureId)) errors.push(`${label}: 重复 Feature ID ${metadata.featureId}`);
     featureIds.add(metadata.featureId);
 
+    if (metadata.implementationReview.worktreeState === "dirty" && !(metadata.implementationReview.changedPaths?.length > 0)) {
+      errors.push(`${label}: dirty implementationReview 必须记录 changedPaths`);
+    }
+    try {
+      gitLines(["rev-parse", "--verify", `${metadata.implementationReview.sourceRevision}^{commit}`]);
+    } catch {
+      errors.push(`${label}: implementationReview.sourceRevision 无法解析 ${metadata.implementationReview.sourceRevision}`);
+    }
+
     const sliceIds = new Set();
     for (const componentId of metadata.components) {
       if (!componentIds.has(componentId)) errors.push(`${label}: 引用未知组件 ${componentId}`);
@@ -551,6 +563,24 @@ function validateFeatureDossiers(dossiers, validateFeature, componentIds, adrIds
       for (const acceptanceId of evidence.acceptanceIds) {
         if (!sliceIds.has(acceptanceId)) errors.push(`${label}: ${evidence.id} 引用未知验收 ${acceptanceId}`);
       }
+      const coverageIds = new Set();
+      for (const coverage of evidence.acceptanceCoverage) {
+        if (coverageIds.has(coverage.acceptanceId)) {
+          errors.push(`${label}: ${evidence.id} 重复声明验收覆盖 ${coverage.acceptanceId}`);
+        }
+        coverageIds.add(coverage.acceptanceId);
+        if (!evidence.acceptanceIds.includes(coverage.acceptanceId)) {
+          errors.push(`${label}: ${evidence.id} 的 acceptanceCoverage 包含未关联验收 ${coverage.acceptanceId}`);
+        }
+        if (coverage.coverage === "full" && evidence.result !== "pass") {
+          errors.push(`${label}: ${evidence.id} 只有 result=pass 才能声明 full 覆盖 ${coverage.acceptanceId}`);
+        }
+      }
+      for (const acceptanceId of evidence.acceptanceIds) {
+        if (!coverageIds.has(acceptanceId)) {
+          errors.push(`${label}: ${evidence.id} 未逐项声明 acceptanceCoverage ${acceptanceId}`);
+        }
+      }
     }
 
     const assessmentIds = new Set();
@@ -569,6 +599,9 @@ function validateFeatureDossiers(dossiers, validateFeature, componentIds, adrIds
             .filter(
               (evidence) =>
                 evidence.acceptanceIds.includes(slice.id) &&
+                evidence.acceptanceCoverage.some(
+                  (coverage) => coverage.acceptanceId === slice.id && coverage.coverage === "full",
+                ) &&
                 evidence.result === "pass" &&
                 ["current", "revalidated"].includes(evidence.freshness),
             )
@@ -588,16 +621,82 @@ function validateFeatureDossiers(dossiers, validateFeature, componentIds, adrIds
 
 function validateCurrentViews(architectureDir, errors) {
   const files = readdirSync(architectureDir)
-    .filter((name) => /^c4-.*\.md$/.test(name) || name === "runtime-views.md")
+    .filter((name) => /^c4-.*\.md$/.test(name) || ["runtime-views.md", "arc42-lean.md"].includes(name))
     .map((name) => path.join(architectureDir, name));
   for (const file of files) {
     const label = repoPath(path.relative(root, file));
     const { metadata } = parseJsonFrontMatter(file);
     if (metadata.viewStatus !== "current") errors.push(`${label}: Current 视图必须声明 viewStatus=current`);
-    if (!["c4-view", "runtime-view"].includes(metadata.documentType)) {
+    if (!["c4-view", "runtime-view", "arc42-view"].includes(metadata.documentType)) {
       errors.push(`${label}: 缺少合法 documentType`);
     }
+    if (!/^[0-9a-f]{7,40}$/.test(metadata.sourceRevision ?? "")) {
+      errors.push(`${label}: Current 视图必须绑定合法 sourceRevision`);
+    } else {
+      try {
+        gitLines(["rev-parse", "--verify", `${metadata.sourceRevision}^{commit}`]);
+      } catch {
+        errors.push(`${label}: Current 视图 sourceRevision 无法解析 ${metadata.sourceRevision}`);
+      }
+    }
+    if (!["clean", "dirty"].includes(metadata.worktreeState)) {
+      errors.push(`${label}: Current 视图必须声明 worktreeState=clean|dirty`);
+    }
+    if (!["partial", "reviewed", "stale"].includes(metadata.reviewStatus)) {
+      errors.push(`${label}: Current 视图必须声明 reviewStatus=partial|reviewed|stale`);
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(metadata.reviewedAt ?? "")) {
+      errors.push(`${label}: Current 视图必须记录 reviewedAt`);
+    }
+    if (!Array.isArray(metadata.knownDeviations)) {
+      errors.push(`${label}: Current 视图必须记录 knownDeviations 数组`);
+    } else if (metadata.reviewStatus === "reviewed" && metadata.knownDeviations.length > 0) {
+      errors.push(`${label}: 存在 knownDeviations 时 reviewStatus 不能是 reviewed`);
+    }
+    if (metadata.worktreeState === "dirty" && !(metadata.changedPaths?.length > 0)) {
+      errors.push(`${label}: dirty Current 视图必须记录 changedPaths`);
+    }
   }
+}
+
+function validateImplementationClaims(config, dossiers, errors) {
+  const dossierById = new Map(dossiers.map((dossier) => [dossier.metadata.featureId, dossier]));
+  for (const check of config.implementationClaimChecks ?? []) {
+    const dossier = dossierById.get(check.featureId);
+    if (!dossier) {
+      errors.push(`implementationClaimChecks: 未找到 Feature ${check.featureId}`);
+      continue;
+    }
+    if (dossier.metadata.implementationStatus !== check.whenImplementationStatus) continue;
+    for (const forbidden of check.forbiddenSourceTokens ?? []) {
+      const absolute = path.resolve(root, forbidden.path);
+      if (!insideRoot(absolute) || !existsSync(absolute)) {
+        errors.push(`implementationClaimChecks: 路径不存在或逃出仓库 ${forbidden.path}`);
+        continue;
+      }
+      if (readFileSync(absolute, "utf8").includes(forbidden.token)) {
+        errors.push(
+          `${check.featureId}: implementationStatus=${check.whenImplementationStatus} 但 ${forbidden.path} 仍包含禁用边界“${forbidden.token}”；${forbidden.reason}`,
+        );
+      }
+    }
+  }
+}
+
+function collectCohesionWarnings(config) {
+  const warnings = [];
+  for (const threshold of config.cohesionReviewThresholds ?? []) {
+    const absolute = path.resolve(root, threshold.path);
+    if (!insideRoot(absolute) || !existsSync(absolute)) {
+      warnings.push(`${threshold.path}: 内聚复核路径不存在或逃出仓库`);
+      continue;
+    }
+    const lines = readFileSync(absolute, "utf8").split(/\r?\n/).length;
+    if (lines > threshold.maxLines) {
+      warnings.push(`${threshold.path}: ${lines} 行超过复核阈值 ${threshold.maxLines}；${threshold.reason}`);
+    }
+  }
+  return warnings;
 }
 
 function validateProposals(proposalDir, featureIds, errors) {
@@ -786,6 +885,7 @@ async function runCheck(architecture) {
   );
   const dossiers = loadFeatureDossiers(featureDir);
   const featureIds = validateFeatureDossiers(dossiers, validateFeature, ids, adrIds, errors);
+  validateImplementationClaims(config, dossiers, errors);
   validateCurrentViews(architectureDir, errors);
   validateProposals(proposalDir, featureIds, errors);
   validatePostmortems(postmortemDir, errors);
@@ -803,12 +903,18 @@ async function runCheck(architecture) {
   const mermaidCount = await validateMermaid(markdownFiles, errors);
   const adrCount = validateAdrs(architectureDir, errors);
   const factCount = validateFacts(facts, currentMarkdownFiles, errors);
+  const cohesionWarnings = collectCohesionWarnings(config);
 
   if (errors.length > 0) {
     console.error("文档结构与追踪关系检查失败：");
     for (const error of errors) console.error(`- ${error}`);
     process.exitCode = 1;
     return;
+  }
+
+  if (cohesionWarnings.length > 0) {
+    console.warn("架构内聚复核提醒（不阻断）：");
+    for (const warning of cohesionWarnings) console.warn(`- ${warning}`);
   }
 
   console.log(
@@ -828,4 +934,4 @@ if (isMain) {
   }
 }
 
-export { affectedValidationSlices, effectiveSliceFreshness, parseJsonFrontMatterText, validateFeatureDossiers, validatePostmortems, validateProposalReferences, validateProposals };
+export { affectedValidationSlices, collectCohesionWarnings, effectiveSliceFreshness, parseJsonFrontMatterText, validateCurrentViews, validateFeatureDossiers, validateImplementationClaims, validatePostmortems, validateProposalReferences, validateProposals };

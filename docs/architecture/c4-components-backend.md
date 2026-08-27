@@ -1,5 +1,5 @@
 ---
-{"documentType":"c4-view","viewStatus":"current"}
+{"documentType":"c4-view","viewStatus":"current","sourceRevision":"38e54443bb4357771c9c789f83d5fc7e4ed3830c","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller.rs","src-tauri/src/voice_input_service.rs","src-tauri/src/shortcut_manager","src-tauri/src/pending_output_service.rs"],"reviewStatus":"partial","reviewedAt":"2026-08-27","knownDeviations":["VoiceSessionActor 只串行化控制消息；release 后的 finalize task 仍通过 SharedRuntime 直接修改会话状态","VoiceControlService 在 Actor 与快捷键运行时确认应用前已经提交配置"]}
 ---
 
 # C4 L3：Rust 后端组件
@@ -13,11 +13,11 @@ flowchart TB
     subgraph rust["Container: Native Core (Rust)"]
         bootstrap["Component<br/>Bootstrap + Platform Startup<br/><small>lib.rs, platform/tray.rs</small>"]
         commands["Component<br/>Thin IPC Commands<br/><small>commands/*, CommandError</small>"]
-        services["Component<br/>Application Services<br/><small>VoiceInputService, ConfigService, ProviderService</small>"]
+        services["Component<br/>Application Services<br/><small>VoiceControlService, ConfigService, ProviderService</small>"]
         shortcut["Component<br/>Shortcut Manager<br/><small>binding transaction + runtime adapter</small>"]
-        controller["Component<br/>VoiceSessionController<br/><small>bounded event loop, state, session</small>"]
+        controller["Component<br/>VoiceSessionActor + Handle<br/><small>bounded control plane, activation, state, session</small>"]
         streaming["Component<br/>StreamingPipeline<br/><small>audio, provider, preview, overflow</small>"]
-        delivery["Component<br/>DeliveryService<br/><small>target, text, inject, Pending, commit</small>"]
+        delivery["Component<br/>Delivery + Pending Services<br/><small>target, text, lease, inject, commit</small>"]
         repos["Component<br/>Repository Ports + Adapters<br/><small>JSON, SQLite, Keyring, Agent</small>"]
         incident["Component<br/>IncidentVault<br/><small>lock-free ingress, isolated writer, recovery queries</small>"]
         win["Component<br/>Windows Adapters<br/><small>overlay, target identity, SendInput/OLE, confirmation</small>"]
@@ -30,7 +30,7 @@ flowchart TB
     commands -->|"snapshot / mutation / CRUD"| services
     commands -->|"incident list / recovery / export"| incident
     commands -->|"pending delivery request"| controller
-    shortcut -->|"Pressed / Released"| controller
+    shortcut -->|"VoiceActivation begin / finish / cancel"| controller
     controller -->|"start / observe / finalize"| streaming
     controller -.->|"try_emit only"| incident
     controller -->|"validate / inject / commit"| delivery
@@ -54,19 +54,21 @@ flowchart TB
 
 `ProviderService` 在构建 ASR provider 时先检查 endpoint trust，再读取 CredentialStore。热词 Agent adapter 遵循相同顺序。
 
-`VoiceInputService` 是语音输入启停和通用配置保存的应用层协调器。它按固定顺序协调配置 CAS、会话取消、运行状态、provider 重建、快捷键运行时和状态事件；对应 command 只保留窗口权限校验、参数转发和错误 DTO 映射。
+`VoiceControlService` 是语音输入启停和通用配置保存的应用层协调器。它当前先以 revision CAS 提交期望配置，再把 Actor 可用性命令入队并恢复快捷键运行时；后两步没有共同确认或补偿，因此失败时可能出现持久配置、Actor 和 Hook 的部分提交。对应 command 只保留窗口权限校验、参数转发和错误 DTO 映射。Provider 不再保存在共享运行时中，由 `ProviderService` 在 Actor 处理 begin 时按同一配置快照构造会话 Provider。
 
-### VoiceSessionController
+### VoiceSessionActor + VoiceSessionHandle
 
-容量 16 的控制通道顺序处理 Pressed、Released、DeadlineReached、AudioOverflow、CancelRequested 和 ProviderFinished。通道不可用时失败关闭：取消当前会话并禁止注入。
+容量 16 的控制通道顺序处理带 `ActivationId` 的 Begin、Finish、Cancel、可用性和 Pending 交付命令；DeadlineReached、AudioOverflow 和 ProviderFinished 是独立内部事件。通道满时通过独立失败关闭信号取消当前会话。外部组件只持有 Handle 和 watch 状态快照，不能直接访问模块私有 Runtime。
 
-`SessionCoordinator` 记录当前 session ID、取消令牌、Pending 队列和最新 metrics。异步完成路径必须验证仍拥有当前 session。
+但当前实现尚不是严格的 Actor 单写入者：`VoiceRuntime` 仍是模块内的 `Arc<Mutex<_>>`，release 后的 finalize task 持有其 clone，直接推进 Pasting、Pending、metrics、complete/error reset 和状态事件。Actor 串行化了控制入口，却没有串行化全部会话 mutation；取消只在 finalize 的若干等待点和注入前检查一次，尚不能证明取消与不可逆注入之间没有竞争窗口。`SessionCoordinator` 记录当前 session ID、取消令牌和最新 metrics；当前 Activation 由 Actor 命令路径设置，触发器的 finish/cancel 会先匹配当前 Activation。
 
 ### ShortcutManager
 
 `ShortcutManager` 串行化快捷键 edit、启停、系统恢复和关闭，负责权威校验、配置事务、运行时绑定切换及失败回滚。有焦点的设置录入由前端 feature 负责；Manager 不生成逐键候选。
 
-`WindowsKeyboardEngine` 只负责应用运行期间的全局物理快捷键监听，并把已提交绑定的匹配结果转换为 `SessionEvent::Pressed/Released`。稳定职责边界见 [ADR-0010](adr/0010-separate-focused-shortcut-editing.md)。
+快捷键运行错误的权威副本位于 Manager 的协调状态；它还通过无确认的控制消息把错误投影到 Voice 状态快照用于 UI 展示。该投影不是语音输入可用性的权威，控制队列拥塞时可能暂时陈旧。
+
+`WindowsKeyboardEngine` 只负责应用运行期间的全局物理快捷键监听。`ShortcutManager` 为一次按下创建 `ActivationId`，并通过 `VoiceTriggerPort` 配对 begin/finish；Hook 中断转换为同一 Activation 的 cancel。稳定职责边界见 [ADR-0010](adr/0010-separate-focused-shortcut-editing.md) 与 [ADR-0012](adr/0012-unified-voice-input-control-plane.md)。
 
 Manager 事务、Windows Worker、generation 回执、失败回滚和诊断字段的完整说明见 [热键录入、换绑事务与 Windows 运行时链路](shortcut-editing.md)。
 
@@ -76,7 +78,7 @@ CPAL 录音以约 200ms chunk 写入容量 32 的有界队列。队列 Full 触�
 
 ### DeliveryService
 
-交付顺序固定为：文本验证 → 目标身份/前台复验 → 注入 → 成功提交历史 → 触发热词整理。验证或注入失败进入最多 5 条、TTL 10 分钟的内存 Pending 队列。成功注入是不可回滚的提交点。
+交付顺序固定为：文本验证 → 目标身份/前台复验 → 注入 → 成功提交历史 → 触发热词整理。`PendingOutputService` 独占最多 5 条、TTL 10 分钟的内存队列，并用租约防止复制、丢弃和重新交付重复消费。Pending 重新交付由 Actor 与新会话开始串行化；成功注入仍是不可回滚的提交点。
 
 ### Repository Ports + Adapters
 

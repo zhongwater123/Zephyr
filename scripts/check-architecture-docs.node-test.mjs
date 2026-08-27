@@ -11,8 +11,11 @@ import Ajv2020 from "ajv/dist/2020.js";
 import {
   effectiveSliceFreshness,
   affectedValidationSlices,
+  collectCohesionWarnings,
   parseJsonFrontMatterText,
+  validateCurrentViews,
   validateFeatureDossiers,
+  validateImplementationClaims,
   validatePostmortems,
   validateProposalReferences,
   validateProposals,
@@ -38,7 +41,7 @@ function validator() {
 
 function metadata(overrides = {}) {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     featureId: "FEAT-TEST",
     specStatus: "confirmed",
     confirmation: {
@@ -47,6 +50,14 @@ function metadata(overrides = {}) {
       sourceRef: "test fixture",
     },
     implementationStatus: "implemented",
+    implementationReview: {
+      status: "conformant",
+      sourceRevision: "7026768",
+      worktreeState: "clean",
+      reviewedAt: "2026-08-27",
+      summary: "Test fixture implementation review",
+      knownDeviations: [],
+    },
     validationStatus: "partial",
     components: ["frontend.features"],
     decisions: ["ADR-0010"],
@@ -134,11 +145,13 @@ test("validated dossier requires current passing evidence for every slice", () =
       evidence: [{
         id: "EV-TEST-01",
         acceptanceIds: ["AC-TEST-01"],
+        acceptanceCoverage: [{ acceptanceId: "AC-TEST-01", coverage: "full" }],
         method: "automated",
         result: "pass",
         freshness: "stale",
         capabilities: ["automated"],
         scope: "Node test fixture",
+        testRefs: ["fixture::automated"],
         limitations: ["Does not exercise WebView2"],
         sourceRevision: "7026768",
         worktreeState: "dirty",
@@ -168,11 +181,13 @@ test("automated evidence cannot impersonate required target-environment evidence
       evidence: [{
         id: "EV-TEST-01",
         acceptanceIds: ["AC-TEST-01"],
+        acceptanceCoverage: [{ acceptanceId: "AC-TEST-01", coverage: "full" }],
         method: "automated",
         result: "pass",
         freshness: "current",
         capabilities: ["automated"],
         scope: "Reducer and component tests",
+        testRefs: ["fixture::component"],
         limitations: ["No real WebView2 input"],
         sourceRevision: "7026768",
         worktreeState: "clean",
@@ -256,11 +271,13 @@ test("effective freshness detects source changes after otherwise current evidenc
     evidence: [{
       id: "EV-TEST-01",
       acceptanceIds: ["AC-TEST-01"],
+      acceptanceCoverage: [{ acceptanceId: "AC-TEST-01", coverage: "full" }],
       method: "automated",
       result: "pass",
       freshness: "current",
       capabilities: ["automated"],
       scope: "Shortcut frontend automation",
+      testRefs: ["fixture::shortcut"],
       limitations: [],
       sourceRevision: "7026768",
       worktreeState: "clean",
@@ -285,4 +302,141 @@ test("user documentation describes Unicode SendInput as the default delivery pat
   assert.doesNotMatch(readme, /committed once through clipboard paste/i);
   assert.match(troubleshooting, /Unicode `SendInput`/);
   assert.match(troubleshooting, /compatibility/i);
+});
+
+test("implemented dossier rejects known architecture deviations", () => {
+  const errors = [];
+  validateFeatureDossiers(
+    [dossier({
+      implementationReview: {
+        status: "deviating",
+        sourceRevision: "7026768",
+        worktreeState: "dirty",
+        changedPaths: ["src/example.rs"],
+        reviewedAt: "2026-08-27",
+        summary: "Actor ownership is incomplete",
+        knownDeviations: ["detached task mutates runtime"],
+      },
+    })],
+    validator(),
+    new Set(["frontend.features"]),
+    new Set(["ADR-0010"]),
+    errors,
+  );
+  assert.ok(errors.some((error) => error.includes("implementationReview/status")));
+});
+
+test("implementation review must bind to a resolvable source revision", () => {
+  const errors = [];
+  validateFeatureDossiers(
+    [dossier({
+      implementationReview: {
+        status: "conformant",
+        sourceRevision: "deadbee",
+        worktreeState: "clean",
+        reviewedAt: "2026-08-27",
+        summary: "Unresolvable revision fixture",
+        knownDeviations: [],
+      },
+    })],
+    validator(),
+    new Set(["frontend.features"]),
+    new Set(["ADR-0010"]),
+    errors,
+  );
+  assert.ok(errors.some((error) => error.includes("implementationReview.sourceRevision 无法解析")));
+});
+
+test("evidence must declare exact per-acceptance coverage", () => {
+  const errors = [];
+  validateFeatureDossiers(
+    [dossier({
+      evidence: [{
+        id: "EV-TEST-01",
+        acceptanceIds: ["AC-TEST-01"],
+        acceptanceCoverage: [{ acceptanceId: "AC-OTHER-01", coverage: "full" }],
+        method: "automated",
+        result: "pass",
+        freshness: "current",
+        capabilities: ["automated"],
+        scope: "Mismatched coverage fixture",
+        testRefs: ["fixture::mismatch"],
+        limitations: [],
+        sourceRevision: "7026768",
+        worktreeState: "clean",
+        environment: "Node test fixture",
+        validatedAt: "2026-08-27",
+      }],
+    })],
+    validator(),
+    new Set(["frontend.features"]),
+    new Set(["ADR-0010"]),
+    errors,
+  );
+  assert.ok(errors.some((error) => error.includes("acceptanceCoverage 包含未关联验收")));
+  assert.ok(errors.some((error) => error.includes("未逐项声明 acceptanceCoverage")));
+});
+
+test("Current views require source binding and deviation-aware review metadata", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "gy-current-view-"));
+  try {
+    const file = path.join(directory, "c4-test.md");
+    writeFileSync(file, '---\n{"documentType":"c4-view","viewStatus":"current"}\n---\n', "utf8");
+    const missingErrors = [];
+    validateCurrentViews(directory, missingErrors);
+    assert.ok(missingErrors.some((error) => error.includes("sourceRevision")));
+    assert.ok(missingErrors.some((error) => error.includes("knownDeviations")));
+
+    writeFileSync(
+      file,
+      '---\n{"documentType":"c4-view","viewStatus":"current","sourceRevision":"7026768","worktreeState":"clean","reviewStatus":"reviewed","reviewedAt":"2026-08-27","knownDeviations":[]}\n---\n',
+      "utf8",
+    );
+    const validErrors = [];
+    validateCurrentViews(directory, validErrors);
+    assert.deepEqual(validErrors, []);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("implemented voice control claim is blocked while SharedRuntime writers remain", () => {
+  const check = {
+    implementationClaimChecks: [{
+      featureId: "FEAT-VOICE-INPUT-CONTROL-PLANE",
+      whenImplementationStatus: "implemented",
+      forbiddenSourceTokens: [{
+        path: "src-tauri/src/voice_controller.rs",
+        token: "type SharedRuntime = Arc<Mutex<VoiceRuntime>>",
+        reason: "Actor must own the aggregate by value",
+      }],
+    }],
+  };
+  const implemented = dossier({
+    featureId: "FEAT-VOICE-INPUT-CONTROL-PLANE",
+    implementationStatus: "implemented",
+  });
+  const errors = [];
+  validateImplementationClaims(check, [implemented], errors);
+  assert.ok(errors.some((error) => error.includes("SharedRuntime")));
+
+  const inProgressErrors = [];
+  validateImplementationClaims(
+    check,
+    [dossier({ featureId: "FEAT-VOICE-INPUT-CONTROL-PLANE", implementationStatus: "in_progress" })],
+    inProgressErrors,
+  );
+  assert.deepEqual(inProgressErrors, []);
+});
+
+test("oversized architecture component produces a non-blocking cohesion warning", () => {
+  const warnings = collectCohesionWarnings({
+    cohesionReviewThresholds: [{
+      path: "src-tauri/src/voice_controller.rs",
+      maxLines: 800,
+      reason: "review controller cohesion",
+    }],
+  });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /超过复核阈值 800/);
 });

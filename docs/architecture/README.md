@@ -3,14 +3,14 @@
 本目录是项目的架构知识库。源码与运行配置是实现事实；这里的 C4、Runtime View、arc42-Lean 和代码地图是对当前或拟议架构的解释，不因结构完整而自动获得语义权威。
 
 - **Feature Dossier**：规定重要功能的用户行为，并独立记录实现与验证状态。
-- **Current C4 / Runtime View / arc42-Lean**：解释当前实现的边界、时序、质量属性与风险。
+- **Current C4 / Runtime View / arc42-Lean**：解释当前实现的边界、时序、质量属性与风险；必须绑定源码 revision、工作树和语义复核状态，`current` 不等于“符合目标 ADR”。
 - **Proposed architecture**：物理隔离尚未成为实现事实的设计视图。
 - **Implementation Guide / runbook**：绑定源码 revision 的非规范性实现快照，可以过期，不规定产品行为或长期边界。
 - **ADR**：记录为什么采用长期边界，以及未来何时应重新评估。
 - **代码地图**：把当前组件 ID 映射到源码、Current 叙事、ADR，并将非规范性 Implementation Guide 单独分类，支持自动影响分析。
 - **测试与实机记录**：提供绑定版本、工作树和环境的验证证据。
 
-当前基线：Windows-only Tauri 2 桌面应用；前端为 Preact/Vite，核心语音链路为 Rust；本页最后按工作区代码核对于 2026-08-25。
+当前基线：Windows-only Tauri 2 桌面应用；前端为 Preact/Vite，核心语音链路为 Rust；Current 视图最后按脏工作区代码复核于 2026-08-27，具体偏差和源码基线记录在各视图 front matter。
 
 ## 推荐阅读路径
 
@@ -67,7 +67,7 @@ npm run architecture:check
 - [architecture.config.json](architecture.config.json) 定义必需文档与生产源码覆盖范围。
 - 安全、容量和时限常量必须登记在 [架构不变量](invariants.md)，并从 Rust 具名常量自动核验。
 - ADR 一经 Accepted 不重写结论；需要改变时新增 ADR 并标记 supersedes/superseded by。
-- 拟议 C4/Runtime View 必须进入 [proposals](proposals/README.md) 并声明 `viewStatus=proposed`；当前视图声明 `viewStatus=current`。
+- 拟议 C4/Runtime View 必须进入 [proposals](proposals/README.md) 并声明 `viewStatus=proposed`；当前视图声明 `viewStatus=current`，同时记录 `sourceRevision`、`worktreeState`、`reviewStatus`、`reviewedAt`、`knownDeviations`，脏工作树还记录 `changedPaths`。
 - Implementation Guide 必须声明 `normative=false` 并绑定 source revision、worktree 状态、复核状态和关联 Feature；不得用它覆盖 Dossier、ADR 或源码事实。
 - 测试通过但目标环境失败时，产品验收仍失败；不得用文档或局部测试解释掉实机结果。
 

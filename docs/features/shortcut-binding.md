@@ -1,6 +1,6 @@
 ---
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "featureId": "FEAT-SHORTCUT-BINDING",
   "confirmation": {
     "confirmedBy": "user",
@@ -10,6 +10,15 @@
   "specStatus": "confirmed",
   "implementationStatus": "implemented",
   "validationStatus": "partial",
+  "implementationReview": {
+    "status": "partial",
+    "sourceRevision": "38e54443bb4357771c9c789f83d5fc7e4ed3830c",
+    "worktreeState": "dirty",
+    "changedPaths": ["src-tauri/src/shortcut_manager", "src-tauri/src/windows_keyboard.rs", "src/features/shortcut"],
+    "reviewedAt": "2026-08-27",
+    "summary": "快捷键编辑事务和回滚边界已有进程内复核，真实 Hook、WebView2、重启和外部 Hook 互操作仍未完成实现符合性复核。",
+    "knownDeviations": []
+  },
   "components": ["frontend.features", "frontend.ipc", "backend.commands", "backend.shortcut", "backend.services", "backend.repositories", "platform.windows"],
   "decisions": ["ADR-0010", "ADR-0011"],
   "validationSlices": [
@@ -26,11 +35,17 @@
     {
       "id": "EV-SC-7026768",
       "acceptanceIds": ["AC-SC-01", "AC-SC-02", "AC-SC-03"],
+      "acceptanceCoverage": [
+        { "acceptanceId": "AC-SC-01", "coverage": "partial" },
+        { "acceptanceId": "AC-SC-02", "coverage": "partial" },
+        { "acceptanceId": "AC-SC-03", "coverage": "partial" }
+      ],
       "method": "automated",
       "result": "pass",
       "freshness": "potentially_stale",
       "capabilities": ["automated"],
       "scope": "Frontend DOM and controller checks for immediate capture, physical-key display and cancellation",
+      "testRefs": ["src/features/shortcut/ShortcutCaptureField.test.tsx", "src/features/shortcut/useShortcutBindingController.test.tsx", "src/features/shortcut/shortcutCapture.test.ts"],
       "limitations": ["Build identity was not retained", "ShortcutManager transaction, persistence and rollback paths were not exercised", "Windows/WebView2, runtime Hook, restart persistence and external-app interoperability were not proven"],
       "sourceRevision": "702676870f2c4289c79cef24f2fe5d96777505b7",
       "worktreeState": "clean",
@@ -41,11 +56,16 @@
     {
       "id": "EV-SC-TRANSACTION-20260827",
       "acceptanceIds": ["AC-SC-04", "AC-SC-05"],
+      "acceptanceCoverage": [
+        { "acceptanceId": "AC-SC-04", "coverage": "partial" },
+        { "acceptanceId": "AC-SC-05", "coverage": "partial" }
+      ],
       "method": "automated",
       "result": "pass",
       "freshness": "current",
       "capabilities": ["automated", "fault_injection"],
       "scope": "EditCoordinator in-process transaction tests for runtime apply failure, persistence failure, rollback failure, revision conflict, successful commit, the disabled-state no-enable invariant, cancellation and unchanged bindings",
+      "testRefs": ["shortcut_manager::coordinator::tests::runtime_apply_failure_never_commits_configuration", "shortcut_manager::coordinator::tests::persistence_failure_restores_authoritative_runtime_binding", "shortcut_manager::coordinator::tests::rollback_failure_reports_runtime_rollback_error", "shortcut_manager::coordinator::tests::revision_conflict_restores_the_new_authoritative_binding", "shortcut_manager::coordinator::tests::successful_commit_keeps_runtime_and_configuration_consistent"],
       "limitations": ["Runs against in-memory configuration, runtime and observer ports", "Does not verify the AC-SC-06 user-visible disabled-save message", "Does not start Tauri, WebView2 or a real Windows keyboard Hook", "Dirty worktree evidence has no immutable build identity and depends on all listed shortcut-related changes"],
       "sourceRevision": "dc4be390846b0a54e00cadf868db4b9c6db9686b",
       "worktreeState": "dirty",
@@ -56,11 +76,13 @@
     {
       "id": "EV-SC-DISABLED-MESSAGE-20260827",
       "acceptanceIds": ["AC-SC-06"],
+      "acceptanceCoverage": [{ "acceptanceId": "AC-SC-06", "coverage": "partial" }],
       "method": "automated",
       "result": "pass",
       "freshness": "current",
       "capabilities": ["automated"],
       "scope": "Backend disabled-save outcome returns the next-enable message and the frontend controller keeps it as a user-visible status after a successful commit",
+      "testRefs": ["shortcut_manager::coordinator::tests::disabled_commit_persists_without_enabling_or_reinstalling_hook", "src/features/shortcut/useShortcutBindingController.test.tsx: shows that a disabled shortcut was saved for the next enable"],
       "limitations": ["Frontend test runs in happy-dom rather than Windows WebView2", "Does not prove that a later real Hook enable uses the saved binding", "Dirty worktree evidence has no immutable build identity and depends on all listed shortcut-related changes"],
       "sourceRevision": "dc4be390846b0a54e00cadf868db4b9c6db9686b",
       "worktreeState": "dirty",

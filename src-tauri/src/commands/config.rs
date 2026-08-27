@@ -4,10 +4,9 @@ use crate::config::{
     TrustedEndpoint,
 };
 use crate::services::{AppServices, ConfigServiceError};
-use crate::voice_input_service::{VoiceInputService, VoiceInputServiceError};
-use crate::SharedRuntime;
+use crate::voice_input_service::{VoiceControlService, VoiceControlServiceError};
 use serde::Serialize;
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{State, WebviewWindow};
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ConfigStatus {
@@ -53,21 +52,18 @@ fn map_config_error(error: ConfigServiceError) -> CommandError {
     }
 }
 
-fn map_voice_input_error(error: VoiceInputServiceError) -> CommandError {
+fn map_voice_input_error(error: VoiceControlServiceError) -> CommandError {
     match error {
-        VoiceInputServiceError::Config(error) => map_config_error(error),
-        VoiceInputServiceError::NativeConfirmationRequired => CommandError::new(
+        VoiceControlServiceError::Config(error) => map_config_error(error),
+        VoiceControlServiceError::NativeConfirmationRequired => CommandError::new(
             "native_confirmation_required",
             "新增剪贴板兼容应用必须通过专用的 Windows 原生确认流程",
         ),
-        VoiceInputServiceError::RuntimeLock(message) => {
-            CommandError::new("runtime_lock_failed", message)
+        VoiceControlServiceError::VoiceControl(message) => {
+            CommandError::new("voice_control_failed", message)
         }
-        VoiceInputServiceError::ShortcutState(message) => {
+        VoiceControlServiceError::ShortcutState(message) => {
             CommandError::new("shortcut_state_failed", message)
-        }
-        VoiceInputServiceError::EventEmit(message) => {
-            CommandError::new("event_emit_failed", message)
         }
     }
 }
@@ -155,7 +151,6 @@ pub fn authorize_endpoint(
     purpose: EndpointPurpose,
     expected_revision: u64,
     window: WebviewWindow,
-    runtime: State<'_, SharedRuntime>,
     services: State<'_, AppServices>,
 ) -> CommandResult<AppConfig> {
     command_error::require_window(&window, "main")?;
@@ -188,10 +183,6 @@ pub fn authorize_endpoint(
         .config
         .commit_config(expected_revision, next)
         .map_err(map_config_error)?;
-    runtime
-        .lock()
-        .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?
-        .provider = services.provider.build(&next);
     Ok(next)
 }
 
@@ -201,7 +192,6 @@ pub fn revoke_endpoint(
     purpose: EndpointPurpose,
     expected_revision: u64,
     window: WebviewWindow,
-    runtime: State<'_, SharedRuntime>,
     services: State<'_, AppServices>,
 ) -> CommandResult<AppConfig> {
     command_error::require_window(&window, "main")?;
@@ -229,10 +219,6 @@ pub fn revoke_endpoint(
         .config
         .commit_config(expected_revision, next)
         .map_err(map_config_error)?;
-    runtime
-        .lock()
-        .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?
-        .provider = services.provider.build(&next);
     Ok(next)
 }
 
@@ -287,13 +273,12 @@ pub fn save_config(
     config: AppConfig,
     expected_revision: u64,
     hotword_agent_api_key: Option<String>,
-    app: AppHandle,
     window: WebviewWindow,
-    voice_input: State<'_, VoiceInputService>,
+    voice_input: State<'_, VoiceControlService>,
 ) -> CommandResult<AppConfig> {
     command_error::require_window(&window, "main")?;
     voice_input
-        .save_config(&app, config, expected_revision, hotword_agent_api_key)
+        .save_config(config, expected_revision, hotword_agent_api_key)
         .map_err(map_voice_input_error)
 }
 
@@ -301,13 +286,12 @@ pub fn save_config(
 pub fn set_enabled(
     enabled: bool,
     expected_revision: u64,
-    app: AppHandle,
     window: WebviewWindow,
-    voice_input: State<'_, VoiceInputService>,
+    voice_input: State<'_, VoiceControlService>,
 ) -> CommandResult<u64> {
     command_error::require_window(&window, "main")?;
     voice_input
-        .set_enabled(&app, enabled, expected_revision)
+        .set_enabled(enabled, expected_revision)
         .map_err(map_voice_input_error)
 }
 

@@ -70,7 +70,7 @@ impl AppStateMachine {
         self.payload(if enabled { "准备就绪" } else { "已暂停" }, None)
     }
 
-    pub fn hotkey_pressed(&mut self) -> Option<VoiceStatePayload> {
+    pub fn activation_started(&mut self) -> Option<VoiceStatePayload> {
         if !self.enabled || self.state == VoiceState::Recording {
             return None;
         }
@@ -81,7 +81,7 @@ impl AppStateMachine {
         Some(self.payload("正在听", None))
     }
 
-    pub fn hotkey_released(&mut self, duration: Duration) -> ReleaseDecision {
+    pub fn activation_finished(&mut self, duration: Duration) -> ReleaseDecision {
         let elapsed_ms = duration.as_millis();
         if elapsed_ms < MIN_RECORDING_MS {
             self.state = if self.enabled {
@@ -144,8 +144,8 @@ mod tests {
     fn repeated_press_does_not_restart_recording() {
         let mut machine = AppStateMachine::new();
 
-        let first = machine.hotkey_pressed();
-        let second = machine.hotkey_pressed();
+        let first = machine.activation_started();
+        let second = machine.activation_started();
 
         assert_eq!(first.unwrap().state, VoiceState::Recording);
         assert!(second.is_none());
@@ -155,9 +155,9 @@ mod tests {
     #[test]
     fn release_after_minimum_duration_enters_transcribing() {
         let mut machine = AppStateMachine::new();
-        machine.hotkey_pressed();
+        machine.activation_started();
 
-        let decision = machine.hotkey_released(Duration::from_millis(450));
+        let decision = machine.activation_finished(Duration::from_millis(450));
 
         match decision {
             ReleaseDecision::Transcribe {
@@ -175,9 +175,9 @@ mod tests {
     #[test]
     fn short_recording_is_cancelled_without_error() {
         let mut machine = AppStateMachine::new();
-        machine.hotkey_pressed();
+        machine.activation_started();
 
-        let decision = machine.hotkey_released(Duration::from_millis(120));
+        let decision = machine.activation_finished(Duration::from_millis(120));
 
         match decision {
             ReleaseDecision::Cancelled {

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "architectureDir": "docs/architecture",
   "featureDir": "docs/features",
   "featureSchema": "docs/features/feature-dossier.schema.json",
@@ -9,6 +9,31 @@
   "codeMap": "docs/architecture/code-map.json",
   "codeMapSchema": "docs/architecture/code-map.schema.json",
   "facts": "docs/architecture/architecture-facts.json",
+  "implementationClaimChecks": [
+    {
+      "featureId": "FEAT-VOICE-INPUT-CONTROL-PLANE",
+      "whenImplementationStatus": "implemented",
+      "forbiddenSourceTokens": [
+        {
+          "path": "src-tauri/src/voice_controller.rs",
+          "token": "type SharedRuntime = Arc<Mutex<VoiceRuntime>>",
+          "reason": "implemented 状态要求 Actor 按值独占会话聚合，不能继续共享可变 Runtime"
+        },
+        {
+          "path": "src-tauri/src/voice_controller.rs",
+          "token": "runtime: SharedRuntime",
+          "reason": "implemented 状态要求工作任务只返回内部事件，不能接收可写 Runtime"
+        }
+      ]
+    }
+  ],
+  "cohesionReviewThresholds": [
+    {
+      "path": "src-tauri/src/voice_controller.rs",
+      "maxLines": 800,
+      "reason": "会话 Actor、录音、ASR finalize、交付、Pending、Incident 和 UI 投影应进行职责内聚复核"
+    }
+  ],
   "requiredDocs": [
     "README.md",
     "arc42-lean.md",

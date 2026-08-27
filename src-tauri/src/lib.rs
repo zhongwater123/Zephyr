@@ -8,6 +8,7 @@ mod hotwords;
 mod incident;
 mod inject;
 mod overlay;
+mod pending_output_service;
 mod physical_shortcut;
 mod platform;
 mod preview;
@@ -23,22 +24,19 @@ mod streaming_pipeline;
 mod target;
 mod voice_controller;
 mod voice_input_service;
+mod voice_trigger;
 mod windows_keyboard;
 
-use audio::Recorder;
 use config::{AppConfig, ConfigRecovery};
-use inject::{TextInjector, UnicodeTextInjector};
 use preview::TranscriptPreviewState;
-use provider::{ProviderError, StreamingTranscriptionProvider};
+use provider::ProviderError;
 use serde::Serialize;
-use state::AppStateMachine;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Instant;
 use tauri::Manager;
 use tokio::sync::Notify;
 
-pub type SharedRuntime = Arc<Mutex<VoiceRuntime>>;
 #[derive(Debug, Default)]
 pub struct SessionCancellation {
     cancelled: AtomicBool,
@@ -76,6 +74,7 @@ pub struct ActiveSession {
     pub deadline_cancellation: Arc<SessionCancellation>,
     pub audio_queue: Arc<audio::AudioQueueMonitor>,
     pub started_at: Instant,
+    pub config: AppConfig,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -88,55 +87,6 @@ pub struct SessionMetrics {
     pub recording_duration_ms: u64,
     pub cancel_reason: Option<String>,
     pub final_state: String,
-}
-
-pub struct VoiceRuntime {
-    pub machine: AppStateMachine,
-    pub recorder: Recorder,
-    pub provider: Arc<dyn StreamingTranscriptionProvider>,
-    pub injector: Arc<dyn TextInjector>,
-    pub sessions: session::SessionCoordinator,
-    pub shortcut_registration_error: Option<String>,
-}
-
-impl VoiceRuntime {
-    fn new(enabled: bool, provider: Arc<dyn StreamingTranscriptionProvider>) -> Self {
-        let mut machine = AppStateMachine::new();
-        machine.set_enabled(enabled);
-        let recorder = Recorder::new();
-        Self {
-            machine,
-            recorder,
-            provider,
-            injector: Arc::new(UnicodeTextInjector),
-            sessions: session::SessionCoordinator::default(),
-            shortcut_registration_error: None,
-        }
-    }
-
-    pub fn voice_state_payload(&self) -> state::VoiceStatePayload {
-        if let Some(message) = &self.shortcut_registration_error {
-            return state::VoiceStatePayload {
-                state: state::VoiceState::Error,
-                message: message.clone(),
-                elapsed_ms: None,
-            };
-        }
-        let state = self.machine.state().clone();
-        let message = match state {
-            state::VoiceState::Idle => "准备就绪",
-            state::VoiceState::Recording => "正在听",
-            state::VoiceState::Transcribing => "识别中",
-            state::VoiceState::Pasting => "正在输入",
-            state::VoiceState::Disabled => "已暂停",
-            state::VoiceState::Error => "语音输入发生错误",
-        };
-        state::VoiceStatePayload {
-            state,
-            message: message.to_string(),
-            elapsed_ms: None,
-        }
-    }
 }
 
 pub fn run() {
@@ -156,11 +106,6 @@ pub fn run() {
     });
     let app_services = services::AppServices::production(loaded.clone())
         .expect("failed to initialize application services");
-    let runtime: SharedRuntime = Arc::new(Mutex::new(VoiceRuntime::new(
-        loaded.config.enabled,
-        app_services.provider.build(&loaded.config),
-    )));
-    let tray_config = app_services.config.clone();
     let voice_services = app_services.clone();
     let shutdown_incidents = app_services.incidents.clone();
 
@@ -177,7 +122,6 @@ pub fn run() {
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepSome(5))
                 .build(),
         )
-        .manage(runtime.clone())
         .manage(app_services)
         .invoke_handler(tauri::generate_handler![
             commands::config::get_config,
@@ -233,29 +177,30 @@ pub fn run() {
             commands::provider::test_provider
         ])
         .setup(move |app| {
-            let (controller, shortcut_manager) = shortcut_manager::ShortcutManager::initialize(
-                app,
-                runtime.clone(),
+            let pending = Arc::new(pending_output_service::PendingOutputService::default());
+            let enabled = voice_services.config.snapshot().enabled;
+            let voice = voice_controller::VoiceSessionHandle::spawn(
+                app.handle().clone(),
+                enabled,
                 voice_services.clone(),
+                pending.clone(),
+            );
+            let shortcut_manager = shortcut_manager::ShortcutManager::initialize(
+                app,
+                voice_services.clone(),
+                voice.clone(),
             )?;
-            let voice_input = voice_input_service::VoiceInputService::new(
-                runtime.clone(),
+            let voice_control = voice_input_service::VoiceControlService::new(
                 voice_services.config.clone(),
-                voice_services.provider.clone(),
-                controller.clone(),
+                voice.clone(),
                 shortcut_manager.clone(),
             );
-            app.manage(controller.clone());
+            app.manage(voice);
+            app.manage(pending);
             app.manage(shortcut_manager.clone());
-            app.manage(voice_input);
+            app.manage(voice_control.clone());
             overlay::setup_preinput_window(app.handle())?;
-            platform::tray::setup(
-                app.handle(),
-                runtime.clone(),
-                tray_config.clone(),
-                controller,
-                shortcut_manager,
-            )?;
+            platform::tray::setup(app.handle(), voice_control)?;
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -286,6 +231,7 @@ fn install_tls_provider() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
     use tokio::time::{timeout, Duration};
 
     #[tokio::test]
@@ -306,5 +252,36 @@ mod tests {
         timeout(Duration::from_millis(100), cancellation.cancelled())
             .await
             .expect("late waiter should observe prior cancellation");
+    }
+
+    #[test]
+    fn external_voice_layers_cannot_reach_mutable_runtime() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let files = [
+            "src/commands/asr.rs",
+            "src/commands/config.rs",
+            "src/commands/session.rs",
+            "src/platform/tray.rs",
+            "src/shortcut_manager/mod.rs",
+            "src/streaming_pipeline.rs",
+            "src/delivery.rs",
+        ];
+        let forbidden = [
+            "SharedRuntime",
+            "runtime.lock",
+            "runtime.provider",
+            "sessions.pending_outputs",
+            "SessionEvent",
+        ];
+
+        for relative in files {
+            let source = std::fs::read_to_string(manifest.join(relative)).unwrap();
+            for token in forbidden {
+                assert!(
+                    !source.contains(token),
+                    "{relative} must not depend on mutable voice runtime token {token}"
+                );
+            }
+        }
     }
 }

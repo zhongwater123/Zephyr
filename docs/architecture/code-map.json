@@ -16,7 +16,8 @@
         "docs/architecture/arc42-lean.md"
       ],
       "adrs": [
-        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md"
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md",
+        "docs/architecture/adr/0012-unified-voice-input-control-plane.md"
       ],
       "changeTriggers": [
         "产品边界、用户角色、外部系统或本机控制边界变化"
@@ -228,7 +229,8 @@
         "docs/architecture/c4-components-backend.md"
       ],
       "adrs": [
-        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md"
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md",
+        "docs/architecture/adr/0012-unified-voice-input-control-plane.md"
       ],
       "changeTriggers": [
         "进程装配、managed state、窗口、托盘或 handler 注册变化"
@@ -259,7 +261,8 @@
         "docs/architecture/c4-components-backend.md"
       ],
       "adrs": [
-        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md"
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md",
+        "docs/architecture/adr/0012-unified-voice-input-control-plane.md"
       ],
       "changeTriggers": [
         "command 名称、参数、窗口权限或错误映射变化"
@@ -291,7 +294,8 @@
       ],
       "adrs": [
         "docs/architecture/adr/0004-trust-before-credentials.md",
-        "docs/architecture/adr/0005-revisioned-atomic-local-storage.md"
+        "docs/architecture/adr/0005-revisioned-atomic-local-storage.md",
+        "docs/architecture/adr/0012-unified-voice-input-control-plane.md"
       ],
       "changeTriggers": [
         "服务所有权、语音输入协调、配置快照、provider 构造或凭据读取顺序变化"
@@ -307,17 +311,18 @@
       ],
       "publicContracts": [
         "AppServices",
-        "VoiceInputService command orchestration",
+        "VoiceControlService command orchestration",
         "ConfigService revision CAS",
         "ProviderService trust-before-credential construction"
       ]
     },
     {
       "id": "backend.voice-controller",
-      "name": "VoiceSessionController",
+      "name": "VoiceSessionActor",
       "kind": "component",
       "source": [
         "src-tauri/src/voice_controller.rs",
+        "src-tauri/src/voice_trigger.rs",
         "src-tauri/src/state.rs",
         "src-tauri/src/session.rs"
       ],
@@ -328,7 +333,8 @@
       ],
       "adrs": [
         "docs/architecture/adr/0002-single-owner-bounded-voice-session.md",
-        "docs/architecture/adr/0003-delivery-commit-point-and-pending-output.md"
+        "docs/architecture/adr/0003-delivery-commit-point-and-pending-output.md",
+        "docs/architecture/adr/0012-unified-voice-input-control-plane.md"
       ],
       "changeTriggers": [
         "会话事件、状态、取消、deadline、finalize 或所有权变化"
@@ -343,7 +349,9 @@
         "platform.windows"
       ],
       "publicContracts": [
-        "SessionEvent",
+        "VoiceCommand and internal VoiceInternalEvent separation",
+        "VoiceTriggerPort and ActivationId",
+        "VoiceSessionHandle read-only status snapshot",
         "VoiceStatePayload",
         "SessionMetrics",
         "single active session ownership"
@@ -391,6 +399,7 @@
       "kind": "component-group",
       "source": [
         "src-tauri/src/delivery.rs",
+        "src-tauri/src/pending_output_service.rs",
         "src-tauri/src/target.rs",
         "src-tauri/src/inject.rs"
       ],
@@ -401,7 +410,8 @@
       ],
       "adrs": [
         "docs/architecture/adr/0003-delivery-commit-point-and-pending-output.md",
-        "docs/architecture/adr/0006-unicode-injection-default.md"
+        "docs/architecture/adr/0006-unicode-injection-default.md",
+        "docs/architecture/adr/0012-unified-voice-input-control-plane.md"
       ],
       "changeTriggers": [
         "目标验证、文本校验、注入、Pending 或副作用提交顺序变化"
@@ -415,7 +425,7 @@
       ],
       "publicContracts": [
         "DeliveryService",
-        "PendingOutput DTO and lifecycle",
+        "PendingOutput DTO, lease and lifecycle",
         "successful injection commit point"
       ]
     },
@@ -437,7 +447,8 @@
       ],
       "adrs": [
         "docs/architecture/adr/0002-single-owner-bounded-voice-session.md",
-        "docs/architecture/adr/0010-separate-focused-shortcut-editing.md"
+        "docs/architecture/adr/0010-separate-focused-shortcut-editing.md",
+        "docs/architecture/adr/0012-unified-voice-input-control-plane.md"
       ],
       "changeTriggers": [
         "物理键模型、edit 事务、低级钩子传播或恢复语义变化"
@@ -452,7 +463,7 @@
         "Physical scan-code binding contract",
         "sided modifier-key trigger and modifier-only chord contract",
         "shortcut edit begin/commit/cancel outcome contract",
-        "Pressed and Released SessionEvent translation",
+        "ActivationId paired VoiceTriggerPort begin, finish and cancel translation",
         "transactional shortcut replacement",
         "best-effort WH_KEYBOARD_LL physical-key engine"
       ]

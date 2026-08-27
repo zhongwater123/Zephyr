@@ -1,10 +1,19 @@
 ---
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "featureId": "FEAT-INCIDENT-VAULT",
   "specStatus": "draft",
   "implementationStatus": "implemented",
   "validationStatus": "partial",
+  "implementationReview": {
+    "status": "partial",
+    "sourceRevision": "38e54443bb4357771c9c789f83d5fc7e4ed3830c",
+    "worktreeState": "dirty",
+    "changedPaths": ["src-tauri/src/incident", "src-tauri/src/voice_controller.rs", "src/features/history"],
+    "reviewedAt": "2026-08-27",
+    "summary": "IncidentVault 的隔离边界已有历史实现核对，但当前脏工作树及目标环境行为尚未形成完整的实现符合性复核。",
+    "knownDeviations": []
+  },
   "components": ["frontend.features", "backend.incident-vault", "backend.repositories", "storage.local"],
   "decisions": ["ADR-0008", "ADR-0011"],
   "validationSlices": [
@@ -16,11 +25,17 @@
     {
       "id": "EV-IV-20260825",
       "acceptanceIds": ["AC-IV-01", "AC-IV-02", "AC-IV-03"],
+      "acceptanceCoverage": [
+        { "acceptanceId": "AC-IV-01", "coverage": "partial" },
+        { "acceptanceId": "AC-IV-02", "coverage": "partial" },
+        { "acceptanceId": "AC-IV-03", "coverage": "partial" }
+      ],
       "method": "automated",
       "result": "partial",
       "freshness": "potentially_stale",
       "capabilities": ["automated"],
       "scope": "Historical automated implementation checks for IncidentVault boundaries and storage behavior",
+      "testRefs": ["cargo test incident::", "npm test"],
       "limitations": ["Artifact identity and target-environment UI validation were not retained"],
       "sourceRevision": "8206806efa9ab3169daa3059e6929f20419c84bd",
       "worktreeState": "unknown",

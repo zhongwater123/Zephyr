@@ -1,5 +1,5 @@
 ---
-{"documentType":"runtime-view","viewStatus":"current"}
+{"documentType":"runtime-view","viewStatus":"current","sourceRevision":"38e54443bb4357771c9c789f83d5fc7e4ed3830c","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller.rs","src-tauri/src/streaming_pipeline.rs","src-tauri/src/delivery.rs","src-tauri/src/pending_output_service.rs"],"reviewStatus":"partial","reviewedAt":"2026-08-27","knownDeviations":["finalize task 绕过 Actor 直接写 SharedRuntime","取消与文本注入尚无 Actor 串行化的授权提交点"]}
 ---
 
 # 运行时与部署视图
@@ -12,7 +12,9 @@
 sequenceDiagram
     actor User as 用户
     participant HK as Shortcut Adapter
-    participant VC as VoiceSessionController
+    participant VC as VoiceSessionActor
+    participant RT as module-private SharedRuntime
+    participant FIN as Detached Finalize Task
     participant WIN as Windows Target Adapter
     participant MIC as CPAL / Audio Queue
     participant ASR as Streaming ASR
@@ -22,34 +24,42 @@ sequenceDiagram
     participant DB as History / Hotwords
 
     User->>HK: Pressed
-    HK->>VC: SessionEvent::Pressed
+    HK->>HK: 创建并持有 ActivationId
+    HK->>VC: VoiceTriggerPort.begin(activation)
+    VC->>RT: 接受后写 Activation/session/state
     VC->>WIN: 捕获 HWND/PID/创建时间/EXE
     VC->>MIC: start_streaming(200ms, capacity=32)
     VC->>ASR: 建立已授权 WSS 会话
     VC->>OVL: begin + Recording
     loop 录音期间
         MIC->>ASR: PCM chunk（有界背压）
-        ASR-->>VC: latest partial
-        VC-->>OVL: emit_to(preinput, session_id + seq)
+        ASR-->>OVL: TranscriptRelay 读取只读 observation 后更新 preview
     end
     User->>HK: Released
-    HK->>VC: SessionEvent::Released
+    HK->>VC: VoiceTriggerPort.finish(same ActivationId)
     VC->>MIC: stop_streaming / final chunk
-    VC->>ASR: 等待 final（有超时与取消）
-    ASR-->>VC: final text
-    VC->>DEL: validate(text, captured target)
+    VC->>RT: take ActiveSession / Transcribing
+    VC->>FIN: spawn(provider result, cancellation, SharedRuntime clone)
+    FIN->>ASR: 等待 final（有超时与取消）
+    ASR-->>FIN: final text
+    FIN->>DEL: validate(text, captured target)
     DEL->>WIN: 复验身份 + 当前前台 HWND
     alt 目标和文本有效
         DEL->>APP: Unicode SendInput 或显式兼容模式
         APP-->>DEL: 注入成功
         DEL->>DB: 写历史；随后触发热词整理
-        DEL-->>VC: Delivered
+        DEL-->>FIN: 注入/历史结果
+        FIN->>RT: 直接写 metrics + complete
     else 目标变化、文本无效或注入失败
-        DEL-->>VC: PendingOutput（内存，5 条，TTL 10 分钟）
+        DEL-->>FIN: delivery failure
+        FIN->>RT: 直接写 Pending（内存，5 条，TTL 10 分钟）+ complete/error
         Note over APP,DB: 不写目标应用、不写历史、不学习热词
     end
-    VC-->>OVL: hide current session
+    FIN-->>OVL: hide current session
+    Note over VC,FIN: 当前偏差：Actor 不拥有 finalize 后的全部 mutation；cancel 与不可逆注入尚无串行授权点
 ```
+
+该图刻意描述当前实现而不是 ADR-0012 的目标形态。外部组件已经不能直接取得 Runtime，但 finalize task 仍在 `voice_controller` 模块内部共享并修改它；因此本视图的实现复核状态为 `partial`。
 
 ### 快捷键录入与提交
 
@@ -96,10 +106,11 @@ sequenceDiagram
 
 ### 并发与终止条件
 
-- 120 秒 deadline 和真实 Released 进入相同的幂等 finalize 路径。
+- 120 秒 deadline 和匹配当前 Activation 的真实 Released 进入相同的幂等 finalize 路径；迟到或其他 Activation 的 finish/cancel 被忽略。
 - 音频队列 Full、用户取消、provider 拒绝或控制通道失败都会取消当前会话并禁止交付。
 - 旧 session 的 provider 完成只能记录，不能修改当前状态或产生文本副作用。
 - provider final 最长等待路径由 preview 是否存在决定；取消令牌可提前终止等待。
+- 每个已接受会话固定开始时的配置 revision、Provider 和注入策略快照；配置变更只影响后续会话。
 
 ## Pending 手动交付
 
@@ -108,24 +119,31 @@ sequenceDiagram
     actor User as 用户
     participant UI as Pending Panel
     participant CMD as Session Command
+    participant ACT as VoiceSessionActor
+    participant PEND as PendingOutputService
     participant DEL as DeliveryService
     participant WIN as Windows Target Adapter
     participant APP as 原目标应用
 
     User->>UI: 发送到原窗口
     UI->>CMD: deliver_pending_output(id)
-    CMD->>DEL: deliver_pending(id, activate=true)
+    CMD->>ACT: DeliverPending(id)
+    ACT->>ACT: 与 Begin 串行，确认无活动会话
+    ACT->>PEND: reserve(id)
+    ACT->>DEL: validate + inject(activate=true)
     DEL->>WIN: 重新验证目标身份
     alt 目标仍有效
         WIN->>APP: 激活原窗口
         DEL->>APP: 按应用策略注入
-        DEL-->>UI: 成功并移除 Pending
+        ACT->>PEND: complete(id)
+        ACT-->>UI: 成功并移除 Pending
     else 目标失效或注入失败
-        DEL-->>UI: 结构化错误；Pending 保留
+        ACT->>PEND: release(id)
+        ACT-->>UI: 结构化错误；Pending 保留
     end
 ```
 
-“复制文本”是用户主动替换剪贴板，不自动恢复，也不自动写历史；“丢弃”只移除内存项。
+“复制文本”是用户主动替换剪贴板，不自动恢复，也不自动写历史；“丢弃”只移除内存项。复制、丢弃和重新交付共享同一租约，不能重复消费同一 Pending。
 
 ## 配置与凭据事务
 

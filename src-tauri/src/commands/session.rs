@@ -1,10 +1,25 @@
 use crate::command_error::{self, CommandError, CommandResult};
-use crate::delivery;
 use crate::overlay;
-use crate::services::AppServices;
+use crate::pending_output_service::{PendingOutputService, PendingOutputServiceError};
 use crate::state::VoiceStatePayload;
-use crate::{SessionMetrics, SharedRuntime};
+use crate::voice_controller::VoiceSessionHandle;
+use crate::SessionMetrics;
+use std::sync::Arc;
 use tauri::{State, WebviewWindow};
+
+fn map_pending_error(error: PendingOutputServiceError) -> CommandError {
+    match error {
+        PendingOutputServiceError::Full => {
+            CommandError::new("pending_output_full", "待处理结果已满")
+        }
+        PendingOutputServiceError::NotFound => {
+            CommandError::new("pending_output_not_found", "待处理结果不存在或已过期")
+        }
+        PendingOutputServiceError::Busy => {
+            CommandError::new("pending_output_busy", "待处理结果正在执行其他操作")
+        }
+    }
+}
 
 #[tauri::command]
 pub fn get_preinput_payload(
@@ -17,65 +32,41 @@ pub fn get_preinput_payload(
 #[tauri::command]
 pub fn get_voice_state(
     window: WebviewWindow,
-    runtime: State<'_, SharedRuntime>,
+    voice: State<'_, VoiceSessionHandle>,
 ) -> CommandResult<VoiceStatePayload> {
     command_error::require_window(&window, "main")?;
-    let runtime = runtime
-        .lock()
-        .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?;
-    Ok(runtime.voice_state_payload())
+    Ok(voice.status_snapshot().payload)
 }
 
 #[tauri::command]
 pub fn list_pending_outputs(
     window: WebviewWindow,
-    runtime: State<'_, SharedRuntime>,
+    pending: State<'_, Arc<PendingOutputService>>,
 ) -> CommandResult<Vec<crate::target::PendingOutput>> {
     command_error::require_window(&window, "main")?;
-    let mut runtime = runtime
-        .lock()
-        .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?;
-    Ok(runtime.sessions.pending_outputs.list())
+    Ok(pending.list())
 }
 
 #[tauri::command]
-pub fn get_session_metrics(
+pub async fn get_session_metrics(
     window: WebviewWindow,
-    runtime: State<'_, SharedRuntime>,
+    voice: State<'_, VoiceSessionHandle>,
 ) -> CommandResult<Option<SessionMetrics>> {
     command_error::require_window(&window, "main")?;
-    let runtime = runtime
-        .lock()
-        .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?;
-    if let Some(session) = &runtime.sessions.active {
-        let queue = session.audio_queue.snapshot();
-        return Ok(Some(SessionMetrics {
-            session_id: session.session_id,
-            audio_packets: queue.packets,
-            queue_high_watermark: queue.high_watermark,
-            overflow: queue.overflow,
-            recording_duration_ms: session.started_at.elapsed().as_millis() as u64,
-            cancel_reason: None,
-            final_state: "recording".to_string(),
-        }));
-    }
-    Ok(runtime.sessions.last_metrics.clone())
+    voice
+        .metrics()
+        .await
+        .map_err(|error| CommandError::new("voice_control_unavailable", format!("{error:?}")))
 }
 
 #[tauri::command]
 pub fn discard_pending_output(
     id: String,
     window: WebviewWindow,
-    runtime: State<'_, SharedRuntime>,
+    pending: State<'_, Arc<PendingOutputService>>,
 ) -> CommandResult<()> {
     command_error::require_window(&window, "main")?;
-    runtime
-        .lock()
-        .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?
-        .sessions
-        .pending_outputs
-        .remove(&id)
-        .ok_or_else(|| CommandError::new("pending_output_not_found", "待处理结果不存在或已过期"))?;
+    pending.discard(&id).map_err(map_pending_error)?;
     Ok(())
 }
 
@@ -83,28 +74,22 @@ pub fn discard_pending_output(
 pub fn copy_pending_output(
     id: String,
     window: WebviewWindow,
-    runtime: State<'_, SharedRuntime>,
+    pending: State<'_, Arc<PendingOutputService>>,
 ) -> CommandResult<()> {
     command_error::require_window(&window, "main")?;
-    let text = runtime
-        .lock()
-        .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?
-        .sessions
-        .pending_outputs
-        .get(&id)
-        .map(|record| record.dto.text)
-        .ok_or_else(|| CommandError::new("pending_output_not_found", "待处理结果不存在或已过期"))?;
-    let mut clipboard = arboard::Clipboard::new()
-        .map_err(|error| CommandError::new("clipboard_unavailable", error.to_string()))?;
-    clipboard
-        .set_text(text)
-        .map_err(|error| CommandError::new("clipboard_write_failed", error.to_string()))?;
-    runtime
-        .lock()
-        .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?
-        .sessions
-        .pending_outputs
-        .remove(&id);
+    let record = pending.reserve(&id).map_err(map_pending_error)?;
+    let mut clipboard = arboard::Clipboard::new().map_err(|error| {
+        pending.release(&id);
+        CommandError::new("clipboard_unavailable", error.to_string())
+    })?;
+    if let Err(error) = clipboard.set_text(record.dto.text) {
+        pending.release(&id);
+        return Err(CommandError::new(
+            "clipboard_write_failed",
+            error.to_string(),
+        ));
+    }
+    pending.complete(&id).map_err(map_pending_error)?;
     Ok(())
 }
 
@@ -112,9 +97,8 @@ pub fn copy_pending_output(
 pub async fn deliver_pending_output(
     id: String,
     window: WebviewWindow,
-    runtime: State<'_, SharedRuntime>,
-    services: State<'_, AppServices>,
+    voice: State<'_, VoiceSessionHandle>,
 ) -> CommandResult<()> {
     command_error::require_window(&window, "main")?;
-    delivery::deliver_pending(id, runtime.inner().clone(), services.inner().clone()).await
+    voice.deliver_pending(id).await
 }

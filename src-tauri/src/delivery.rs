@@ -1,11 +1,9 @@
-use crate::command_error::{CommandError, CommandResult};
-use crate::config::InjectionStrategy;
 use crate::history::AppContext;
 use crate::hotwords;
 use crate::inject::InjectionMethod;
 use crate::inject::TextInjector;
 use crate::services::AppServices;
-use crate::{target, SharedRuntime};
+use crate::target;
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -113,59 +111,4 @@ impl DeliveryService {
         }
         wrote_history
     }
-}
-
-pub async fn deliver_pending(
-    id: String,
-    runtime: SharedRuntime,
-    services: AppServices,
-) -> CommandResult<()> {
-    let config = services.config.snapshot();
-    let delivery = DeliveryService::new(services.clone());
-    let (record, injector, method) = {
-        let mut runtime = runtime
-            .lock()
-            .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?;
-        if runtime.sessions.current_id.is_some() {
-            return Err(CommandError::new(
-                "session_active",
-                "录音或识别进行中，暂时不能发送待处理结果",
-            ));
-        }
-        let record = runtime.sessions.pending_outputs.get(&id).ok_or_else(|| {
-            CommandError::new("pending_output_not_found", "待处理结果不存在或已过期")
-        })?;
-        let method = match config.injection_strategy_for(&record.target.executable_name) {
-            InjectionStrategy::Unicode => InjectionMethod::Unicode,
-            InjectionStrategy::ClipboardCompatibility => InjectionMethod::ClipboardCompatibility,
-        };
-        (record, runtime.injector.clone(), method)
-    };
-
-    delivery
-        .validate(&record.dto.text, &record.target, true)
-        .map_err(|error| CommandError::new(error.code, error.message))?;
-    delivery
-        .inject(record.dto.text.clone(), injector, method)
-        .await
-        .map_err(|error| CommandError::new(error.code, error.message))?;
-
-    runtime
-        .lock()
-        .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?
-        .sessions
-        .pending_outputs
-        .remove(&id);
-
-    delivery
-        .commit(
-            record.dto.text,
-            AppContext {
-                app_name: Some(record.target.executable_name),
-                app_title: record.target.window_title,
-            },
-            config,
-        )
-        .await;
-    Ok(())
 }

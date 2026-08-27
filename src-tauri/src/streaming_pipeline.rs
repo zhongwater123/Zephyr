@@ -4,8 +4,7 @@ use crate::overlay::{self, PreInputPayload, PreInputState};
 use crate::preview::TranscriptPreviewState;
 use crate::provider::TranscriptEvent;
 use crate::state::{VoiceState, VoiceStatePayload};
-use crate::voice_controller::{SessionEvent, VoiceSessionController};
-use crate::SharedRuntime;
+use crate::voice_controller::{VoiceSessionHandle, VoiceSessionObserver};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -22,7 +21,7 @@ fn emit_state(app: &AppHandle, payload: VoiceStatePayload) {
 
 pub fn spawn_transcript_event_relay(
     app: AppHandle,
-    runtime: SharedRuntime,
+    observer: VoiceSessionObserver,
     mut event_rx: watch::Receiver<Option<TranscriptEvent>>,
     preview_state: Arc<tokio::sync::Mutex<TranscriptPreviewState>>,
     session_id: u64,
@@ -39,24 +38,12 @@ pub fn spawn_transcript_event_relay(
                 continue;
             }
 
-            let (state, attempt_id, monotonic_us) = {
-                let runtime = runtime.lock().expect("voice runtime lock poisoned");
-                if runtime.sessions.current_id != Some(session_id) {
-                    continue;
-                }
-                let Some(active) = runtime.sessions.active.as_ref() else {
-                    continue;
-                };
-                (
-                    runtime.machine.state().clone(),
-                    active.attempt_id.clone(),
-                    active
-                        .started_at
-                        .elapsed()
-                        .as_micros()
-                        .min(u64::MAX as u128) as u64,
-                )
+            let Some(observation) = observer.observe(session_id) else {
+                continue;
             };
+            let state = observation.state;
+            let attempt_id = observation.attempt_id;
+            let monotonic_us = observation.monotonic_us;
 
             if !matches!(state, VoiceState::Recording | VoiceState::Transcribing) {
                 continue;
@@ -107,12 +94,13 @@ pub fn spawn_transcript_event_relay(
 
 pub fn spawn_audio_overflow_watcher(
     app: AppHandle,
-    controller: VoiceSessionController,
+    controller: VoiceSessionHandle,
     monitor: Arc<crate::audio::AudioQueueMonitor>,
     session_id: u64,
 ) {
     tauri::async_runtime::spawn(async move {
         monitor.overflowed().await;
-        controller.submit(&app, SessionEvent::AudioOverflow { session_id });
+        let _ = app;
+        controller.report_audio_overflow(session_id);
     });
 }

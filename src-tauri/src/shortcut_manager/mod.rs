@@ -16,29 +16,23 @@ use coordinator::EditCoordinator;
 use ports::{ShortcutObserverPort, ShortcutRuntimePort};
 
 use crate::services::AppServices;
-use crate::voice_controller::{SessionEvent, VoiceSessionController};
+use crate::voice_controller::VoiceSessionHandle;
+use crate::voice_trigger::{ActivationId, VoiceActivation, VoiceCancelReason, VoiceTriggerPort};
 use crate::windows_keyboard::{KeyboardEngineEvent, WindowsKeyboardEngine};
-use crate::SharedRuntime;
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use tauri::{AppHandle, Emitter};
 
 const INTERRUPTED_EVENT: &str = "shortcut_edit_interrupted";
 
 struct TauriShortcutObserver {
     app: AppHandle,
-    runtime: SharedRuntime,
+    voice: VoiceSessionHandle,
 }
 
 impl ShortcutObserverPort for TauriShortcutObserver {
     fn publish_runtime_error(&self, message: Option<String>) {
-        let payload = if let Ok(mut runtime) = self.runtime.lock() {
-            runtime.shortcut_registration_error = message;
-            Some(runtime.voice_state_payload())
-        } else {
-            None
-        };
-        if let Some(payload) = payload {
-            let _ = self.app.emit("voice_state_changed", payload);
+        if let Err(error) = self.voice.set_shortcut_health(message) {
+            log::warn!("failed to publish shortcut health: {error:?}");
         }
     }
 
@@ -50,18 +44,17 @@ impl ShortcutObserverPort for TauriShortcutObserver {
 }
 
 pub struct ShortcutManager {
-    app: AppHandle,
-    controller: VoiceSessionController,
+    trigger: Arc<dyn VoiceTriggerPort>,
+    active_activation: Mutex<Option<ActivationId>>,
     coordinator: Arc<EditCoordinator>,
 }
 
 impl ShortcutManager {
     pub fn initialize(
         app: &mut tauri::App,
-        runtime: SharedRuntime,
         services: AppServices,
-    ) -> tauri::Result<(VoiceSessionController, Arc<Self>)> {
-        let controller = VoiceSessionController::new(runtime.clone(), services.clone());
+        voice: VoiceSessionHandle,
+    ) -> tauri::Result<Arc<Self>> {
         let config = services.config.snapshot();
         let binding = config.shortcut_binding.clone();
         let weak_slot: Arc<OnceLock<Weak<ShortcutManager>>> = Arc::new(OnceLock::new());
@@ -84,7 +77,7 @@ impl ShortcutManager {
             };
         let observer: Arc<dyn ShortcutObserverPort> = Arc::new(TauriShortcutObserver {
             app: app.handle().clone(),
-            runtime,
+            voice: voice.clone(),
         });
         let coordinator = Arc::new(EditCoordinator::new(
             services.config.clone(),
@@ -93,13 +86,13 @@ impl ShortcutManager {
             observer,
         ));
         let manager = Arc::new(Self {
-            app: app.handle().clone(),
-            controller: controller.clone(),
+            trigger: Arc::new(voice),
+            active_activation: Mutex::new(None),
             coordinator,
         });
         let _ = weak_slot.set(Arc::downgrade(&manager));
         manager.coordinator.initialize_runtime();
-        Ok((controller, manager))
+        Ok(manager)
     }
 
     pub fn begin_edit(
@@ -148,12 +141,41 @@ impl ShortcutManager {
     fn handle_engine_event(&self, event: KeyboardEngineEvent) {
         match event {
             KeyboardEngineEvent::Pressed => {
-                self.controller.submit(&self.app, SessionEvent::Pressed)
+                let mut active = self
+                    .active_activation
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if active.is_some() {
+                    return;
+                }
+                let activation = VoiceActivation::shortcut();
+                if self.trigger.begin(activation.clone()).is_ok() {
+                    *active = Some(activation.id);
+                }
             }
             KeyboardEngineEvent::Released => {
-                self.controller.submit(&self.app, SessionEvent::Released)
+                let activation = self
+                    .active_activation
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take();
+                if let Some(activation_id) = activation {
+                    let _ = self.trigger.finish(activation_id);
+                }
             }
-            KeyboardEngineEvent::Interrupted => self.coordinator.handle_hook_interrupted(),
+            KeyboardEngineEvent::Interrupted => {
+                let activation = self
+                    .active_activation
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .take();
+                if let Some(activation_id) = activation {
+                    let _ = self
+                        .trigger
+                        .cancel(activation_id, VoiceCancelReason::TriggerInterrupted);
+                }
+                self.coordinator.handle_hook_interrupted();
+            }
         }
     }
 }

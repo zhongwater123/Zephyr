@@ -32,10 +32,18 @@ Dossier 以 `---` 包围的 JSON 对象开头。JSON 同时是 YAML 的合法子
 ```markdown
 ---
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "featureId": "FEAT-EXAMPLE",
   "specStatus": "draft",
   "implementationStatus": "not_started",
+  "implementationReview": {
+    "status": "unreviewed",
+    "sourceRevision": "abcdef0",
+    "worktreeState": "clean",
+    "reviewedAt": "2026-08-27",
+    "summary": "尚未开始实现复核",
+    "knownDeviations": []
+  },
   "validationStatus": "unverified",
   "components": ["frontend.features"],
   "decisions": [],
@@ -52,14 +60,17 @@ Dossier 以 `---` 包围的 JSON 对象开头。JSON 同时是 YAML 的合法子
 
 - `specStatus`: `draft | confirmed | superseded`
 - `implementationStatus`: `not_started | in_progress | implemented | deprecated | superseded`
+- `implementationReview.status`: `unreviewed | partial | conformant | deviating`
 - `validationStatus`: `unverified | partial | validated | invalidated`
 - 单条证据 `freshness`: `current | potentially_stale | stale | revalidated`
 
 `validated` 只允许用于所有关键验收均有当前目标环境证据的功能。单元测试通过但缺少真实环境验证时使用 `partial`。
 
+`implemented` 只表示当前实现已经过对应 revision 的源码符合性复核且没有登记中的实现偏差；它不表示目标环境已经验证。发现 Actor 绕行、部分提交、未实现契约或其他与 Accepted ADR/验收不一致的行为时，必须使用 `in_progress` 并在 `implementationReview.knownDeviations` 中列出。Accepted ADR 只表示决策已接受，不自动升级实现状态。
+
 `confirmed` 不是作者自我声明。它必须包含 `confirmation.confirmedBy`、`confirmedAt` 和可追溯的 `sourceRef`；尚无确认来源时保持 `draft`。
 
-每个验收切片用 `requiredEvidence` 声明完成它真正需要的证据能力，例如 `automated`、`windows_webview2`、`runtime_hook`、`fault_injection`、`restart_persistence` 或 `external_app_interop`。证据用 `capabilities` 声明实际覆盖能力，并记录 `scope` 与 `limitations`。`method=automated` 本身不能证明真实 WebView2 或 Windows Hook。
+每个验收切片用 `requiredEvidence` 声明完成它真正需要的证据能力，例如 `automated`、`windows_webview2`、`runtime_hook`、`fault_injection`、`restart_persistence` 或 `external_app_interop`。证据用 `capabilities` 声明实际覆盖能力，并通过 `acceptanceCoverage` 对每个关联验收单独标记 `full` 或 `partial`；只有 `result=pass`、覆盖为 `full` 且新鲜度有效的能力才能完成验收。自动化证据还必须提供可追踪的 `testRefs`。`method=automated` 本身不能证明真实 WebView2 或 Windows Hook。
 
 `validationStatus` 是作者声明；检查器还会根据证据 revision 之后传播到验收组件的源码变化计算 `effectiveFreshness`。声明为 `validated` 的功能若出现未处理的 `potentially_stale` 切片，结构检查和 CI 都会失败。
 

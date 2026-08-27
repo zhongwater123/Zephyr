@@ -1,65 +1,55 @@
 use crate::config::{self, AppConfig, CredentialUpdates, InjectionStrategy};
-use crate::services::{ConfigService, ConfigServiceError, ProviderService};
+use crate::services::{ConfigService, ConfigServiceError};
 use crate::shortcut_manager::ShortcutManager;
-use crate::voice_controller::VoiceSessionController;
-use crate::SharedRuntime;
+use crate::voice_controller::VoiceSessionHandle;
 use std::sync::Arc;
-use tauri::{AppHandle, Emitter};
 
 #[derive(Debug)]
-pub enum VoiceInputServiceError {
+pub enum VoiceControlServiceError {
     Config(ConfigServiceError),
     NativeConfirmationRequired,
-    RuntimeLock(String),
+    VoiceControl(String),
     ShortcutState(String),
-    EventEmit(String),
 }
 
-impl From<ConfigServiceError> for VoiceInputServiceError {
+impl From<ConfigServiceError> for VoiceControlServiceError {
     fn from(error: ConfigServiceError) -> Self {
         Self::Config(error)
     }
 }
 
 #[derive(Clone)]
-pub struct VoiceInputService {
-    runtime: SharedRuntime,
+pub struct VoiceControlService {
     config: Arc<ConfigService>,
-    provider: Arc<ProviderService>,
-    controller: VoiceSessionController,
+    voice: VoiceSessionHandle,
     shortcut: Arc<ShortcutManager>,
 }
 
-impl VoiceInputService {
+impl VoiceControlService {
     pub fn new(
-        runtime: SharedRuntime,
         config: Arc<ConfigService>,
-        provider: Arc<ProviderService>,
-        controller: VoiceSessionController,
+        voice: VoiceSessionHandle,
         shortcut: Arc<ShortcutManager>,
     ) -> Self {
         Self {
-            runtime,
             config,
-            provider,
-            controller,
+            voice,
             shortcut,
         }
     }
 
     pub fn save_config(
         &self,
-        app: &AppHandle,
         mut next: AppConfig,
         expected_revision: u64,
         hotword_agent_api_key: Option<String>,
-    ) -> Result<AppConfig, VoiceInputServiceError> {
+    ) -> Result<AppConfig, VoiceControlServiceError> {
         let current = self.config.snapshot();
         if current.revision != expected_revision {
             return Err(ConfigServiceError::Conflict(Box::new(current)).into());
         }
         if introduces_clipboard_compatibility(&current, &next) {
-            return Err(VoiceInputServiceError::NativeConfirmationRequired);
+            return Err(VoiceControlServiceError::NativeConfirmationRequired);
         }
 
         next.schema_version = config::CURRENT_SCHEMA_VERSION;
@@ -73,33 +63,17 @@ impl VoiceInputService {
         };
         let committed = self.config.commit(expected_revision, next, &updates)?;
 
-        if !committed.enabled {
-            self.controller.request_cancel(app);
-        }
-        {
-            let mut runtime = self
-                .runtime
-                .lock()
-                .map_err(|error| VoiceInputServiceError::RuntimeLock(error.to_string()))?;
-            if runtime.machine.is_enabled() != committed.enabled {
-                runtime.machine.set_enabled(committed.enabled);
-            }
-            runtime.provider = self.provider.build(&committed);
-        }
         if current.enabled != committed.enabled {
-            self.shortcut
-                .set_enabled(committed.enabled)
-                .map_err(VoiceInputServiceError::ShortcutState)?;
+            self.apply_enabled(committed.enabled)?;
         }
         Ok(committed)
     }
 
     pub fn set_enabled(
         &self,
-        app: &AppHandle,
         enabled: bool,
         expected_revision: u64,
-    ) -> Result<u64, VoiceInputServiceError> {
+    ) -> Result<u64, VoiceControlServiceError> {
         let mut next = self.config.snapshot();
         if next.revision != expected_revision {
             return Err(ConfigServiceError::Conflict(Box::new(next)).into());
@@ -109,26 +83,22 @@ impl VoiceInputService {
         let revision = next.revision;
         self.config.commit_config(expected_revision, next)?;
 
-        if !enabled {
-            self.controller.request_cancel(app);
-        }
-        {
-            let mut runtime = self
-                .runtime
-                .lock()
-                .map_err(|error| VoiceInputServiceError::RuntimeLock(error.to_string()))?;
-            runtime.machine.set_enabled(enabled);
-        }
-        let shortcut_result = self.shortcut.set_enabled(enabled);
-        let payload = self
-            .runtime
-            .lock()
-            .map_err(|error| VoiceInputServiceError::RuntimeLock(error.to_string()))?
-            .voice_state_payload();
-        app.emit("voice_state_changed", payload)
-            .map_err(|error| VoiceInputServiceError::EventEmit(error.to_string()))?;
-        shortcut_result.map_err(VoiceInputServiceError::ShortcutState)?;
+        self.apply_enabled(enabled)?;
         Ok(revision)
+    }
+
+    pub fn toggle_from_current(&self) -> Result<u64, VoiceControlServiceError> {
+        let current = self.config.snapshot();
+        self.set_enabled(!current.enabled, current.revision)
+    }
+
+    fn apply_enabled(&self, enabled: bool) -> Result<(), VoiceControlServiceError> {
+        self.voice
+            .set_availability(enabled)
+            .map_err(|error| VoiceControlServiceError::VoiceControl(format!("{error:?}")))?;
+        self.shortcut
+            .set_enabled(enabled)
+            .map_err(VoiceControlServiceError::ShortcutState)
     }
 }
 

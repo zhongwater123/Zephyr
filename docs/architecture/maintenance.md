@@ -42,7 +42,7 @@ npm run architecture:impact -- --base origin/main
 - 拟议 C4 或 Runtime View 进入 `docs/architecture/proposals/`，不得进入当前代码地图。
 - 跨边界、长期或难以撤销的决定先创建 Proposed ADR。
 - Open Assumption 可以支持决策，但必须写明风险与可观察的重新评估条件。
-- 技术探针和薄实现验证后，方案才能转为 Accepted；实现与源码核对后才更新 Current C4。
+- 技术探针和薄实现验证后，方案才能转为 Accepted；Accepted 只表示决策已接受，不表示已经实现。实现与源码核对、登记已知偏差后才更新 Current C4。
 
 ### 3. 实现中：按变更类型复核
 
@@ -66,8 +66,9 @@ npm run architecture:check
 
 - 当前架构必需文件、Dossier、Proposal、Postmortem、非规范性 Implementation Guide 和兼容入口；
 - 代码地图 Schema、组件覆盖、路径、依赖和 marker；
-- Dossier 元数据、确认来源、组件、ADR、验收切片、requiredEvidence、证据能力和影响评估引用；
-- Current/Proposed 状态隔离，以及 Postmortem / Implementation Guide 的非规范性声明；
+- Dossier 元数据、实现符合性 revision、确认来源、组件、ADR、验收切片、逐项覆盖、testRefs、证据能力和影响评估引用；
+- Current 视图的 revision、工作树、复核状态和已知偏差，Current/Proposed 状态隔离，以及 Postmortem / Implementation Guide 的非规范性声明；
+- `implemented` 功能的可配置源码边界门禁，以及超大组件的非阻断内聚复核提醒；
 - ADR 编号、状态、索引和新元数据；
 - Rust 架构事实、Markdown 链接、围栏和 Mermaid 语法。
 
@@ -77,14 +78,16 @@ npm run architecture:check
 
 - 只有跨组件、高风险或依赖目标环境验证的功能创建 Dossier。
 - 规格状态、实现状态和验证状态独立维护。
+- 实现状态由 `implementationReview` 绑定源码 revision、工作树和已知偏差；存在未关闭偏差时不得声明 `implemented`。
 - `confirmed` 必须记录确认人、日期和来源，不允许作者自行升级。
 - `validated` 要求所有关键验收的 requiredEvidence 都有成功、带版本/环境且有效新鲜的证据能力。
 - 普通开发证据记录 revision、worktree、变更路径、环境、日期、scope 和 limitations；发布级证据再记录 build ID 与 artifact SHA-256。
+- 自动化证据必须提供 `testRefs`，并用 `acceptanceCoverage` 逐验收声明完整或部分覆盖；不得用一条笼统的全量测试记录替代不同验收语义。
 - 相关源码变化产生 `potentially_stale` 的有效状态；可以重新验证，或提交绑定 revision、切片和理由的 `impactAssessment`。
 
 ## Current 与 Proposed
 
-- `c4-*.md` 和 `runtime-views.md` 是 Current 文档，必须声明 `viewStatus=current`。
+- `c4-*.md`、`runtime-views.md` 和 `arc42-lean.md` 是 Current 文档，必须声明 `viewStatus=current`，并记录 `sourceRevision`、`worktreeState`、`reviewStatus`、`reviewedAt` 和 `knownDeviations`；脏工作树还必须记录 `changedPaths`。
 - Proposal 必须声明 owner、创建日期、复核条件和关联 Feature。
 - `code-map.json` 只连接当前源码、Current 文档和 Accepted/相关 ADR，不登记 Proposal。
 - 如果某个实现细节改变而组件责任和关系不变，该细节通常不属于 C4。

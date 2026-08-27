@@ -6,14 +6,20 @@ use crate::incident::model::{
 };
 use crate::incident::model::{Stage as IncidentStage, StageOutcome as IncidentStageOutcome};
 use crate::inject::InjectionMethod;
+use crate::inject::{TextInjector, UnicodeTextInjector};
 use crate::overlay::{self, PreInputPayload, PreInputState};
+use crate::pending_output_service::{PendingOutputService, PendingOutputServiceError};
 use crate::preview::TranscriptPreviewState;
 use crate::provider::ProviderError;
 use crate::services::AppServices;
 use crate::state::{ReleaseDecision, VoiceState, VoiceStatePayload};
 use crate::target;
-use crate::{history, hotwords, ActiveSession, SessionCancellation, SharedRuntime};
-use std::sync::Arc;
+use crate::voice_trigger::{
+    ActivationId, VoiceActivation, VoiceCancelReason, VoiceTriggerError, VoiceTriggerPort,
+};
+use crate::{history, hotwords, ActiveSession, SessionCancellation, SessionMetrics};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Instant as StdInstant;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{mpsc, oneshot, watch};
@@ -159,134 +165,529 @@ const AUDIO_QUEUE_CAPACITY: usize = 32;
 const MAX_RECORDING_SECS: u64 = 120;
 const CONTROL_QUEUE_CAPACITY: usize = 16;
 
+type SharedRuntime = Arc<Mutex<VoiceRuntime>>;
+
+struct VoiceRuntime {
+    machine: crate::state::AppStateMachine,
+    recorder: crate::audio::Recorder,
+    injector: Arc<dyn TextInjector>,
+    sessions: crate::session::SessionCoordinator,
+    active_activation: Option<VoiceActivation>,
+    shortcut_registration_error: Option<String>,
+}
+
+impl VoiceRuntime {
+    fn new(enabled: bool) -> Self {
+        let mut machine = crate::state::AppStateMachine::new();
+        machine.set_enabled(enabled);
+        Self {
+            machine,
+            recorder: crate::audio::Recorder::new(),
+            injector: Arc::new(UnicodeTextInjector),
+            sessions: crate::session::SessionCoordinator::default(),
+            active_activation: None,
+            shortcut_registration_error: None,
+        }
+    }
+
+    fn voice_state_payload(&self) -> VoiceStatePayload {
+        let state = self.machine.state().clone();
+        let default_message = match state {
+            VoiceState::Idle => "准备就绪",
+            VoiceState::Recording => "正在听",
+            VoiceState::Transcribing => "识别中",
+            VoiceState::Pasting => "正在输入",
+            VoiceState::Disabled => "已暂停",
+            VoiceState::Error => "语音输入发生错误",
+        };
+        VoiceStatePayload {
+            state: state.clone(),
+            message: if state == VoiceState::Idle {
+                self.shortcut_registration_error
+                    .clone()
+                    .unwrap_or_else(|| default_message.to_string())
+            } else {
+                default_message.to_string()
+            },
+            elapsed_ms: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct VoiceStatusSnapshot {
+    pub payload: VoiceStatePayload,
+    pub session_active: bool,
+    pub desired_enabled: bool,
+    pub shortcut_error: Option<String>,
+}
+
 #[derive(Clone)]
-pub enum SessionEvent {
-    Pressed,
-    Released,
+pub(crate) struct VoiceSessionObserver {
+    runtime: SharedRuntime,
+}
+
+#[derive(Clone)]
+pub(crate) struct SessionObservation {
+    pub state: VoiceState,
+    pub attempt_id: String,
+    pub monotonic_us: u64,
+}
+
+impl VoiceSessionObserver {
+    pub fn observe(&self, session_id: u64) -> Option<SessionObservation> {
+        let runtime = self.runtime.lock().ok()?;
+        if runtime.sessions.current_id != Some(session_id) {
+            return None;
+        }
+        let active = runtime.sessions.active.as_ref()?;
+        Some(SessionObservation {
+            state: runtime.machine.state().clone(),
+            attempt_id: active.attempt_id.clone(),
+            monotonic_us: active
+                .started_at
+                .elapsed()
+                .as_micros()
+                .min(u64::MAX as u128) as u64,
+        })
+    }
+}
+
+impl VoiceStatusSnapshot {
+    fn from_runtime(runtime: &VoiceRuntime) -> Self {
+        Self {
+            payload: runtime.voice_state_payload(),
+            session_active: runtime.sessions.current_id.is_some(),
+            desired_enabled: runtime.machine.is_enabled(),
+            shortcut_error: runtime.shortcut_registration_error.clone(),
+        }
+    }
+}
+
+pub enum VoiceCommand {
+    Begin(VoiceActivation),
+    Finish(ActivationId),
+    Cancel {
+        activation_id: ActivationId,
+        reason: VoiceCancelReason,
+    },
+    SetAvailability(bool),
+    DeliverPending {
+        id: String,
+        response: oneshot::Sender<crate::command_error::CommandResult<()>>,
+    },
+    QueryMetrics {
+        response: oneshot::Sender<Option<SessionMetrics>>,
+    },
+    SetShortcutHealth(Option<String>),
+}
+
+enum VoiceInternalEvent {
     DeadlineReached {
         session_id: u64,
     },
     AudioOverflow {
         session_id: u64,
     },
-    CancelRequested,
     ProviderFinished {
         session_id: u64,
         result: Result<(), ProviderError>,
     },
 }
 
-struct ControlMessage {
-    app: AppHandle,
-    event: SessionEvent,
+enum ControlMessage {
+    Command(VoiceCommand),
+    Internal(VoiceInternalEvent),
 }
 
 #[derive(Clone)]
-pub struct VoiceSessionController {
+pub struct VoiceSessionHandle {
     tx: mpsc::Sender<ControlMessage>,
-    runtime: SharedRuntime,
-    incident_sink: Arc<dyn crate::incident::IncidentSink>,
+    status_tx: watch::Sender<VoiceStatusSnapshot>,
+    status_rx: watch::Receiver<VoiceStatusSnapshot>,
+    fail_closed: Arc<AtomicBool>,
+    fail_closed_notify: Arc<tokio::sync::Notify>,
 }
 
-impl VoiceSessionController {
-    pub fn new(runtime: SharedRuntime, services: AppServices) -> Self {
-        let (tx, mut rx) = mpsc::channel::<ControlMessage>(CONTROL_QUEUE_CAPACITY);
-        let controller = Self {
+struct VoiceSessionActor {
+    app: AppHandle,
+    runtime: SharedRuntime,
+    services: AppServices,
+    pending: Arc<PendingOutputService>,
+    rx: mpsc::Receiver<ControlMessage>,
+    handle: VoiceSessionHandle,
+}
+
+impl VoiceSessionHandle {
+    pub fn spawn(
+        app: AppHandle,
+        enabled: bool,
+        services: AppServices,
+        pending: Arc<PendingOutputService>,
+    ) -> Self {
+        let runtime = Arc::new(Mutex::new(VoiceRuntime::new(enabled)));
+        let (tx, rx) = mpsc::channel::<ControlMessage>(CONTROL_QUEUE_CAPACITY);
+        let initial_status = VoiceStatusSnapshot::from_runtime(
+            &runtime.lock().expect("voice runtime lock poisoned"),
+        );
+        let (status_tx, status_rx) = watch::channel(initial_status);
+        let fail_closed = Arc::new(AtomicBool::new(false));
+        let fail_closed_notify = Arc::new(tokio::sync::Notify::new());
+        let handle = Self {
             tx,
-            runtime: runtime.clone(),
-            incident_sink: services.incidents.sink(),
+            status_tx,
+            status_rx,
+            fail_closed,
+            fail_closed_notify,
         };
-        let worker_controller = controller.clone();
+        let actor = VoiceSessionActor {
+            app,
+            runtime,
+            services,
+            pending,
+            rx,
+            handle: handle.clone(),
+        };
         tauri::async_runtime::spawn(async move {
-            while let Some(message) = rx.recv().await {
-                match message.event {
-                    SessionEvent::Pressed => handle_pressed(
-                        &message.app,
-                        runtime.clone(),
-                        services.clone(),
-                        worker_controller.clone(),
-                    ),
-                    SessionEvent::Released => {
-                        handle_released(&message.app, runtime.clone(), services.clone())
-                    }
-                    SessionEvent::DeadlineReached { session_id } => {
-                        let current = runtime
-                            .lock()
-                            .map(|runtime| runtime.sessions.current_id)
-                            .unwrap_or(None);
-                        if current == Some(session_id) {
-                            log::info!(
-                                "voice session reached recording deadline: session_id={}, duration_ms={}",
-                                session_id,
-                                MAX_RECORDING_SECS * 1000
-                            );
-                            handle_released(&message.app, runtime.clone(), services.clone());
-                        }
-                    }
-                    SessionEvent::AudioOverflow { session_id } => handle_audio_overflow(
-                        &message.app,
-                        runtime.clone(),
-                        services.clone(),
-                        session_id,
-                    ),
-                    SessionEvent::CancelRequested => {
-                        let _ = cancel_current_session(
-                            &message.app,
-                            runtime.clone(),
-                            worker_controller.incident_sink.clone(),
-                        );
-                    }
-                    SessionEvent::ProviderFinished { session_id, result } => match result {
-                        Ok(()) => log::debug!("provider finished for session_id={session_id}"),
-                        Err(error) => handle_provider_failure(
-                            &message.app,
-                            runtime.clone(),
-                            session_id,
-                            error,
-                            services.clone(),
-                        ),
-                    },
-                }
-            }
+            actor.run().await;
         });
-        controller
+        handle
     }
 
-    pub fn submit(&self, app: &AppHandle, event: SessionEvent) {
-        if self
-            .tx
-            .try_send(ControlMessage {
-                app: app.clone(),
-                event,
-            })
-            .is_err()
-        {
-            let _ = cancel_current_session(app, self.runtime.clone(), self.incident_sink.clone());
-            let payload = self
-                .runtime
-                .lock()
-                .map(|mut runtime| {
-                    runtime
-                        .machine
-                        .fail("会话控制队列不可用，录音已安全取消".to_string())
-                })
-                .ok();
-            if let Some(payload) = payload {
-                emit_state(app, payload);
+    fn submit(&self, message: ControlMessage) -> Result<(), VoiceTriggerError> {
+        match self.tx.try_send(message) {
+            Ok(()) => Ok(()),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                self.fail_closed.store(true, Ordering::Release);
+                self.fail_closed_notify.notify_one();
+                Err(VoiceTriggerError::Busy)
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                Err(VoiceTriggerError::ControlPlaneUnavailable)
             }
         }
     }
 
-    pub fn request_cancel(&self, app: &AppHandle) {
-        self.submit(app, SessionEvent::CancelRequested);
+    pub fn status_snapshot(&self) -> VoiceStatusSnapshot {
+        self.status_rx.borrow().clone()
     }
+
+    pub(crate) fn set_availability(&self, enabled: bool) -> Result<(), VoiceTriggerError> {
+        self.submit(ControlMessage::Command(VoiceCommand::SetAvailability(
+            enabled,
+        )))
+    }
+
+    pub(crate) fn set_shortcut_health(
+        &self,
+        error: Option<String>,
+    ) -> Result<(), VoiceTriggerError> {
+        self.submit(ControlMessage::Command(VoiceCommand::SetShortcutHealth(
+            error,
+        )))
+    }
+
+    pub async fn metrics(&self) -> Result<Option<SessionMetrics>, VoiceTriggerError> {
+        let (response, result) = oneshot::channel();
+        self.submit(ControlMessage::Command(VoiceCommand::QueryMetrics {
+            response,
+        }))?;
+        result
+            .await
+            .map_err(|_| VoiceTriggerError::ControlPlaneUnavailable)
+    }
+
+    pub async fn deliver_pending(&self, id: String) -> crate::command_error::CommandResult<()> {
+        let (response, result) = oneshot::channel();
+        self.submit(ControlMessage::Command(VoiceCommand::DeliverPending {
+            id,
+            response,
+        }))
+        .map_err(map_trigger_error)?;
+        result.await.map_err(|_| {
+            crate::command_error::CommandError::new("voice_control_unavailable", "语音控制面不可用")
+        })?
+    }
+
+    pub(crate) fn report_audio_overflow(&self, session_id: u64) {
+        let _ = self.submit(ControlMessage::Internal(
+            VoiceInternalEvent::AudioOverflow { session_id },
+        ));
+    }
+
+    fn report_provider_finished(&self, session_id: u64, result: Result<(), ProviderError>) {
+        let _ = self.submit(ControlMessage::Internal(
+            VoiceInternalEvent::ProviderFinished { session_id, result },
+        ));
+    }
+
+    fn report_deadline(&self, session_id: u64) {
+        let _ = self.submit(ControlMessage::Internal(
+            VoiceInternalEvent::DeadlineReached { session_id },
+        ));
+    }
+
+    fn publish(&self, runtime: &VoiceRuntime) {
+        self.status_tx
+            .send_replace(VoiceStatusSnapshot::from_runtime(runtime));
+    }
+
+    fn publish_payload(&self, payload: VoiceStatePayload) {
+        self.status_tx.send_if_modified(|snapshot| {
+            if snapshot.payload == payload {
+                return false;
+            }
+            snapshot.session_active = matches!(
+                payload.state,
+                VoiceState::Recording | VoiceState::Transcribing | VoiceState::Pasting
+            );
+            snapshot.payload = payload;
+            true
+        });
+    }
+}
+
+impl VoiceTriggerPort for VoiceSessionHandle {
+    fn begin(&self, activation: VoiceActivation) -> Result<(), VoiceTriggerError> {
+        self.submit(ControlMessage::Command(VoiceCommand::Begin(activation)))
+    }
+
+    fn finish(&self, activation_id: ActivationId) -> Result<(), VoiceTriggerError> {
+        self.submit(ControlMessage::Command(VoiceCommand::Finish(activation_id)))
+    }
+
+    fn cancel(
+        &self,
+        activation_id: ActivationId,
+        reason: VoiceCancelReason,
+    ) -> Result<(), VoiceTriggerError> {
+        self.submit(ControlMessage::Command(VoiceCommand::Cancel {
+            activation_id,
+            reason,
+        }))
+    }
+}
+
+fn map_trigger_error(error: VoiceTriggerError) -> crate::command_error::CommandError {
+    match error {
+        VoiceTriggerError::Busy => crate::command_error::CommandError::new(
+            "voice_control_busy",
+            "语音控制面繁忙，当前操作已安全拒绝",
+        ),
+        VoiceTriggerError::ControlPlaneUnavailable => {
+            crate::command_error::CommandError::new("voice_control_unavailable", "语音控制面不可用")
+        }
+    }
+}
+
+impl VoiceSessionActor {
+    async fn run(mut self) {
+        loop {
+            tokio::select! {
+                biased;
+                _ = self.handle.fail_closed_notify.notified() => {
+                    if self.handle.fail_closed.swap(false, Ordering::AcqRel) {
+                        let _ = cancel_current_session(
+                            &self.app,
+                            self.runtime.clone(),
+                            self.services.incidents.sink(),
+                        );
+                        let payload = {
+                            let mut runtime = self.runtime.lock().expect("voice runtime lock poisoned");
+                            runtime.machine.fail("会话控制队列不可用，录音已安全取消")
+                        };
+                        emit_state(&self.app, payload);
+                        self.publish_status();
+                    }
+                }
+                message = self.rx.recv() => {
+                    let Some(message) = message else {
+                        let _ = cancel_current_session(
+                            &self.app,
+                            self.runtime.clone(),
+                            self.services.incidents.sink(),
+                        );
+                        break;
+                    };
+                    match message {
+                        ControlMessage::Command(command) => self.handle_command(command).await,
+                        ControlMessage::Internal(event) => self.handle_internal(event),
+                    }
+                    self.publish_status();
+                }
+            }
+        }
+    }
+
+    async fn handle_command(&self, command: VoiceCommand) {
+        match command {
+            VoiceCommand::Begin(activation) => {
+                let can_begin = {
+                    let runtime = self.runtime.lock().expect("voice runtime lock poisoned");
+                    runtime.sessions.current_id.is_none() && runtime.machine.is_enabled()
+                };
+                if !can_begin {
+                    return;
+                }
+                handle_pressed(
+                    &self.app,
+                    self.runtime.clone(),
+                    self.services.clone(),
+                    self.pending.clone(),
+                    self.handle.clone(),
+                );
+                let mut runtime = self.runtime.lock().expect("voice runtime lock poisoned");
+                if runtime.sessions.current_id.is_some() {
+                    runtime.active_activation = Some(activation);
+                }
+            }
+            VoiceCommand::Finish(activation_id) => {
+                if self.owns_activation(&activation_id) {
+                    handle_released(
+                        &self.app,
+                        self.runtime.clone(),
+                        self.services.clone(),
+                        self.pending.clone(),
+                    );
+                }
+            }
+            VoiceCommand::Cancel {
+                activation_id,
+                reason,
+            } => {
+                if self.owns_activation(&activation_id) {
+                    log::info!(
+                        "voice activation cancelled: activation_id={}, reason={reason:?}",
+                        activation_id
+                    );
+                    let _ = cancel_current_session(
+                        &self.app,
+                        self.runtime.clone(),
+                        self.services.incidents.sink(),
+                    );
+                }
+            }
+            VoiceCommand::SetAvailability(enabled) => {
+                if !enabled {
+                    let _ = cancel_current_session(
+                        &self.app,
+                        self.runtime.clone(),
+                        self.services.incidents.sink(),
+                    );
+                }
+                let payload = {
+                    let mut runtime = self.runtime.lock().expect("voice runtime lock poisoned");
+                    runtime.machine.set_enabled(enabled)
+                };
+                emit_state(&self.app, payload);
+            }
+            VoiceCommand::DeliverPending { id, response } => {
+                let result = deliver_pending(
+                    &self.app,
+                    id,
+                    self.runtime.clone(),
+                    self.pending.clone(),
+                    self.services.clone(),
+                )
+                .await;
+                let _ = response.send(result);
+            }
+            VoiceCommand::QueryMetrics { response } => {
+                let _ = response.send(self.metrics_snapshot());
+            }
+            VoiceCommand::SetShortcutHealth(error) => {
+                let payload = {
+                    let mut runtime = self.runtime.lock().expect("voice runtime lock poisoned");
+                    runtime.shortcut_registration_error = error;
+                    runtime.voice_state_payload()
+                };
+                emit_state(&self.app, payload);
+            }
+        }
+    }
+
+    fn handle_internal(&self, event: VoiceInternalEvent) {
+        match event {
+            VoiceInternalEvent::DeadlineReached { session_id } => {
+                let current = self
+                    .runtime
+                    .lock()
+                    .map(|runtime| runtime.sessions.current_id)
+                    .unwrap_or(None);
+                if current == Some(session_id) {
+                    log::info!(
+                        "voice session reached recording deadline: session_id={}, duration_ms={}",
+                        session_id,
+                        MAX_RECORDING_SECS * 1000
+                    );
+                    handle_released(
+                        &self.app,
+                        self.runtime.clone(),
+                        self.services.clone(),
+                        self.pending.clone(),
+                    );
+                }
+            }
+            VoiceInternalEvent::AudioOverflow { session_id } => handle_audio_overflow(
+                &self.app,
+                self.runtime.clone(),
+                self.services.clone(),
+                session_id,
+            ),
+            VoiceInternalEvent::ProviderFinished { session_id, result } => match result {
+                Ok(()) => log::debug!("provider finished for session_id={session_id}"),
+                Err(error) => handle_provider_failure(
+                    &self.app,
+                    self.runtime.clone(),
+                    session_id,
+                    error,
+                    self.services.clone(),
+                ),
+            },
+        }
+    }
+
+    fn owns_activation(&self, activation_id: &ActivationId) -> bool {
+        self.runtime
+            .lock()
+            .map(|runtime| activation_matches(&runtime.active_activation, activation_id))
+            .unwrap_or(false)
+    }
+
+    fn metrics_snapshot(&self) -> Option<SessionMetrics> {
+        let runtime = self.runtime.lock().expect("voice runtime lock poisoned");
+        if let Some(session) = &runtime.sessions.active {
+            let queue = session.audio_queue.snapshot();
+            return Some(SessionMetrics {
+                session_id: session.session_id,
+                audio_packets: queue.packets,
+                queue_high_watermark: queue.high_watermark,
+                overflow: queue.overflow,
+                recording_duration_ms: session.started_at.elapsed().as_millis() as u64,
+                cancel_reason: None,
+                final_state: "recording".to_string(),
+            });
+        }
+        runtime.sessions.last_metrics.clone()
+    }
+
+    fn publish_status(&self) {
+        if let Ok(runtime) = self.runtime.lock() {
+            self.handle.publish(&runtime);
+        }
+    }
+}
+
+fn activation_matches(active: &Option<VoiceActivation>, activation_id: &ActivationId) -> bool {
+    active.as_ref().map(|activation| &activation.id) == Some(activation_id)
 }
 
 fn handle_pressed(
     app: &AppHandle,
     runtime: SharedRuntime,
     services: AppServices,
-    controller: VoiceSessionController,
+    pending: Arc<PendingOutputService>,
+    controller: VoiceSessionHandle,
 ) {
     let (payload, event_rx, preview_state, audio_queue, session_id, deadline_cancellation) = {
         let (chunk_tx, chunk_rx) = mpsc::channel(AUDIO_QUEUE_CAPACITY);
@@ -299,7 +700,7 @@ fn handle_pressed(
             return;
         }
 
-        if voice.sessions.pending_outputs.is_full() {
+        if pending.is_full() {
             let payload = voice
                 .machine
                 .fail("待处理结果已达到 5 条，请先发送、复制或丢弃后再开始录音".to_string());
@@ -307,7 +708,7 @@ fn handle_pressed(
             return;
         }
 
-        let Some(payload) = voice.machine.hotkey_pressed() else {
+        let Some(payload) = voice.machine.activation_started() else {
             return;
         };
         let session_id = overlay::begin_preinput_session();
@@ -395,23 +796,16 @@ fn handle_pressed(
             }
         };
 
-        let provider = voice.provider.clone();
+        let provider = services.provider.build(&config);
         let (provider_result_tx, provider_result) = oneshot::channel();
         let provider_controller = controller.clone();
-        let provider_app = app.clone();
         let provider_task = tauri::async_runtime::spawn(async move {
             let result = provider
                 .transcribe_stream(stream_info, chunk_rx, event_tx, asr_hints)
                 .await;
             let event_result = result.as_ref().map(|_| ()).map_err(|error| error.clone());
             let _ = provider_result_tx.send(result);
-            provider_controller.submit(
-                &provider_app,
-                SessionEvent::ProviderFinished {
-                    session_id,
-                    result: event_result,
-                },
-            );
+            provider_controller.report_provider_finished(session_id, event_result);
         });
         voice.sessions.active = Some(ActiveSession {
             session_id,
@@ -425,6 +819,7 @@ fn handle_pressed(
             deadline_cancellation: deadline_cancellation.clone(),
             audio_queue: audio_queue.clone(),
             started_at: StdInstant::now(),
+            config,
         });
         (
             payload,
@@ -449,7 +844,9 @@ fn handle_pressed(
     );
     crate::streaming_pipeline::spawn_transcript_event_relay(
         app.clone(),
-        runtime.clone(),
+        VoiceSessionObserver {
+            runtime: runtime.clone(),
+        },
         event_rx,
         preview_state,
         session_id,
@@ -465,13 +862,19 @@ fn handle_pressed(
     emit_state(app, payload);
 }
 
-fn handle_released(app: &AppHandle, runtime: SharedRuntime, services: AppServices) {
+fn handle_released(
+    app: &AppHandle,
+    runtime: SharedRuntime,
+    services: AppServices,
+    pending: Arc<PendingOutputService>,
+) {
     let (
         provider_task,
         provider_result,
         preview_state,
         injector,
         history_enabled,
+        session_config,
         app_context,
         target,
         injection_method,
@@ -516,7 +919,7 @@ fn handle_released(app: &AppHandle, runtime: SharedRuntime, services: AppService
             }
         };
 
-        let decision = voice.machine.hotkey_released(duration);
+        let decision = voice.machine.activation_finished(duration);
         let Some(session) = voice.sessions.active.take() else {
             let payload = voice.machine.fail("识别会话不存在");
             emit_state(app, payload);
@@ -588,12 +991,12 @@ fn handle_released(app: &AppHandle, runtime: SharedRuntime, services: AppService
             session.provider_result,
             session.preview_state,
             voice.injector.clone(),
-            services.config.snapshot().history_enabled,
+            session.config.history_enabled,
+            session.config.clone(),
             session.app_context,
             session.target.clone(),
-            match services
+            match session
                 .config
-                .snapshot()
                 .injection_strategy_for(&session.target.executable_name)
             {
                 InjectionStrategy::Unicode => InjectionMethod::Unicode,
@@ -822,6 +1225,7 @@ fn handle_released(app: &AppHandle, runtime: SharedRuntime, services: AppService
             queue_pending_output(
                 &app,
                 runtime.clone(),
+                pending.clone(),
                 session_id,
                 final_text,
                 target,
@@ -867,6 +1271,7 @@ fn handle_released(app: &AppHandle, runtime: SharedRuntime, services: AppService
             queue_pending_output(
                 &app,
                 runtime.clone(),
+                pending.clone(),
                 session_id,
                 final_text,
                 target,
@@ -883,7 +1288,7 @@ fn handle_released(app: &AppHandle, runtime: SharedRuntime, services: AppService
 
         let (history_committed, discard_recovery_material) = if history_enabled {
             let committed = delivery
-                .commit(final_text.clone(), app_context, services.config.snapshot())
+                .commit(final_text.clone(), app_context, session_config)
                 .await;
             if committed {
                 incident.stage(
@@ -1066,14 +1471,15 @@ fn handle_audio_overflow(
 
 fn schedule_recording_deadline(
     app: AppHandle,
-    controller: VoiceSessionController,
+    controller: VoiceSessionHandle,
     session_id: u64,
     cancellation: Arc<SessionCancellation>,
 ) {
     tauri::async_runtime::spawn(async move {
         if wait_for_recording_deadline(cancellation, Duration::from_secs(MAX_RECORDING_SECS)).await
         {
-            controller.submit(&app, SessionEvent::DeadlineReached { session_id });
+            let _ = app;
+            controller.report_deadline(session_id);
         }
     });
 }
@@ -1089,7 +1495,7 @@ async fn wait_for_recording_deadline(
     }
 }
 
-pub fn cancel_current_session(
+fn cancel_current_session(
     app: &AppHandle,
     runtime: SharedRuntime,
     incident_sink: Arc<dyn crate::incident::IncidentSink>,
@@ -1126,10 +1532,11 @@ pub fn cancel_current_session(
     Ok(())
 }
 
-fn clear_current_session(runtime: &mut crate::VoiceRuntime, session_id: u64) {
+fn clear_current_session(runtime: &mut VoiceRuntime, session_id: u64) {
     if runtime.sessions.current_id == Some(session_id) {
         runtime.sessions.current_id = None;
         runtime.sessions.current_cancellation = None;
+        runtime.active_activation = None;
     }
 }
 
@@ -1145,6 +1552,7 @@ fn complete_current_session(runtime: &SharedRuntime, session_id: u64) -> Option<
 fn queue_pending_output(
     app: &AppHandle,
     runtime: SharedRuntime,
+    pending: Arc<PendingOutputService>,
     session_id: u64,
     text: String,
     target: target::TargetWindowIdentity,
@@ -1156,7 +1564,7 @@ fn queue_pending_output(
         if runtime.sessions.current_id != Some(session_id) {
             return;
         }
-        match runtime.sessions.pending_outputs.push(
+        match pending.push(
             session_id,
             text,
             target,
@@ -1186,6 +1594,79 @@ fn queue_pending_output(
         let _ = main.emit("pending_outputs_changed", ());
     }
     overlay::hide_preinput_for_session(app, session_id);
+}
+
+async fn deliver_pending(
+    app: &AppHandle,
+    id: String,
+    runtime: SharedRuntime,
+    pending: Arc<PendingOutputService>,
+    services: AppServices,
+) -> crate::command_error::CommandResult<()> {
+    use crate::command_error::CommandError;
+
+    let config = services.config.snapshot();
+    let (injector, record, method) = {
+        let runtime = runtime
+            .lock()
+            .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?;
+        if runtime.sessions.current_id.is_some() {
+            return Err(CommandError::new(
+                "session_active",
+                "录音或识别进行中，暂时不能发送待处理结果",
+            ));
+        }
+        let record = pending.reserve(&id).map_err(map_pending_error)?;
+        let method = match config.injection_strategy_for(&record.target.executable_name) {
+            InjectionStrategy::Unicode => InjectionMethod::Unicode,
+            InjectionStrategy::ClipboardCompatibility => InjectionMethod::ClipboardCompatibility,
+        };
+        (runtime.injector.clone(), record, method)
+    };
+
+    let delivery = DeliveryService::new(services);
+    if let Err(error) = delivery.validate(&record.dto.text, &record.target, true) {
+        pending.release(&id);
+        return Err(CommandError::new(error.code, error.message));
+    }
+    if let Err(error) = delivery
+        .inject(record.dto.text.clone(), injector, method)
+        .await
+    {
+        pending.release(&id);
+        return Err(CommandError::new(error.code, error.message));
+    }
+
+    pending.complete(&id).map_err(map_pending_error)?;
+    delivery
+        .commit(
+            record.dto.text,
+            history::AppContext {
+                app_name: Some(record.target.executable_name),
+                app_title: record.target.window_title,
+            },
+            config,
+        )
+        .await;
+    if let Some(main) = app.get_webview_window("main") {
+        let _ = main.emit("pending_outputs_changed", ());
+    }
+    Ok(())
+}
+
+fn map_pending_error(error: PendingOutputServiceError) -> crate::command_error::CommandError {
+    use crate::command_error::CommandError;
+    match error {
+        PendingOutputServiceError::Full => {
+            CommandError::new("pending_output_full", "待处理结果已满")
+        }
+        PendingOutputServiceError::NotFound => {
+            CommandError::new("pending_output_not_found", "待处理结果不存在或已过期")
+        }
+        PendingOutputServiceError::Busy => {
+            CommandError::new("pending_output_busy", "待处理结果正在执行其他操作")
+        }
+    }
 }
 
 fn record_session_outcome(
@@ -1282,6 +1763,9 @@ fn complete_session_or_clear_error(
 }
 
 fn emit_state(app: &AppHandle, payload: VoiceStatePayload) {
+    if let Some(handle) = app.try_state::<VoiceSessionHandle>() {
+        handle.publish_payload(payload.clone());
+    }
     if let Err(error) = app.emit(VOICE_STATE_EVENT, payload) {
         log::warn!("failed to emit voice state: {error}");
     }
@@ -1308,6 +1792,16 @@ mod tests {
         let cancellation = Arc::new(SessionCancellation::default());
 
         assert!(wait_for_recording_deadline(cancellation, Duration::ZERO).await);
+    }
+
+    #[test]
+    fn only_the_active_activation_can_finish_a_session() {
+        let active = VoiceActivation::shortcut();
+        let stale = VoiceActivation::shortcut();
+
+        assert!(activation_matches(&Some(active.clone()), &active.id));
+        assert!(!activation_matches(&Some(active), &stale.id));
+        assert!(!activation_matches(&None, &stale.id));
     }
 
     #[derive(Default)]

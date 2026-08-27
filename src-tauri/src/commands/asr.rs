@@ -2,7 +2,6 @@ use crate::command_error::{self, CommandError, CommandResult};
 use crate::config::ConfigValue;
 use crate::provider_model::AsrOptionPool;
 use crate::services::{AppServices, ConfigServiceError};
-use crate::SharedRuntime;
 use tauri::{State, WebviewWindow};
 
 fn conflict(pool: AsrOptionPool) -> CommandError {
@@ -34,7 +33,6 @@ pub fn set_asr_option(
     value: ConfigValue,
     expected_revision: u64,
     window: WebviewWindow,
-    runtime: State<'_, SharedRuntime>,
     services: State<'_, AppServices>,
 ) -> CommandResult<AsrOptionPool> {
     command_error::require_window(&window, "main")?;
@@ -63,10 +61,6 @@ pub fn set_asr_option(
             return Err(CommandError::new("config_write_failed", error.to_string()))
         }
     };
-    runtime
-        .lock()
-        .map_err(|error| CommandError::new("runtime_lock_failed", error.to_string()))?
-        .provider = services.provider.build(&saved);
     services
         .provider
         .option_pool(&saved)
