@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getPreInputStateLabel, getPreInputTextSegments } from "./preInputModel";
+import { getPreInputTextSegments } from "./preInputModel";
 
 describe("getPreInputTextSegments", () => {
   it("keeps confirmed and pending text separated", () => {
@@ -24,15 +24,5 @@ describe("getPreInputTextSegments", () => {
       confirmedText: "🌹",
       pendingText: "BC",
     });
-  });
-});
-
-describe("getPreInputStateLabel", () => {
-  it("provides one label for every visual state", () => {
-    expect(getPreInputStateLabel("recording")).toBe("正在聆听");
-    expect(getPreInputStateLabel("transcribing")).toBe("正在识别");
-    expect(getPreInputStateLabel("finalizing")).toBe("正在写入");
-    expect(getPreInputStateLabel("dismissing")).toBe("正在收起");
-    expect(getPreInputStateLabel("error")).toBe("失败");
   });
 });

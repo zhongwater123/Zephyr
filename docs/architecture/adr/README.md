@@ -19,6 +19,7 @@ ADR 记录已经影响代码边界、数据安全或演进成本的决策。Acce
 | [ADR-0013](0013-strict-mailbox-owned-voice-runtime.md) | Accepted | 严格 mailbox-owned 语音运行时与控制/执行分层 |
 
 ## 状态
+| [ADR-0014](0014-atomic-smart-dictation-paste.md) | Proposed | 智能成稿先完整定稿，再通过一次性整体粘贴交付 |
 
 - **Proposed**：已提出，尚未承诺。
 - **Accepted**：当前实现和演进应遵循。

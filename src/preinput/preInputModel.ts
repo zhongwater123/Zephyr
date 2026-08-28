@@ -1,5 +1,3 @@
-import type { PreInputPayload } from "../domain";
-
 export const MAX_OVERLAY_CHARACTERS = 180;
 
 export type PreInputTextSegments = {
@@ -24,20 +22,4 @@ export function getPreInputTextSegments(
     confirmedText: visibleCharacters.slice(0, visibleConfirmedChars).join(""),
     pendingText: visibleCharacters.slice(visibleConfirmedChars).join(""),
   };
-}
-
-export function getPreInputStateLabel(state: PreInputPayload["state"]) {
-  switch (state) {
-    case "transcribing":
-      return "正在识别";
-    case "finalizing":
-      return "正在写入";
-    case "dismissing":
-      return "正在收起";
-    case "error":
-      return "失败";
-    case "recording":
-    default:
-      return "正在聆听";
-  }
 }

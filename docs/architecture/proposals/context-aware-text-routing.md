@@ -147,7 +147,7 @@ Chat Completions 当前文档显示思考模式可能默认开启。对 20 秒�
 
 快捷键 A 的 Chatbot 成功响应必须是单一、非空并可直接交付的最终文本；成功结果直接进入 Target Delivery。Chatbot 超时、网络/服务错误、空响应或无效响应时，处理层选择原始 `FrozenTranscript` 进入同一 Delivery。用户主动取消不属于处理失败，不能触发原文兜底；Delivery 自身失败继续遵守目标复验和 Pending 契约。
 
-办公和 vibe coding 画像允许在 JSON `text` 中返回多段文本。后续 Delivery 契约应把不同来源的 CRLF、裸 CR 和 LF 规范化为内部 LF，允许 LF 作为唯一受控换行表示，同时继续拒绝 NUL、双向覆盖/隔离符和其他控制字符。默认 Unicode 注入器不能只把 LF 当普通 Unicode code unit 原样发送；它需要为换行生成目标输入框可理解的 Enter/段落输入事件。剪贴板兼容模式保留规范化后的多行文本。两种模式都必须通过聊天、办公软件和编码助手输入框的真实互操作验证。
+办公和 vibe coding 画像允许在 JSON `text` 中返回多段文本。Delivery 契约应把 CRLF、裸 CR 和 LF 规范化为内部 LF，允许 LF 作为唯一受控换行表示，同时继续拒绝 NUL、双向覆盖/隔离符和其他控制字符。SmartDictation 必须在目标输入框外完整定稿，再把单行或多行结果作为一个纯文本载荷一次性整体粘贴到普通可编辑目标；不要求用户按 EXE 预先启用剪贴板兼容，也不为 LF 生成 Enter。自动粘贴需要串行化完整剪贴板快照、目标复验、单次 Ctrl+V 和并发安全恢复；已知终端或命令执行表面不自动接收含 LF 的生成文本。详细候选边界见 [ADR-0014](../adr/0014-atomic-smart-dictation-paste.md)。
 
 Processing 与 Delivery 统一使用当前 `delivery.max-output-characters` 的 8000 Unicode 字符上限。Prompt 应要求最终 `text` 不超过该上限；本地校验仍是权威。模型返回超过 8000 字符的 `text` 时视为处理失败并选择完整 `FrozenTranscript` 兜底，不截取前 8000 字符。若 `FrozenTranscript` 本身也超过上限，则进入 Delivery 的既有验证失败/Pending 语义，而不是再次循环调用 Chatbot。
 
@@ -167,4 +167,4 @@ ASR 原文、模型响应或其他用户内容是否作为恢复材料保存，�
 
 ## 10. 接受条件
 
-完成上述产品问题确认后，将稳定的职责、信任边界、来源模型和失败语义形成 Proposed ADR。只有代码落地并完成源码符合性复核后，Router、Processing 和新的 Delivery 边界才能进入 Current C4、Runtime View 和代码地图。
+整体粘贴的候选边界已经形成 Proposed ADR-0014；其余产品问题确认后，再补充 Router、Processing 和场景优先级的长期决策。只有代码落地并完成源码符合性复核后，Router、Processing 和新的 Delivery 边界才能进入 Current C4、Runtime View 和代码地图。

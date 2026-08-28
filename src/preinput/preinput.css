@@ -23,8 +23,7 @@
   --preinput-confirmed: #1e6f48;
 
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 4px;
+  grid-template-rows: minmax(0, 1fr);
   width: calc(100vw - 12px);
   height: calc(100vh - 12px);
   margin: 6px;
@@ -76,27 +75,6 @@
   --preinput-confirmed: #a53d33;
 }
 
-.preinput-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: #546158;
-  font-size: 11px;
-  font-weight: 650;
-  line-height: 1.25;
-}
-
-.preinput-status__dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: var(--preinput-accent);
-  box-shadow: 0 0 0 3px var(--preinput-accent-soft);
-  transition: background-color 160ms ease, box-shadow 160ms ease;
-}
-
 .preinput-text {
   position: relative;
   display: grid;
@@ -109,21 +87,73 @@
 
 .preinput-text__copy {
   display: block;
+  box-sizing: border-box;
   width: 100%;
-  max-height: 2.5em;
+  height: 32px;
+  max-height: 100%;
   padding-left: 44px;
   overflow: hidden;
   font-family: "Segoe UI Variable Text", "Microsoft YaHei UI", "微软雅黑", system-ui, sans-serif;
-  font-size: 18px;
+  font-size: 12px;
   font-weight: 400;
-  line-height: 1.35;
+  line-height: 16px;
   text-align: left;
   overflow-wrap: anywhere;
 }
 
+.preinput-text__copy[data-has-previous-line] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.22) 0%,
+    rgba(0, 0, 0, 0.55) 28%,
+    rgba(0, 0, 0, 0.55) 46%,
+    #000 56%,
+    #000 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.22) 0%,
+    rgba(0, 0, 0, 0.55) 28%,
+    rgba(0, 0, 0, 0.55) 46%,
+    #000 56%,
+    #000 100%
+  );
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+}
+
+.preinput-text__content {
+  display: flex;
+  min-height: 100%;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.preinput-text__flow {
+  display: block;
+  text-align: center;
+}
+
+.preinput-text__copy[data-has-previous-line] .preinput-text__flow {
+  text-align: left;
+}
+
+.preinput-text__reveal {
+  animation: preinput-text-reveal 160ms linear both;
+}
+
+@keyframes preinput-text-reveal {
+  from {
+    opacity: 0.18;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
 .preinput-text__confirmed {
   color: var(--preinput-confirmed);
-  font-family: SimSun, "宋体", "Songti SC", serif;
   transition: color 160ms ease;
 }
 
@@ -195,12 +225,15 @@
 
 @media (prefers-reduced-motion: reduce) {
   .preinput-shell,
-  .preinput-status__dot,
   .preinput-text__confirmed {
     transition: none;
   }
 
   .preinput-loader__label {
+    animation: none;
+  }
+
+  .preinput-text__reveal {
     animation: none;
   }
 }
