@@ -15,6 +15,16 @@ Feature Dossier 是跨组件或高风险用户功能的入口，负责保存产�
 
 这些材料不能线性互相覆盖。发现冲突时先分类，再修改对应权威来源。
 
+## MVP 契约边界
+
+Feature Dossier 服务于当前 MVP，但其章节并不具有相同约束力：
+
+- **MVP 契约**：`用户目标`、已确认的 `验收场景` 和 `明确不规定的实现`。它们描述当前迭代要验证的用户行为与边界。
+- **上下文与证据**：`局部假设`、`架构决策`链接、`当前实现入口`、`验证状态` 和 `澄清历史`。它们帮助判断与复核，但不能单独阻止一个更符合最新用户需求的实现。
+- `specStatus=draft` 的 Dossier 全部为候选材料；`confirmed` 只表示其中的产品契约已有可追溯的用户确认，不代表当前实现、验收方法或技术方案被永久确认。
+
+所有 Dossier 可选声明 `authority`：`mvp_contract` 表示当前可调整的验证契约，`hard_boundary` 仅用于安全、数据完整性或外部承诺边界，`reference` 表示背景材料。未声明时按 `mvp_contract` 处理。
+
 ## 创建门槛
 
 只有以下内容使用 Feature Dossier 和稳定 ID：
@@ -34,6 +44,7 @@ Dossier 以 `---` 包围的 JSON 对象开头。JSON 同时是 YAML 的合法子
 {
   "schemaVersion": 3,
   "featureId": "FEAT-EXAMPLE",
+  "authority": "mvp_contract",
   "specStatus": "draft",
   "implementationStatus": "not_started",
   "implementationReview": {
@@ -59,6 +70,7 @@ Dossier 以 `---` 包围的 JSON 对象开头。JSON 同时是 YAML 的合法子
 状态含义：
 
 - `specStatus`: `draft | confirmed | superseded`
+- `authority`: `mvp_contract | hard_boundary | reference`（省略时为 `mvp_contract`）
 - `implementationStatus`: `not_started | in_progress | implemented | deprecated | superseded`
 - `implementationReview.status`: `unreviewed | partial | conformant | deviating`
 - `validationStatus`: `unverified | partial | validated | invalidated`
@@ -93,7 +105,7 @@ Dossier 以 `---` 包围的 JSON 对象开头。JSON 同时是 YAML 的合法子
 
 | 冲突 | 默认动作 |
 | --- | --- |
-| 用户确认 vs Feature Dossier | 暂停冲突实现；含义明确时更新规格，范围不清时先复述影响并确认 |
+| 用户确认 vs Feature Dossier | 最新明确需求直接更新 MVP 契约；只有含义不清或触及 `hard_boundary` 时暂停并确认影响 |
 | Feature Dossier vs Accepted ADR | 重新评估；决策变化时新增 Superseding ADR，不改写历史 ADR |
 | ADR vs 源码 | 分类为实现漂移或决策失效，分别修复实现或新增替代 ADR |
 | 源码 vs C4 | 先核对规格和 ADR；若只是描述落后则更新 C4 |

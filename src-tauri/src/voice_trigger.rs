@@ -63,8 +63,43 @@ pub enum VoiceTriggerError {
     ControlPlaneUnavailable,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BeginRejection {
+    Disabled,
+    Busy,
+    PendingFull,
+    ShuttingDown,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BeginDecision {
+    Accepted {
+        session_id: u64,
+        config_revision: u64,
+    },
+    Rejected {
+        reason: BeginRejection,
+    },
+}
+
+pub struct BeginReceipt {
+    response: tokio::sync::oneshot::Receiver<BeginDecision>,
+}
+
+impl BeginReceipt {
+    pub(crate) fn new(response: tokio::sync::oneshot::Receiver<BeginDecision>) -> Self {
+        Self { response }
+    }
+
+    pub async fn wait(self) -> Result<BeginDecision, VoiceTriggerError> {
+        self.response
+            .await
+            .map_err(|_| VoiceTriggerError::ControlPlaneUnavailable)
+    }
+}
+
 pub trait VoiceTriggerPort: Send + Sync {
-    fn begin(&self, activation: VoiceActivation) -> Result<(), VoiceTriggerError>;
+    fn begin(&self, activation: VoiceActivation) -> Result<BeginReceipt, VoiceTriggerError>;
     fn finish(&self, activation_id: ActivationId) -> Result<(), VoiceTriggerError>;
     fn cancel(
         &self,
@@ -87,5 +122,34 @@ mod tests {
         let activation = VoiceActivation::shortcut();
         assert_eq!(activation.source, TriggerSource::Shortcut);
         assert_eq!(activation.behavior, TriggerBehavior::PushToTalk);
+    }
+
+    #[tokio::test]
+    async fn begin_receipt_reports_actor_decision_without_blocking_submission() {
+        let (response, result) = tokio::sync::oneshot::channel();
+        let receipt = BeginReceipt::new(result);
+        response
+            .send(BeginDecision::Accepted {
+                session_id: 4,
+                config_revision: 9,
+            })
+            .unwrap();
+        assert_eq!(
+            receipt.wait().await.unwrap(),
+            BeginDecision::Accepted {
+                session_id: 4,
+                config_revision: 9,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn begin_receipt_reports_closed_actor() {
+        let (response, result) = tokio::sync::oneshot::channel();
+        drop(response);
+        assert_eq!(
+            BeginReceipt::new(result).wait().await.unwrap_err(),
+            VoiceTriggerError::ControlPlaneUnavailable
+        );
     }
 }

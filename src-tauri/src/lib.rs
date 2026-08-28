@@ -17,7 +17,6 @@ mod provider_model;
 mod repositories;
 mod runtime_metrics;
 mod services;
-mod session;
 mod shortcut_manager;
 mod state;
 mod streaming_pipeline;
@@ -28,66 +27,8 @@ mod voice_trigger;
 mod windows_keyboard;
 
 use config::{AppConfig, ConfigRecovery};
-use preview::TranscriptPreviewState;
-use provider::ProviderError;
-use serde::Serialize;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 use tauri::Manager;
-use tokio::sync::Notify;
-
-#[derive(Debug, Default)]
-pub struct SessionCancellation {
-    cancelled: AtomicBool,
-    notify: Notify,
-}
-
-impl SessionCancellation {
-    pub fn cancel(&self) {
-        self.cancelled.store(true, Ordering::Release);
-        self.notify.notify_waiters();
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.cancelled.load(Ordering::Acquire)
-    }
-
-    pub async fn cancelled(&self) {
-        let notified = self.notify.notified();
-        if self.is_cancelled() {
-            return;
-        }
-        notified.await;
-    }
-}
-
-pub struct ActiveSession {
-    pub session_id: u64,
-    pub attempt_id: String,
-    pub provider_task: tauri::async_runtime::JoinHandle<()>,
-    pub provider_result: tokio::sync::oneshot::Receiver<Result<String, ProviderError>>,
-    pub preview_state: Arc<tokio::sync::Mutex<TranscriptPreviewState>>,
-    pub app_context: history::AppContext,
-    pub target: target::TargetWindowIdentity,
-    pub cancellation: Arc<SessionCancellation>,
-    pub deadline_cancellation: Arc<SessionCancellation>,
-    pub audio_queue: Arc<audio::AudioQueueMonitor>,
-    pub started_at: Instant,
-    pub config: AppConfig,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SessionMetrics {
-    pub session_id: u64,
-    pub audio_packets: u64,
-    pub queue_high_watermark: usize,
-    pub overflow: bool,
-    pub recording_duration_ms: u64,
-    pub cancel_reason: Option<String>,
-    pub final_state: String,
-}
 
 pub fn run() {
     install_tls_provider();
@@ -178,10 +119,11 @@ pub fn run() {
         ])
         .setup(move |app| {
             let pending = Arc::new(pending_output_service::PendingOutputService::default());
-            let enabled = voice_services.config.snapshot().enabled;
+            let initial_config = voice_services.config.snapshot();
             let voice = voice_controller::VoiceSessionHandle::spawn(
                 app.handle().clone(),
-                enabled,
+                initial_config.enabled,
+                initial_config.revision,
                 voice_services.clone(),
                 pending.clone(),
             );
@@ -214,6 +156,9 @@ pub fn run() {
             }
         }
         tauri::RunEvent::Exit => {
+            if let Some(voice) = app_handle.try_state::<voice_controller::VoiceSessionHandle>() {
+                tauri::async_runtime::block_on(voice.shutdown());
+            }
             if let Some(manager) = app_handle.try_state::<Arc<shortcut_manager::ShortcutManager>>()
             {
                 manager.shutdown();
@@ -230,58 +175,176 @@ fn install_tls_provider() {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::path::Path;
     use std::path::PathBuf;
-    use tokio::time::{timeout, Duration};
 
-    #[tokio::test]
-    async fn session_cancellation_wakes_waiters_and_is_sticky() {
-        let cancellation = Arc::new(SessionCancellation::default());
-        let waiter_cancellation = cancellation.clone();
-        let waiter = tokio::spawn(async move {
-            waiter_cancellation.cancelled().await;
-        });
-
-        tokio::task::yield_now().await;
-        cancellation.cancel();
-
-        timeout(Duration::from_millis(100), waiter)
-            .await
-            .expect("cancellation waiter should wake")
-            .expect("cancellation waiter should not panic");
-        timeout(Duration::from_millis(100), cancellation.cancelled())
-            .await
-            .expect("late waiter should observe prior cancellation");
+    fn rust_sources(root: &Path) -> Vec<PathBuf> {
+        let mut sources = Vec::new();
+        for entry in std::fs::read_dir(root).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                sources.extend(rust_sources(&path));
+            } else if path.extension().and_then(|value| value.to_str()) == Some("rs") {
+                sources.push(path);
+            }
+        }
+        sources
     }
 
     #[test]
     fn external_voice_layers_cannot_reach_mutable_runtime() {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let files = [
-            "src/commands/asr.rs",
-            "src/commands/config.rs",
-            "src/commands/session.rs",
-            "src/platform/tray.rs",
-            "src/shortcut_manager/mod.rs",
-            "src/streaming_pipeline.rs",
-            "src/delivery.rs",
-        ];
         let forbidden = [
             "SharedRuntime",
             "runtime.lock",
             "runtime.provider",
             "sessions.pending_outputs",
             "SessionEvent",
+            "VoiceRuntime",
+            "SessionResources",
         ];
 
-        for relative in files {
-            let source = std::fs::read_to_string(manifest.join(relative)).unwrap();
+        let mut files = Vec::new();
+        for root in ["src/commands", "src/platform", "src/shortcut_manager"] {
+            files.extend(rust_sources(&manifest.join(root)));
+        }
+        files.extend([
+            manifest.join("src/streaming_pipeline.rs"),
+            manifest.join("src/delivery.rs"),
+        ]);
+        for path in files {
+            let source = std::fs::read_to_string(&path).unwrap();
             for token in forbidden {
                 assert!(
                     !source.contains(token),
-                    "{relative} must not depend on mutable voice runtime token {token}"
+                    "{} must not depend on voice runtime token {token}",
+                    path.display()
                 );
             }
         }
+    }
+
+    #[test]
+    fn voice_runtime_has_exactly_one_source_writer() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let voice_root = manifest.join("src/voice_controller");
+        let actor = std::fs::read_to_string(voice_root.join("actor.rs")).unwrap();
+        let runtime = std::fs::read_to_string(voice_root.join("actor").join("runtime.rs")).unwrap();
+
+        assert!(runtime.contains("struct VoiceRuntime"));
+        assert!(actor.contains("runtime: VoiceRuntime"));
+        assert!(!actor.contains("runtime.lock"));
+        assert!(!actor.contains("Arc<Mutex<VoiceRuntime>>"));
+        assert!(!runtime.contains("Arc<Mutex<VoiceRuntime>>"));
+
+        for path in rust_sources(&voice_root.join("workflow"))
+            .into_iter()
+            .chain([voice_root.join("workflow.rs")])
+        {
+            let source = std::fs::read_to_string(&path).unwrap();
+            for forbidden in [
+                "VoiceRuntime",
+                "AppStateMachine",
+                "SharedRuntime",
+                "runtime.lock",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} must not depend on actor-owned state token {forbidden}",
+                    path.display()
+                );
+            }
+        }
+
+        for forbidden in [
+            "Recorder",
+            "TextInjector",
+            "PreparedSession",
+            "SessionResources",
+            "provider_task",
+            "PendingOutputLease",
+            "AppHandle",
+        ] {
+            assert!(
+                !runtime.contains(forbidden),
+                "VoiceRuntime must not contain execution resource token {forbidden}"
+            );
+        }
+
+        let all_voice_source = rust_sources(&voice_root)
+            .into_iter()
+            .map(|path| std::fs::read_to_string(path).unwrap())
+            .collect::<String>();
+        assert!(!all_voice_source.contains("SharedRuntime"));
+        assert!(!all_voice_source.contains("Arc<Mutex<VoiceRuntime>>"));
+
+        let mut actor_implementation = rust_sources(&voice_root.join("actor"));
+        actor_implementation.push(voice_root.join("actor.rs"));
+        for path in actor_implementation {
+            let file_name = path.file_name().and_then(|value| value.to_str());
+            if matches!(file_name, Some("runtime.rs" | "reducer.rs")) {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap();
+            for forbidden in [
+                "runtime.set_payload(",
+                "runtime.replace_payload(",
+                "runtime.set_desired(",
+                "runtime.mark_shutting_down(",
+                "runtime.clear_current(",
+                "runtime.record_outcome(",
+                "runtime.phase = VoicePhase",
+                "runtime.availability = VoiceAvailability",
+                "runtime.last_metrics = Some",
+                "runtime.shortcut_registration_error = error",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} bypasses the private reducer with {forbidden}",
+                    path.display()
+                );
+            }
+        }
+
+        let lib_source = std::fs::read_to_string(manifest.join("src/lib.rs")).unwrap();
+        assert!(!lib_source.contains(&["struct", "ActiveSession"].join(" ")));
+        assert!(!lib_source.contains(&["struct", "SessionCancellation"].join(" ")));
+    }
+
+    #[test]
+    fn spawned_voice_workers_do_not_capture_runtime() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let voice_root = manifest.join("src/voice_controller");
+        let mut workers = rust_sources(&voice_root.join("workflow"));
+        workers.push(voice_root.join("workflow.rs"));
+        workers.push(manifest.join("src/streaming_pipeline.rs"));
+        for path in workers {
+            let source = std::fs::read_to_string(&path).unwrap();
+            assert!(!source.contains("VoiceRuntime"));
+            assert!(!source.contains("AppStateMachine"));
+            assert!(!source.contains("runtime.lock"));
+        }
+    }
+
+    #[test]
+    fn presenter_is_the_only_voice_ui_gateway() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let voice_root = manifest.join("src/voice_controller");
+        for path in rust_sources(&voice_root) {
+            if path.file_name().and_then(|value| value.to_str()) == Some("presenter.rs") {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).unwrap();
+            assert!(
+                !source.contains(".emit(") && !source.contains("overlay::"),
+                "{} bypasses VoicePresenter",
+                path.display()
+            );
+        }
+        let streaming =
+            std::fs::read_to_string(manifest.join("src/streaming_pipeline.rs")).unwrap();
+        assert!(!streaming.contains("AppHandle"));
+        assert!(!streaming.contains(".emit("));
+        assert!(!streaming.contains("overlay::"));
     }
 }

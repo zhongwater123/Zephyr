@@ -1,5 +1,5 @@
 ---
-{"documentType":"c4-view","viewStatus":"current","sourceRevision":"38e54443bb4357771c9c789f83d5fc7e4ed3830c","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller.rs","src-tauri/src/voice_input_service.rs","src-tauri/src/shortcut_manager","src-tauri/src/pending_output_service.rs"],"reviewStatus":"partial","reviewedAt":"2026-08-27","knownDeviations":["VoiceSessionActor 只串行化控制消息；release 后的 finalize task 仍通过 SharedRuntime 直接修改会话状态","VoiceControlService 在 Actor 与快捷键运行时确认应用前已经提交配置"]}
+{"documentType":"c4-view","viewStatus":"current","sourceRevision":"b62667deab18f740c83bab2f1bcebae2fd0a59e2","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller","src-tauri/src/voice_trigger.rs","src-tauri/src/voice_input_service.rs","src-tauri/src/streaming_pipeline.rs","src-tauri/src/lib.rs","docs/architecture/c4-components-backend.md"],"reviewStatus":"reviewed","reviewedAt":"2026-08-28","knownDeviations":[]}
 ---
 
 # C4 L3：Rust 后端组件
@@ -15,8 +15,8 @@ flowchart TB
         commands["Component<br/>Thin IPC Commands<br/><small>commands/*, CommandError</small>"]
         services["Component<br/>Application Services<br/><small>VoiceControlService, ConfigService, ProviderService</small>"]
         shortcut["Component<br/>Shortcut Manager<br/><small>binding transaction + runtime adapter</small>"]
-        controller["Component<br/>VoiceSessionActor + Handle<br/><small>bounded control plane, activation, state, session</small>"]
-        streaming["Component<br/>StreamingPipeline<br/><small>audio, provider, preview, overflow</small>"]
+        controller["Component<br/>VoiceSessionActor + AudioSessionActor<br/><small>pure runtime/reducer, effects, typed outcomes</small>"]
+        streaming["Component<br/>Voice Workflows + StreamingPipeline<br/><small>audio, provider, preview, delivery workers</small>"]
         delivery["Component<br/>Delivery + Pending Services<br/><small>target, text, lease, inject, commit</small>"]
         repos["Component<br/>Repository Ports + Adapters<br/><small>JSON, SQLite, Keyring, Agent</small>"]
         incident["Component<br/>IncidentVault<br/><small>lock-free ingress, isolated writer, recovery queries</small>"]
@@ -31,7 +31,7 @@ flowchart TB
     commands -->|"incident list / recovery / export"| incident
     commands -->|"pending delivery request"| controller
     shortcut -->|"VoiceActivation begin / finish / cancel"| controller
-    controller -->|"start / observe / finalize"| streaming
+    controller -->|"immutable jobs / internal outcomes"| streaming
     controller -.->|"try_emit only"| incident
     controller -->|"validate / inject / commit"| delivery
     controller -->|"immutable config snapshot"| services
@@ -54,13 +54,15 @@ flowchart TB
 
 `ProviderService` 在构建 ASR provider 时先检查 endpoint trust，再读取 CredentialStore。热词 Agent adapter 遵循相同顺序。
 
-`VoiceControlService` 是语音输入启停和通用配置保存的应用层协调器。它当前先以 revision CAS 提交期望配置，再把 Actor 可用性命令入队并恢复快捷键运行时；后两步没有共同确认或补偿，因此失败时可能出现持久配置、Actor 和 Hook 的部分提交。对应 command 只保留窗口权限校验、参数转发和错误 DTO 映射。Provider 不再保存在共享运行时中，由 `ProviderService` 在 Actor 处理 begin 时按同一配置快照构造会话 Provider。
+`VoiceControlService` 是语音输入启停和通用配置保存的应用层协调器。它先以 revision CAS 提交 `desired_enabled`，再等待 Actor 返回同一 committed revision 的 availability acknowledgment，最后协调快捷键运行时。Actor 未确认时返回包含 `committedRevision` 的 reconciliation error，不回滚已经提交的配置；每次后续配置操作都会按最新 revision 重试协调。Hook 安装失败只写入独立的 shortcut health 并保留 Actor 可用性，成功响应仍返回已提交 revision。对应 command 只保留窗口权限校验、参数转发和错误 DTO 映射。Provider 不保存在共享运行时中，由 `ProviderService` 从 begin 固定的配置快照构造会话 Provider。
 
 ### VoiceSessionActor + VoiceSessionHandle
 
-容量 16 的控制通道顺序处理带 `ActivationId` 的 Begin、Finish、Cancel、可用性和 Pending 交付命令；DeadlineReached、AudioOverflow 和 ProviderFinished 是独立内部事件。通道满时通过独立失败关闭信号取消当前会话。外部组件只持有 Handle 和 watch 状态快照，不能直接访问模块私有 Runtime。
+容量 16 的控制通道顺序处理带 `ActivationId` 的 Begin、Finish、Cancel、可用性和 Pending 交付命令；DeadlineReached、AudioOverflow、ProviderFinished、ReadyToInject 和类型化 Workflow Outcome 是内部事件。Begin 入队后通过异步 `BeginReceipt` 返回 Actor 的 Accepted/Rejected 决策；快捷键回调不等待 receipt。通道满时通过独立失败关闭信号取消当前会话。外部组件只持有 Handle 和 watch 状态快照。
 
-但当前实现尚不是严格的 Actor 单写入者：`VoiceRuntime` 仍是模块内的 `Arc<Mutex<_>>`，release 后的 finalize task 持有其 clone，直接推进 Pasting、Pending、metrics、complete/error reset 和状态事件。Actor 串行化了控制入口，却没有串行化全部会话 mutation；取消只在 finalize 的若干等待点和注入前检查一次，尚不能证明取消与不可逆注入之间没有竞争窗口。`SessionCoordinator` 记录当前 session ID、取消令牌和最新 metrics；当前 Activation 由 Actor 命令路径设置，触发器的 finish/cancel 会先匹配当前 Activation。
+`VoiceSessionActor` 按值持有只含控制状态的 `VoiceRuntime`，私有纯 reducer 生成 Effects；mailbox task 提交状态并调度 Effects。Recorder 由 AudioSessionActor 独占，AudioSessionActor mailbox 容量 4；Start/Stop/Cancel 结果始终带 SessionId，设备启动和停止不阻塞 Voice Actor。SessionResources 与取消令牌只存在于 Actor 的私有执行资源区，不进入 Runtime。Start、Finalize 和 Pending workflow 只持有不可变 Job 或移交资源，Streaming Pipeline 只发送展示数据。Finalization 在注入前向 Actor 请求带 SessionId 的授权，Actor 再推进 Pasting；过期 Activation 或 Worker Outcome 不修改当前会话。
+
+代码按职责拆为 façade/contract、Actor mailbox、Runtime/reducer、Effect executor、Audio Actor、start/finalize/pending workflows、Presenter 和 Incident；模块路径仍保持 `crate::voice_controller`，Tauri command 名称与主要响应保持兼容。Presenter 是语音模块唯一 Tauri 状态事件和 Overlay 出口。严格所有权边界见 [ADR-0013](adr/0013-strict-mailbox-owned-voice-runtime.md)。
 
 ### ShortcutManager
 

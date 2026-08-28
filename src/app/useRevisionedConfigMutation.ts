@@ -25,6 +25,13 @@ export function useRevisionedConfigMutation(
         void refreshStatus();
         return `${payload.message}（已载入 revision ${payload.details.currentRevision ?? "?"}）`;
       }
+      if (
+        payload?.code === "voice_reconciliation_failed" &&
+        typeof payload.details?.committedRevision === "number"
+      ) {
+        void refreshStatus();
+        return `${payload.message}（配置已提交 revision ${payload.details.committedRevision}，后续操作将重试协调）`;
+      }
       return payload?.message ?? commandErrorMessage(error);
     },
   };

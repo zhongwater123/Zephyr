@@ -2,6 +2,7 @@
 {
   "schemaVersion": 3,
   "featureId": "FEAT-INCIDENT-VAULT",
+  "authority": "mvp_contract",
   "specStatus": "draft",
   "implementationStatus": "implemented",
   "validationStatus": "partial",

@@ -15,23 +15,41 @@
       "whenImplementationStatus": "implemented",
       "forbiddenSourceTokens": [
         {
-          "path": "src-tauri/src/voice_controller.rs",
-          "token": "type SharedRuntime = Arc<Mutex<VoiceRuntime>>",
+          "path": "src-tauri/src/voice_controller/actor/runtime.rs",
+          "token": "Arc<Mutex<VoiceRuntime>>",
           "reason": "implemented 状态要求 Actor 按值独占会话聚合，不能继续共享可变 Runtime"
         },
         {
-          "path": "src-tauri/src/voice_controller.rs",
-          "token": "runtime: SharedRuntime",
-          "reason": "implemented 状态要求工作任务只返回内部事件，不能接收可写 Runtime"
+          "path": "src-tauri/src/voice_controller/actor/runtime.rs",
+          "token": "Recorder",
+          "reason": "Runtime 只能保存纯控制状态，不能拥有音频设备"
+        },
+        {
+          "path": "src-tauri/src/voice_controller/actor/runtime.rs",
+          "token": "SessionResources",
+          "reason": "执行资源必须与纯 Runtime 分离"
+        },
+        {
+          "path": "src-tauri/src/voice_controller/workflow/start.rs",
+          "token": "VoiceRuntime",
+          "reason": "Start worker 只能返回类型化结果，不能接收可写 Runtime"
+        },
+        {
+          "path": "src-tauri/src/voice_controller/workflow/finalize.rs",
+          "token": "VoiceRuntime",
+          "reason": "Finalize worker 只能返回类型化结果，不能接收可写 Runtime"
+        },
+        {
+          "path": "src-tauri/src/voice_controller/workflow/pending.rs",
+          "token": "VoiceRuntime",
+          "reason": "Pending worker 只能返回类型化结果，不能接收可写 Runtime"
+        },
+        {
+          "path": "src-tauri/src/streaming_pipeline.rs",
+          "token": "overlay::",
+          "reason": "Streaming Pipeline 必须通过 Presenter 发布展示事件"
         }
       ]
-    }
-  ],
-  "cohesionReviewThresholds": [
-    {
-      "path": "src-tauri/src/voice_controller.rs",
-      "maxLines": 800,
-      "reason": "会话 Actor、录音、ASR finalize、交付、Pending、Incident 和 UI 投影应进行职责内聚复核"
     }
   ],
   "requiredDocs": [

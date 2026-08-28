@@ -59,12 +59,14 @@ fn map_voice_input_error(error: VoiceControlServiceError) -> CommandError {
             "native_confirmation_required",
             "新增剪贴板兼容应用必须通过专用的 Windows 原生确认流程",
         ),
-        VoiceControlServiceError::VoiceControl(message) => {
-            CommandError::new("voice_control_failed", message)
-        }
-        VoiceControlServiceError::ShortcutState(message) => {
-            CommandError::new("shortcut_state_failed", message)
-        }
+        VoiceControlServiceError::Reconciliation {
+            committed_revision,
+            message,
+        } => CommandError::with_details(
+            "voice_reconciliation_failed",
+            message,
+            serde_json::json!({ "committedRevision": committed_revision }),
+        ),
     }
 }
 
@@ -269,7 +271,7 @@ pub fn set_clipboard_compatibility(
 }
 
 #[tauri::command]
-pub fn save_config(
+pub async fn save_config(
     config: AppConfig,
     expected_revision: u64,
     hotword_agent_api_key: Option<String>,
@@ -279,11 +281,12 @@ pub fn save_config(
     command_error::require_window(&window, "main")?;
     voice_input
         .save_config(config, expected_revision, hotword_agent_api_key)
+        .await
         .map_err(map_voice_input_error)
 }
 
 #[tauri::command]
-pub fn set_enabled(
+pub async fn set_enabled(
     enabled: bool,
     expected_revision: u64,
     window: WebviewWindow,
@@ -292,6 +295,7 @@ pub fn set_enabled(
     command_error::require_window(&window, "main")?;
     voice_input
         .set_enabled(enabled, expected_revision)
+        .await
         .map_err(map_voice_input_error)
 }
 

@@ -683,22 +683,6 @@ function validateImplementationClaims(config, dossiers, errors) {
   }
 }
 
-function collectCohesionWarnings(config) {
-  const warnings = [];
-  for (const threshold of config.cohesionReviewThresholds ?? []) {
-    const absolute = path.resolve(root, threshold.path);
-    if (!insideRoot(absolute) || !existsSync(absolute)) {
-      warnings.push(`${threshold.path}: 内聚复核路径不存在或逃出仓库`);
-      continue;
-    }
-    const lines = readFileSync(absolute, "utf8").split(/\r?\n/).length;
-    if (lines > threshold.maxLines) {
-      warnings.push(`${threshold.path}: ${lines} 行超过复核阈值 ${threshold.maxLines}；${threshold.reason}`);
-    }
-  }
-  return warnings;
-}
-
 function validateProposals(proposalDir, featureIds, errors) {
   const files = walk(proposalDir, (file) => file.endsWith(".md") && path.basename(file) !== "README.md");
   for (const file of files) {
@@ -903,18 +887,12 @@ async function runCheck(architecture) {
   const mermaidCount = await validateMermaid(markdownFiles, errors);
   const adrCount = validateAdrs(architectureDir, errors);
   const factCount = validateFacts(facts, currentMarkdownFiles, errors);
-  const cohesionWarnings = collectCohesionWarnings(config);
 
   if (errors.length > 0) {
     console.error("文档结构与追踪关系检查失败：");
     for (const error of errors) console.error(`- ${error}`);
     process.exitCode = 1;
     return;
-  }
-
-  if (cohesionWarnings.length > 0) {
-    console.warn("架构内聚复核提醒（不阻断）：");
-    for (const warning of cohesionWarnings) console.warn(`- ${warning}`);
   }
 
   console.log(
@@ -934,4 +912,4 @@ if (isMain) {
   }
 }
 
-export { affectedValidationSlices, collectCohesionWarnings, effectiveSliceFreshness, parseJsonFrontMatterText, validateCurrentViews, validateFeatureDossiers, validateImplementationClaims, validatePostmortems, validateProposalReferences, validateProposals };
+export { affectedValidationSlices, effectiveSliceFreshness, parseJsonFrontMatterText, validateCurrentViews, validateFeatureDossiers, validateImplementationClaims, validatePostmortems, validateProposalReferences, validateProposals };

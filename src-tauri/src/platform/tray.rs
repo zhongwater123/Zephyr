@@ -27,13 +27,16 @@ pub fn setup(app: &AppHandle, voice_control: VoiceControlService) -> tauri::Resu
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "open_settings" => show_main_window(app),
             "toggle_enabled" => {
-                if let Err(error) = voice_control.toggle_from_current() {
-                    log::error!(
-                        target: "shortcut_edit_trace",
-                        "event=tray_toggle_failed phase=enable result=failed errorCode=voice_control_failed message={:?}",
-                        error
-                    );
-                }
+                let voice_control = voice_control.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(error) = voice_control.toggle_from_current().await {
+                        log::error!(
+                            target: "shortcut_edit_trace",
+                            "event=tray_toggle_failed phase=enable result=failed errorCode=voice_control_failed message={:?}",
+                            error
+                        );
+                    }
+                });
             }
             "quit" => app.exit(0),
             _ => {}

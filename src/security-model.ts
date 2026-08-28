@@ -63,6 +63,14 @@ export function conflictConfig(error: unknown): AppConfig | null {
     : null;
 }
 
+export function reconciliationCommittedRevision(error: unknown): number | null {
+  const payload = parseCommandError(error);
+  const revision = payload?.details?.committedRevision;
+  return payload?.code === "voice_reconciliation_failed" && typeof revision === "number"
+    ? revision
+    : null;
+}
+
 export function isLatestMutation(sequence: number, latestSequence: number) {
   return sequence === latestSequence;
 }

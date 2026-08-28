@@ -321,10 +321,9 @@
       "name": "VoiceSessionActor",
       "kind": "component",
       "source": [
-        "src-tauri/src/voice_controller.rs",
+        "src-tauri/src/voice_controller",
         "src-tauri/src/voice_trigger.rs",
-        "src-tauri/src/state.rs",
-        "src-tauri/src/session.rs"
+        "src-tauri/src/state.rs"
       ],
       "docs": [
         "docs/architecture/c4-components-backend.md",
@@ -334,7 +333,8 @@
       "adrs": [
         "docs/architecture/adr/0002-single-owner-bounded-voice-session.md",
         "docs/architecture/adr/0003-delivery-commit-point-and-pending-output.md",
-        "docs/architecture/adr/0012-unified-voice-input-control-plane.md"
+        "docs/architecture/adr/0012-unified-voice-input-control-plane.md",
+        "docs/architecture/adr/0013-strict-mailbox-owned-voice-runtime.md"
       ],
       "changeTriggers": [
         "会话事件、状态、取消、deadline、finalize 或所有权变化"
@@ -350,8 +350,10 @@
       ],
       "publicContracts": [
         "VoiceCommand and internal VoiceInternalEvent separation",
-        "VoiceTriggerPort and ActivationId",
+        "VoiceTriggerPort, ActivationId, and asynchronous BeginReceipt",
         "VoiceSessionHandle read-only status snapshot",
+        "VoiceAvailability distinct from shortcut health",
+        "AudioSessionActor single Recorder ownership",
         "VoiceStatePayload",
         "SessionMetrics",
         "single active session ownership"

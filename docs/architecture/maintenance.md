@@ -19,6 +19,8 @@
 
 材料发生冲突时，按 [Feature Dossier 冲突矩阵](../features/README.md#冲突矩阵) 分类；不得通过重复同一假设来制造伪证据。
 
+在 MVP 迭代中，Dossier 的用户目标、已确认验收和明确不规定的实现构成当前契约；假设、实现入口、验证记录和历史只提供上下文。用户最新明确需求可以直接修订 MVP 契约。只有涉及安全、数据完整性、外部承诺或难以逆转的 Accepted ADR 决策时，才先暂停并更新决策记录。
+
 ## 日常工作流
 
 ### 1. 变更前：确定产品与影响面
@@ -48,7 +50,7 @@ npm run architecture:impact -- --base origin/main
 
 | 变化 | 至少复核 |
 | --- | --- |
-| 用户可观察行为 | Feature Dossier、验收切片、相关自动化与实机证据 |
+| 用户可观察行为 | 阅读 Feature Dossier 的 MVP 契约；契约变化时更新它，并记录可获得的相关自动化或实机证据 |
 | 外部系统、用户或信任边界 | C4 L1/L2、arc42 风险、ADR |
 | 进程、WebView、存储或组件责任 | C4 L2/L3、代码地图、ADR |
 | 录音、识别、交付、配置或快捷键时序 | Current Runtime View、Dossier、相关 ADR |

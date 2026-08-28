@@ -7,6 +7,7 @@ import {
   endpointIsTrusted,
   isLatestMutation,
   parseCommandError,
+  reconciliationCommittedRevision,
 } from "./security-model";
 
 describe("security state model", () => {
@@ -31,6 +32,23 @@ describe("security state model", () => {
         JSON.stringify({ code: "endpoint_authorization_denied", message: "denied" }),
       )?.code,
     ).toBe("endpoint_authorization_denied");
+  });
+
+  it("keeps the committed revision when voice runtime reconciliation fails", () => {
+    expect(
+      reconciliationCommittedRevision({
+        code: "voice_reconciliation_failed",
+        message: "runtime unavailable",
+        details: { committedRevision: 7 },
+      }),
+    ).toBe(7);
+    expect(
+      reconciliationCommittedRevision({
+        code: "config_conflict",
+        message: "conflict",
+        details: { committedRevision: 7 },
+      }),
+    ).toBeNull();
   });
 
   it("binds endpoint trust to origin and purpose", () => {

@@ -8,7 +8,7 @@
       "unit": "events",
       "description": "VoiceSessionController 控制通道容量",
       "source": {
-        "path": "src-tauri/src/voice_controller.rs",
+        "path": "src-tauri/src/voice_controller/mod.rs",
         "symbol": "CONTROL_QUEUE_CAPACITY"
       },
       "mentions": [
@@ -25,7 +25,7 @@
       "unit": "chunks",
       "description": "单会话 PCM 音频队列容量",
       "source": {
-        "path": "src-tauri/src/voice_controller.rs",
+        "path": "src-tauri/src/voice_controller/workflow/start.rs",
         "symbol": "AUDIO_QUEUE_CAPACITY"
       },
       "mentions": [
@@ -42,7 +42,7 @@
       "unit": "seconds",
       "description": "单次录音硬上限",
       "source": {
-        "path": "src-tauri/src/voice_controller.rs",
+        "path": "src-tauri/src/voice_controller/actor.rs",
         "symbol": "MAX_RECORDING_SECS"
       },
       "mentions": [
@@ -58,7 +58,7 @@
       "unit": "milliseconds",
       "description": "录音 PCM chunk 目标时长",
       "source": {
-        "path": "src-tauri/src/voice_controller.rs",
+        "path": "src-tauri/src/voice_controller/workflow/start.rs",
         "symbol": "STREAM_CHUNK_MS"
       },
       "mentions": [
@@ -73,7 +73,7 @@
       "unit": "seconds",
       "description": "已有 partial 时等待 final transcript 的超时",
       "source": {
-        "path": "src-tauri/src/voice_controller.rs",
+        "path": "src-tauri/src/voice_controller/workflow/finalize.rs",
         "symbol": "FINAL_TRANSCRIPT_TIMEOUT_SECS"
       },
       "mentions": []
@@ -85,7 +85,7 @@
       "unit": "milliseconds",
       "description": "没有 partial 时初次等待 provider 结果的短超时",
       "source": {
-        "path": "src-tauri/src/voice_controller.rs",
+        "path": "src-tauri/src/voice_controller/workflow/finalize.rs",
         "symbol": "EMPTY_TRANSCRIPT_TIMEOUT_MS"
       },
       "mentions": []
@@ -177,6 +177,21 @@
       },
       "mentions": [
         { "path": "docs/architecture/c4-components-backend.md", "token": "capacity {value} control" }
+      ]
+    },
+    {
+      "id": "voice.audio-control-queue-capacity",
+      "value": 4,
+      "display": "4",
+      "unit": "commands",
+      "description": "AudioSessionActor 控制邮箱容量",
+      "source": {
+        "path": "src-tauri/src/voice_controller/audio_actor.rs",
+        "symbol": "AUDIO_CONTROL_CAPACITY"
+      },
+      "mentions": [
+        { "path": "docs/architecture/c4-components-backend.md", "token": "AudioSessionActor mailbox 容量 {value}" },
+        { "path": "docs/architecture/runtime-views.md", "token": "AudioSessionActor mailbox 容量 {value}" }
       ]
     },
     {

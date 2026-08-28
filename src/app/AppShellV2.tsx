@@ -15,6 +15,7 @@ import {
   commandErrorMessage,
   conflictConfig,
   endpointIsTrusted,
+  reconciliationCommittedRevision,
 } from "../security-model";
 import { configApi, hotwordApi, providerApi, sessionApi } from "../ipc/client";
 import { useRevisionedConfigMutation } from "./useRevisionedConfigMutation";
@@ -241,7 +242,14 @@ export function AppShell() {
       setConfig((current) => ({ ...current, enabled, revision }));
     } catch (error) {
       const conflict = conflictConfig(error);
-      setConfig(conflict ? normalizeConfig(conflict) : previous);
+      const committedRevision = reconciliationCommittedRevision(error);
+      setConfig(
+        conflict
+          ? normalizeConfig(conflict)
+          : committedRevision !== null
+            ? { ...previous, enabled, revision: committedRevision }
+            : previous,
+      );
       setEnabledError(configMutation.describeError(error));
     } finally {
       setEnabledSaving(false);

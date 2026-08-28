@@ -20,6 +20,10 @@
   "properties": {
     "schemaVersion": { "const": 3 },
     "featureId": { "type": "string", "pattern": "^FEAT-[A-Z0-9]+(?:-[A-Z0-9]+)*$" },
+    "authority": {
+      "enum": ["mvp_contract", "hard_boundary", "reference"],
+      "default": "mvp_contract"
+    },
     "confirmation": {
       "type": "object",
       "additionalProperties": false,

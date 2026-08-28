@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
+import path from "node:path";
 
 const checks = [
   {
@@ -23,7 +24,7 @@ const checks = [
     ],
   },
   {
-    file: "src-tauri/src/voice_controller.rs",
+    directory: "src-tauri/src/voice_controller",
     forbidden: [
       "45000002",
       "empty audio",
@@ -36,9 +37,16 @@ const checks = [
 
 const violations = [];
 for (const check of checks) {
-  const source = readFileSync(check.file, "utf8");
-  for (const token of check.forbidden) {
-    if (source.includes(token)) violations.push(check.file + ": " + token);
+  const files = check.directory
+    ? readdirSync(check.directory, { recursive: true, withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".rs"))
+        .map((entry) => path.join(entry.parentPath, entry.name))
+    : [check.file];
+  for (const file of files) {
+    const source = readFileSync(file, "utf8");
+    for (const token of check.forbidden) {
+      if (source.includes(token)) violations.push(file + ": " + token);
+    }
   }
 }
 

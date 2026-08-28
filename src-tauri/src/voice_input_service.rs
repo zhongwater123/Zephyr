@@ -1,15 +1,17 @@
 use crate::config::{self, AppConfig, CredentialUpdates, InjectionStrategy};
 use crate::services::{ConfigService, ConfigServiceError};
 use crate::shortcut_manager::ShortcutManager;
-use crate::voice_controller::VoiceSessionHandle;
+use crate::voice_controller::{VoiceAvailability, VoiceSessionHandle};
 use std::sync::Arc;
 
 #[derive(Debug)]
 pub enum VoiceControlServiceError {
     Config(ConfigServiceError),
     NativeConfirmationRequired,
-    VoiceControl(String),
-    ShortcutState(String),
+    Reconciliation {
+        committed_revision: u64,
+        message: String,
+    },
 }
 
 impl From<ConfigServiceError> for VoiceControlServiceError {
@@ -38,7 +40,7 @@ impl VoiceControlService {
         }
     }
 
-    pub fn save_config(
+    pub async fn save_config(
         &self,
         mut next: AppConfig,
         expected_revision: u64,
@@ -63,13 +65,14 @@ impl VoiceControlService {
         };
         let committed = self.config.commit(expected_revision, next, &updates)?;
 
-        if current.enabled != committed.enabled {
-            self.apply_enabled(committed.enabled)?;
-        }
+        // Every committed revision is a reconciliation opportunity. This also
+        // repairs a previous partial commit whose Actor acknowledgement failed.
+        self.apply_enabled(committed.enabled, committed.revision)
+            .await?;
         Ok(committed)
     }
 
-    pub fn set_enabled(
+    pub async fn set_enabled(
         &self,
         enabled: bool,
         expected_revision: u64,
@@ -83,22 +86,48 @@ impl VoiceControlService {
         let revision = next.revision;
         self.config.commit_config(expected_revision, next)?;
 
-        self.apply_enabled(enabled)?;
+        self.apply_enabled(enabled, revision).await?;
         Ok(revision)
     }
 
-    pub fn toggle_from_current(&self) -> Result<u64, VoiceControlServiceError> {
+    pub async fn toggle_from_current(&self) -> Result<u64, VoiceControlServiceError> {
         let current = self.config.snapshot();
-        self.set_enabled(!current.enabled, current.revision)
+        self.set_enabled(!current.enabled, current.revision).await
     }
 
-    fn apply_enabled(&self, enabled: bool) -> Result<(), VoiceControlServiceError> {
-        self.voice
-            .set_availability(enabled)
-            .map_err(|error| VoiceControlServiceError::VoiceControl(format!("{error:?}")))?;
-        self.shortcut
-            .set_enabled(enabled)
-            .map_err(VoiceControlServiceError::ShortcutState)
+    async fn apply_enabled(
+        &self,
+        enabled: bool,
+        committed_revision: u64,
+    ) -> Result<(), VoiceControlServiceError> {
+        let snapshot = self
+            .voice
+            .set_availability(enabled, committed_revision)
+            .await
+            .map_err(|error| VoiceControlServiceError::Reconciliation {
+                committed_revision,
+                message: format!("{error:?}"),
+            })?;
+        let expected = if enabled {
+            VoiceAvailability::Available
+        } else {
+            VoiceAvailability::Disabled
+        };
+        if snapshot.availability != expected || snapshot.desired_revision != committed_revision {
+            return Err(VoiceControlServiceError::Reconciliation {
+                committed_revision,
+                message: format!(
+                    "语音运行态协调未完成：availability={:?}, desiredRevision={}",
+                    snapshot.availability, snapshot.desired_revision
+                ),
+            });
+        }
+        if let Err(message) = self.shortcut.set_enabled(enabled) {
+            log::warn!(
+                "voice desired state committed at revision {committed_revision}, but shortcut health is degraded: {message}"
+            );
+        }
+        Ok(())
     }
 }
 

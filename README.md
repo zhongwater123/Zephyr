@@ -50,8 +50,10 @@ cargo test
 For production build:
 
 ```powershell
-npm run tauri build
+npm run package:windows
 ```
+
+The command runs the release gates, builds a current-user NSIS installer, and writes a SHA-256 release manifest next to it. See [Windows test installer and upgrades](docs/release-windows.md).
 
 ## Configuration
 

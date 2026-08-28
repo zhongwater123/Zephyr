@@ -23,6 +23,37 @@ pub struct PendingOutputService {
     state: Mutex<PendingState>,
 }
 
+pub struct PendingOutputLease {
+    service: std::sync::Arc<PendingOutputService>,
+    id: String,
+    record: PendingOutputRecord,
+    terminal: bool,
+}
+
+impl PendingOutputLease {
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub fn record(&self) -> &PendingOutputRecord {
+        &self.record
+    }
+
+    pub fn complete(mut self) -> Result<PendingOutputRecord, PendingOutputServiceError> {
+        let completed = self.service.complete(&self.id)?;
+        self.terminal = true;
+        Ok(completed)
+    }
+}
+
+impl Drop for PendingOutputLease {
+    fn drop(&mut self) {
+        if !self.terminal {
+            self.service.release(&self.id);
+        }
+    }
+}
+
 impl PendingOutputService {
     pub fn is_full(&self) -> bool {
         self.state
@@ -72,6 +103,19 @@ impl PendingOutputService {
             .ok_or(PendingOutputServiceError::NotFound)?;
         state.reserved.insert(id.to_string());
         Ok(record)
+    }
+
+    pub fn reserve_lease(
+        self: &std::sync::Arc<Self>,
+        id: &str,
+    ) -> Result<PendingOutputLease, PendingOutputServiceError> {
+        let record = self.reserve(id)?;
+        Ok(PendingOutputLease {
+            service: self.clone(),
+            id: id.to_string(),
+            record,
+            terminal: false,
+        })
     }
 
     pub fn release(&self, id: &str) {
@@ -168,5 +212,16 @@ mod tests {
             service.reserve(&output.id).unwrap_err(),
             PendingOutputServiceError::NotFound
         );
+    }
+
+    #[test]
+    fn dropped_lease_releases_reservation() {
+        let service = std::sync::Arc::new(PendingOutputService::default());
+        let output = service
+            .push(1, "hello".to_string(), target(), "test", "test")
+            .unwrap();
+        drop(service.reserve_lease(&output.id).unwrap());
+
+        assert!(service.reserve(&output.id).is_ok());
     }
 }

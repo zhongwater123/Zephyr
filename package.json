@@ -12,6 +12,8 @@
     "architecture:asr": "node scripts/check-asr-boundaries.mjs",
     "security:secrets": "node scripts/check-secrets.mjs",
     "architecture:impact": "node scripts/check-architecture-docs.mjs --impact",
+    "package:windows": "node scripts/package-windows.mjs",
+    "package:windows:check": "node scripts/package-windows.mjs --check-only",
     "preview": "vite preview",
     "tauri": "node scripts/tauri.mjs"
   },

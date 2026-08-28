@@ -1,5 +1,5 @@
 ---
-{"documentType":"runtime-view","viewStatus":"current","sourceRevision":"38e54443bb4357771c9c789f83d5fc7e4ed3830c","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller.rs","src-tauri/src/streaming_pipeline.rs","src-tauri/src/delivery.rs","src-tauri/src/pending_output_service.rs"],"reviewStatus":"partial","reviewedAt":"2026-08-27","knownDeviations":["finalize task 绕过 Actor 直接写 SharedRuntime","取消与文本注入尚无 Actor 串行化的授权提交点"]}
+{"documentType":"runtime-view","viewStatus":"current","sourceRevision":"b62667deab18f740c83bab2f1bcebae2fd0a59e2","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller","src-tauri/src/voice_trigger.rs","src-tauri/src/voice_input_service.rs","src-tauri/src/streaming_pipeline.rs","src-tauri/src/lib.rs","docs/architecture/runtime-views.md"],"reviewStatus":"partial","reviewedAt":"2026-08-28","knownDeviations":["Starting 阶段的匹配 Release 只记录 finish_requested，不取消尚未完成的音频启动；慢设备或快速按放时，Recorder 可能在用户松开后才完成启动并随后 Stop。"]}
 ---
 
 # 运行时与部署视图
@@ -12,13 +12,14 @@
 sequenceDiagram
     actor User as 用户
     participant HK as Shortcut Adapter
-    participant VC as VoiceSessionActor
-    participant RT as module-private SharedRuntime
-    participant FIN as Detached Finalize Task
+    participant VC as Voice Actor
+    participant RT as Actor-owned VoiceRuntime
+    participant START as Start Workflow
+    participant AUD as AudioSessionActor
     participant WIN as Windows Target Adapter
-    participant MIC as CPAL / Audio Queue
     participant ASR as Streaming ASR
-    participant OVL as Preinput Overlay
+    participant PRE as Presenter / Overlay
+    participant FIN as Finalize Workflow
     participant DEL as DeliveryService
     participant APP as 目标应用
     participant DB as History / Hotwords
@@ -26,40 +27,58 @@ sequenceDiagram
     User->>HK: Pressed
     HK->>HK: 创建并持有 ActivationId
     HK->>VC: VoiceTriggerPort.begin(activation)
-    VC->>RT: 接受后写 Activation/session/state
-    VC->>WIN: 捕获 HWND/PID/创建时间/EXE
-    VC->>MIC: start_streaming(200ms, capacity=32)
-    VC->>ASR: 建立已授权 WSS 会话
-    VC->>OVL: begin + Recording
+    VC->>RT: reducer 接受 Activation / Starting / 固定 config revision
+    VC-->>HK: BeginReceipt -> Accepted/Rejected（快捷键不等待）
+    VC->>PRE: begin + Starting
+    VC->>START: StartJob(sessionId, config snapshot)
+    START->>WIN: 捕获 HWND/PID/创建时间/EXE
+    START->>START: 组合热词 + 构造 Provider
+    START->>AUD: Start(sessionId, 200ms, data capacity=32)
+    Note over AUD: AudioSessionActor mailbox 容量 4；独占 Recorder
+    AUD-->>START: AudioStreamInfo / error
+    START-->>VC: StartFinished(sessionId, PreparedSession)
+    VC->>RT: reducer -> Recording 或立即 Stopping
+    VC->>ASR: 启动 Provider task
     loop 录音期间
-        MIC->>ASR: PCM chunk（有界背压）
-        ASR-->>OVL: TranscriptRelay 读取只读 observation 后更新 preview
+        AUD->>ASR: PCM chunk（有界背压）
+        ASR-->>PRE: PresentationEvent（非权威字符进度）
     end
     User->>HK: Released
     HK->>VC: VoiceTriggerPort.finish(same ActivationId)
-    VC->>MIC: stop_streaming / final chunk
-    VC->>RT: take ActiveSession / Transcribing
-    VC->>FIN: spawn(provider result, cancellation, SharedRuntime clone)
+    alt 仍在 Starting
+        VC->>RT: finish_requested=true
+        Note over VC,RT: 当前实现等待 StartFinished 后再 Stop；Release 不丢失，但可能发生松开后才完成麦克风启动
+    else Recording
+        VC->>RT: reducer -> Stopping
+    end
+    VC->>AUD: Stop(sessionId)
+    AUD-->>VC: AudioStopped(sessionId, duration)
+    VC->>RT: reducer -> Transcribing
+    VC->>FIN: move FinalizationJob（不含 Runtime）
     FIN->>ASR: 等待 final（有超时与取消）
     ASR-->>FIN: final text
     FIN->>DEL: validate(text, captured target)
     DEL->>WIN: 复验身份 + 当前前台 HWND
     alt 目标和文本有效
+        FIN->>VC: ReadyToInject(sessionId)
+        VC->>RT: 校验当前 session / enabled / cancellation
+        VC-->>FIN: authorize + Pasting
         DEL->>APP: Unicode SendInput 或显式兼容模式
         APP-->>DEL: 注入成功
         DEL->>DB: 写历史；随后触发热词整理
-        DEL-->>FIN: 注入/历史结果
-        FIN->>RT: 直接写 metrics + complete
+        FIN->>VC: FinalizationFinished(Delivered)
+        VC->>RT: metrics + complete
     else 目标变化、文本无效或注入失败
         DEL-->>FIN: delivery failure
-        FIN->>RT: 直接写 Pending（内存，5 条，TTL 10 分钟）+ complete/error
+        FIN->>VC: FinalizationFinished(Pending/Failed)
+        VC->>RT: Pending（内存，5 条，TTL 10 分钟）+ complete/error
         Note over APP,DB: 不写目标应用、不写历史、不学习热词
     end
-    FIN-->>OVL: hide current session
-    Note over VC,FIN: 当前偏差：Actor 不拥有 finalize 后的全部 mutation；cancel 与不可逆注入尚无串行授权点
+    VC->>PRE: hide current session
+    Note over VC,FIN: reducer 是唯一控制状态迁移入口；过期结果无副作用
 ```
 
-该图刻意描述当前实现而不是 ADR-0012 的目标形态。外部组件已经不能直接取得 Runtime，但 finalize task 仍在 `voice_controller` 模块内部共享并修改它；因此本视图的实现复核状态为 `partial`。
+该图描述当前实现。`VoiceRuntime` 只保存 desired state、availability、阶段、当前 Session/Activation、revision、取消状态和指标，不保存 Recorder、Injector、Provider task 或 SessionResources。Runtime 由 Voice Actor mailbox task 按值持有，纯 reducer 产生 Effects；start/finalize/pending 和 Streaming worker 均不能访问 Runtime。Presenter 是唯一 Tauri 状态事件与 Overlay 出口，流式字符数只是展示进度，权威 `VoiceStatusSnapshot` 只由 Actor 发布。
 
 ### 快捷键录入与提交
 
@@ -107,10 +126,13 @@ sequenceDiagram
 ### 并发与终止条件
 
 - 120 秒 deadline 和匹配当前 Activation 的真实 Released 进入相同的幂等 finalize 路径；迟到或其他 Activation 的 finish/cancel 被忽略。
+- Starting 阶段的匹配 Release 只设置 `finish_requested`，不会取消 Start Workflow 或启动取消令牌；StartFinished 后才向 AudioSessionActor 发 Stop。这是当前实现事实，不是已验证的目标语义：慢设备或快速按放时可能在用户松开后才完成麦克风启动。
 - 音频队列 Full、用户取消、provider 拒绝或控制通道失败都会取消当前会话并禁止交付。
 - 旧 session 的 provider 完成只能记录，不能修改当前状态或产生文本副作用。
 - provider final 最长等待路径由 preview 是否存在决定；取消令牌可提前终止等待。
 - 每个已接受会话固定开始时的配置 revision、Provider 和注入策略快照；配置变更只影响后续会话。
+- `desired_enabled`、Actor availability 与 shortcut health 是三个独立投影；Hook 错误不能把 Actor 改为 Disabled。
+- 最后一个 Handle 释放后强 sender 消失，Worker 的 WeakSender 不维持 mailbox；应用退出另外显式 Shutdown Voice Actor，再由其 Shutdown Audio Actor。
 
 ## Pending 手动交付
 
@@ -121,6 +143,7 @@ sequenceDiagram
     participant CMD as Session Command
     participant ACT as VoiceSessionActor
     participant PEND as PendingOutputService
+    participant WF as Pending Delivery Workflow
     participant DEL as DeliveryService
     participant WIN as Windows Target Adapter
     participant APP as 原目标应用
@@ -129,16 +152,19 @@ sequenceDiagram
     UI->>CMD: deliver_pending_output(id)
     CMD->>ACT: DeliverPending(id)
     ACT->>ACT: 与 Begin 串行，确认无活动会话
-    ACT->>PEND: reserve(id)
-    ACT->>DEL: validate + inject(activate=true)
+    ACT->>PEND: reserve lease(id)
+    ACT->>WF: move lease + immutable config
+    WF->>DEL: validate + inject(activate=true)
     DEL->>WIN: 重新验证目标身份
     alt 目标仍有效
         WIN->>APP: 激活原窗口
         DEL->>APP: 按应用策略注入
-        ACT->>PEND: complete(id)
+        WF->>ACT: PendingDeliveryFinished(Delivered, lease)
+        ACT->>PEND: complete(lease)
         ACT-->>UI: 成功并移除 Pending
     else 目标失效或注入失败
-        ACT->>PEND: release(id)
+        WF->>ACT: PendingDeliveryFinished(Retained, lease)
+        ACT->>PEND: drop lease / release(id)
         ACT-->>UI: 结构化错误；Pending 保留
     end
 ```
@@ -155,10 +181,13 @@ sequenceDiagram
     participant CMD as Config Command
     participant NATIVE as NativeConfirmation
     participant CFG as ConfigService
+    participant VCS as VoiceControlService
+    participant ACT as Voice Actor
+    participant HK as ShortcutManager
     participant KEY as CredentialStore
     participant JSON as ConfigRepository
 
-    UI->>CMD: mutation(expectedRevision)
+    UI->>CMD: save_config / set_enabled(expectedRevision)
     CMD->>CMD: 验证 window label == main
     opt 自定义 endpoint 首次授权
         CMD->>NATIVE: Windows 原生确认（带父窗口）
@@ -175,7 +204,26 @@ sequenceDiagram
             CFG->>KEY: 恢复旧快照
             CFG-->>UI: structured storage error
         else 成功
-            CFG-->>UI: 新配置与新 revision
+            CFG-->>VCS: committed config + revision
+            VCS->>ACT: SetAvailability(desired, committedRevision)
+            opt 禁用且存在活动会话
+                ACT->>ACT: reducer 拒绝新 Begin + 取消资源
+                ACT->>ACT: 音频 Cancel 已进入 Audio Actor 邮箱
+            end
+            ACT-->>VCS: availability acknowledgment + desiredRevision
+            alt Actor 未确认
+                VCS-->>UI: voice_reconciliation_failed + committedRevision
+                Note over UI,VCS: 配置不回滚；前端保留已提交意图，后续配置操作重试
+            else Actor 已确认
+                VCS->>HK: 协调 Hook enabled 状态
+                alt Hook 安装失败
+                    HK-->>ACT: shortcut health error
+                    VCS-->>UI: 新配置与新 revision
+                    Note over ACT,HK: Actor 仍 Available，其他触发入口不受影响
+                else Hook 正常
+                    VCS-->>UI: 新配置与新 revision
+                end
+            end
         end
     end
 ```

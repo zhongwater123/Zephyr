@@ -11,7 +11,6 @@ import Ajv2020 from "ajv/dist/2020.js";
 import {
   effectiveSliceFreshness,
   affectedValidationSlices,
-  collectCohesionWarnings,
   parseJsonFrontMatterText,
   validateCurrentViews,
   validateFeatureDossiers,
@@ -400,15 +399,15 @@ test("Current views require source binding and deviation-aware review metadata",
   }
 });
 
-test("implemented voice control claim is blocked while SharedRuntime writers remain", () => {
+test("implemented claim is blocked while a configured forbidden boundary remains", () => {
   const check = {
     implementationClaimChecks: [{
       featureId: "FEAT-VOICE-INPUT-CONTROL-PLANE",
       whenImplementationStatus: "implemented",
       forbiddenSourceTokens: [{
-        path: "src-tauri/src/voice_controller.rs",
-        token: "type SharedRuntime = Arc<Mutex<VoiceRuntime>>",
-        reason: "Actor must own the aggregate by value",
+        path: "src-tauri/src/voice_controller/actor.rs",
+        token: "struct VoiceSessionActor",
+        reason: "fixture token must block the implementation claim",
       }],
     }],
   };
@@ -418,7 +417,7 @@ test("implemented voice control claim is blocked while SharedRuntime writers rem
   });
   const errors = [];
   validateImplementationClaims(check, [implemented], errors);
-  assert.ok(errors.some((error) => error.includes("SharedRuntime")));
+  assert.ok(errors.some((error) => error.includes("VoiceSessionActor")));
 
   const inProgressErrors = [];
   validateImplementationClaims(
@@ -427,16 +426,4 @@ test("implemented voice control claim is blocked while SharedRuntime writers rem
     inProgressErrors,
   );
   assert.deepEqual(inProgressErrors, []);
-});
-
-test("oversized architecture component produces a non-blocking cohesion warning", () => {
-  const warnings = collectCohesionWarnings({
-    cohesionReviewThresholds: [{
-      path: "src-tauri/src/voice_controller.rs",
-      maxLines: 800,
-      reason: "review controller cohesion",
-    }],
-  });
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /超过复核阈值 800/);
 });

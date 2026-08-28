@@ -1,5 +1,5 @@
 ---
-{"documentType":"arc42-view","viewStatus":"current","sourceRevision":"38e54443bb4357771c9c789f83d5fc7e4ed3830c","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller.rs","src-tauri/src/voice_input_service.rs","docs/architecture/arc42-lean.md"],"reviewStatus":"partial","reviewedAt":"2026-08-27","knownDeviations":["Actor 单写入者决策尚未在 finalize 路径实现","启停配置与运行时应用不是原子协调"]}
+{"documentType":"arc42-view","viewStatus":"current","sourceRevision":"b62667deab18f740c83bab2f1bcebae2fd0a59e2","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller","src-tauri/src/voice_trigger.rs","src-tauri/src/voice_input_service.rs","src-tauri/src/streaming_pipeline.rs","docs/architecture/arc42-lean.md"],"reviewStatus":"reviewed","reviewedAt":"2026-08-28","knownDeviations":[]}
 ---
 
 # arc42-Lean：GY Typing 架构叙事
@@ -45,7 +45,7 @@ GY Typing（Zephyr）是 Windows 语音输入助手。用户按住全局热键�
 
 - 使用 Tauri 把本机能力与 WebView UI 放在一个可部署桌面应用中。
 - 使用薄 commands 和 `AppServices` 隔离 IPC、业务编排与存储适配器。
-- 目标边界是使用单所有者 `VoiceSessionActor` 和 `VoiceSessionHandle` 串行化带 Activation 身份的会话命令与内部完成事件。当前只完成外部访问收口和命令入口串行化；finalize task 仍共享并修改 Runtime，尚未达到单写入者决策。
+- 使用单所有者 `VoiceSessionActor` 和 `VoiceSessionHandle` 串行化带 Activation 身份的会话命令与内部完成事件。Actor 按值持有纯 Runtime，由 reducer 生成 Effects；独立 AudioSessionActor 独占 Recorder，启动、finalize、Pending 与展示按职责分层，异步 Workflow 只返回类型化 Outcome。
 - 使用有界 `mpsc`、`watch` 和取消令牌表达背压、最新预览和终止。
 - 使用 `DeliveryService` 集中目标复验、文本验证、注入、Pending 和提交顺序。
 - 使用 revision CAS、原子 JSON 和凭据快照回滚保护配置事务。
@@ -98,9 +98,9 @@ GY Typing（Zephyr）是 Windows 语音输入助手。用户按住全局热键�
 
 [component:backend.voice-controller] [component:backend.streaming]
 
-- 控制通道容量 16；音频通道容量 32；WebSocket 原始帧通道容量 4；partial 使用 latest-value。
-- 控制通道或音频队列异常会发出失败关闭信号；控制队列满的运行时故障注入尚未完成。
-- session ID、取消令牌和所有权检查减少旧异步任务副作用，但当前 finalize task 在最后一次取消检查后仍可能进入不可逆注入，不能宣称已经完全阻止。
+- 控制通道容量 16；AudioSessionActor 控制邮箱容量 4；音频数据通道容量 32；WebSocket 原始帧通道容量 4；partial 使用 latest-value。
+- 公共控制通道满会触发失败关闭并令 Actor 进入 Faulted；音频数据队列溢出取消当前会话。两条路径均有自动化故障测试，真实设备行为仍待目标环境验证。
+- SessionId、ActivationId 和取消令牌由 Actor 仲裁；Worker 在注入前请求 Actor 授权并再次检查取消，过期结果不能修改当前状态。
 - 录音 120 秒自动 finalize；真实 Release 随后被幂等忽略。
 
 ### 文本交付
@@ -131,6 +131,7 @@ commands 返回 `CommandError { code, message, details }`。session metrics 记�
 | [ADR-0009](adr/0009-evidence-aware-document-governance.md) | 区分材料角色、实现与验证状态，并隔离 Proposed/Current |
 | [ADR-0010](adr/0010-separate-focused-shortcut-editing.md) | 分离有焦点的设置录入与全局运行时监听 |
 | [ADR-0012](adr/0012-unified-voice-input-control-plane.md) | 统一语音输入控制面所有权与触发端口 |
+| [ADR-0013](adr/0013-strict-mailbox-owned-voice-runtime.md) | 严格 mailbox-owned Runtime 与控制/执行分层 |
 
 ## 10. 质量要求与场景
 
@@ -149,8 +150,9 @@ commands 返回 `CommandError { code, message, details }`。session metrics 记�
 
 | 风险 / 技术债 | 当前控制 | 后续触发条件 |
 | --- | --- | --- |
-| `voice_controller.rs` 内部异步任务仍共享 Actor 私有运行时锁 | 类型可见性阻止组件外写入，Activation/session ownership 检查保护异步完成 | 出现内部锁竞争、死锁或更多并行会话需求时将长任务进一步改为纯结果消息 |
-| `voice_controller.rs`、`provider.rs`、`hotwords.rs` 仍较大 | 已抽出 Streaming、Delivery、Repository 接口 | 新增 provider/协议或热词策略前进一步按协议/领域拆分 |
+| 配置已提交后 Actor acknowledgment 仍可能失败 | 返回包含 committedRevision 的 reconciliation error；前端保留已提交意图，后续配置操作按最新 revision 重试 | 产品要求跨进程强一致或出现无法自动协调的持久故障时设计持久 outbox |
+| Provider 与热词实现仍有较高领域复杂度 | 语音控制面已按 mailbox、reducer/Effects、Audio Actor、三类 workflow 与 Presenter 分层；内聚性以依赖和可见性测试约束 | 新增 provider 协议或学习链路前按领域继续拆分，不使用文件行数作为符合性证明 |
+| 热词自动学习直接读取正式历史的单一 `text`，缺少 ASR 原文、交付文本和来源标记，可能把未来的模型润色结果反馈为 ASR hints | 目前仅在成功注入并写入历史后触发，手工热词仍可独立管理 | 接入路由/润色层前重构学习输入契约、provenance、批次游标和历史编辑后的重新学习语义 |
 | `AppShellV2.tsx` 仍承担大量页面装配 | feature controllers 已分离，preinput 已动态拆包 | 新增主页面功能前继续拆 Settings 与 shell orchestration |
 | Win32/OLE 行为受目标应用和 UIPI 影响 | 默认不回退、Pending 兜底、Windows CI 与手工验收 | 支持高完整性目标或更多兼容应用时增加隔离集成测试 |
 | 外部 ASR/Agent 协议可能变化 | provider 错误分类、endpoint trust、可替换 adapter trait | API 版本或认证方式变化时新增 ADR 并更新 L1/L2 |

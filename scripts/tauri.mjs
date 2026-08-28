@@ -152,3 +152,22 @@ child = spawn(process.execPath, [tauriCli, ...args], {
   windowsHide: false,
 });
 
+child.once("error", (error) => {
+  removeOwnedLock();
+  console.error(`无法启动 Tauri CLI：${error.message}`);
+  process.exitCode = 1;
+});
+
+child.once("exit", (code, signal) => {
+  removeOwnedLock();
+  if (shuttingDown) {
+    return;
+  }
+  if (signal) {
+    console.error(`Tauri CLI 被信号 ${signal} 终止。`);
+    process.exitCode = 1;
+    return;
+  }
+  process.exitCode = code ?? 1;
+});
+

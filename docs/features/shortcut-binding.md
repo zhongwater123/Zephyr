@@ -2,6 +2,7 @@
 {
   "schemaVersion": 3,
   "featureId": "FEAT-SHORTCUT-BINDING",
+  "authority": "mvp_contract",
   "confirmation": {
     "confirmedBy": "user",
     "confirmedAt": "2026-08-26",
@@ -113,6 +114,8 @@
 | `AC-SC-06` | 功能禁用时允许保存并提示“已保存，开启后生效”，保存本身不意外启用功能 | 控制器/服务测试 + 实机 |
 | `AC-SC-07` | 应用重启后读取最后一次成功持久化的绑定并可真实触发 | 打包程序重启验收 |
 | `AC-SC-08` | 与采用全局低级键盘监听的其他应用绑定同一物理键时，不误报 Zephyr 拥有系统级独占；不同启动、重装和退出顺序下的触发与吞键边界可被复现和解释 | 真实冲突应用矩阵 + Zephyr Hook generation/Pressed/Released 日志 + 必要的系统追踪 |
+
+`AC-SC-08` 是探索性验收：它用于明确 Windows 与外部 Hook 的实际边界，不能被当作 Zephyr 对其他应用拥有永久优先级或系统级独占的产品承诺。
 
 ## 明确不规定的实现
 
