@@ -10,7 +10,6 @@ export function useHotwordController(
 ) {
   const [hotwordOpen, setHotwordOpen] = useState(false);
   const [hotwordState, setHotwordState] = useState<HotwordState | null>(null);
-  const [hotwordApiKey, setHotwordApiKey] = useState("");
   const [newHotwordText, setNewHotwordText] = useState("");
   const [hotwordEdits, setHotwordEdits] = useState<Record<string, string>>({});
   const [profileContextText, setProfileContextText] = useState("");
@@ -52,10 +51,8 @@ export function useHotwordController(
         hotword_agent_base_url: config.hotword_agent_base_url,
         hotword_agent_model: config.hotword_agent_model,
       },
-      apiKey: hotwordApiKey || null,
       expectedRevision: config.revision,
     });
-    setHotwordApiKey("");
     applyHotwordState(nextState);
     setConfig(await configApi.get());
     return nextState;
@@ -180,8 +177,6 @@ export function useHotwordController(
     hotwordOpen,
     setHotwordOpen,
     hotwordState,
-    hotwordApiKey,
-    setHotwordApiKey,
     newHotwordText,
     setNewHotwordText,
     hotwordEdits,

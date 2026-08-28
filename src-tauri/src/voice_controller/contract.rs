@@ -1,5 +1,7 @@
 use super::resources::{PreparedSession, SessionCancellation, SessionMetrics, SessionResources};
 use crate::command_error::CommandResult;
+use crate::delivery::DeliveryIntent;
+use crate::history::HistoryProvenance;
 use crate::inject::{InjectionMethod, TextInjector};
 use crate::pending_output_service::PendingOutputLease;
 use crate::provider::ProviderError;
@@ -212,6 +214,8 @@ pub(super) struct PendingDraft {
     pub target: TargetWindowIdentity,
     pub reason_code: String,
     pub reason_message: String,
+    pub delivery_intent: DeliveryIntent,
+    pub provenance: HistoryProvenance,
 }
 
 pub(super) enum FinalizeOutcome {

@@ -1,8 +1,10 @@
+use crate::delivery::DeliveryIntent;
+use crate::history::HistoryProvenance;
 use crate::target::{
     PendingOutput, PendingOutputError, PendingOutputRecord, PendingOutputStore,
     TargetWindowIdentity,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,10 +14,26 @@ pub enum PendingOutputServiceError {
     Busy,
 }
 
+#[derive(Clone, Debug)]
+pub struct PendingDeliveryMetadata {
+    pub intent: DeliveryIntent,
+    pub provenance: HistoryProvenance,
+}
+
+impl Default for PendingDeliveryMetadata {
+    fn default() -> Self {
+        Self {
+            intent: DeliveryIntent::Legacy,
+            provenance: HistoryProvenance::default(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct PendingState {
     store: PendingOutputStore,
     reserved: HashSet<String>,
+    metadata: HashMap<String, PendingDeliveryMetadata>,
 }
 
 #[derive(Default)]
@@ -28,6 +46,7 @@ pub struct PendingOutputLease {
     id: String,
     record: PendingOutputRecord,
     terminal: bool,
+    metadata: PendingDeliveryMetadata,
 }
 
 impl PendingOutputLease {
@@ -37,6 +56,10 @@ impl PendingOutputLease {
 
     pub fn record(&self) -> &PendingOutputRecord {
         &self.record
+    }
+
+    pub fn metadata(&self) -> &PendingDeliveryMetadata {
+        &self.metadata
     }
 
     pub fn complete(mut self) -> Result<PendingOutputRecord, PendingOutputServiceError> {
@@ -71,14 +94,37 @@ impl PendingOutputService {
         reason_code: impl Into<String>,
         reason_message: impl Into<String>,
     ) -> Result<PendingOutput, PendingOutputServiceError> {
-        self.state
+        self.push_with_metadata(
+            session_id,
+            text,
+            target,
+            reason_code,
+            reason_message,
+            PendingDeliveryMetadata::default(),
+        )
+    }
+
+    pub fn push_with_metadata(
+        &self,
+        session_id: u64,
+        text: String,
+        target: TargetWindowIdentity,
+        reason_code: impl Into<String>,
+        reason_message: impl Into<String>,
+        metadata: PendingDeliveryMetadata,
+    ) -> Result<PendingOutput, PendingOutputServiceError> {
+        let mut state = self
+            .state
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let output = state
             .store
             .push(session_id, text, target, reason_code, reason_message)
             .map_err(|error| match error {
                 PendingOutputError::Full => PendingOutputServiceError::Full,
-            })
+            })?;
+        state.metadata.insert(output.id.clone(), metadata);
+        Ok(output)
     }
 
     pub fn list(&self) -> Vec<PendingOutput> {
@@ -110,10 +156,19 @@ impl PendingOutputService {
         id: &str,
     ) -> Result<PendingOutputLease, PendingOutputServiceError> {
         let record = self.reserve(id)?;
+        let metadata = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .metadata
+            .get(id)
+            .cloned()
+            .unwrap_or_default();
         Ok(PendingOutputLease {
             service: self.clone(),
             id: id.to_string(),
             record,
+            metadata,
             terminal: false,
         })
     }
@@ -134,10 +189,12 @@ impl PendingOutputService {
         if !state.reserved.remove(id) {
             return Err(PendingOutputServiceError::NotFound);
         }
-        state
+        let record = state
             .store
             .remove(id)
-            .ok_or(PendingOutputServiceError::NotFound)
+            .ok_or(PendingOutputServiceError::NotFound)?;
+        state.metadata.remove(id);
+        Ok(record)
     }
 
     pub fn discard(&self, id: &str) -> Result<PendingOutputRecord, PendingOutputServiceError> {
@@ -148,10 +205,12 @@ impl PendingOutputService {
         if state.reserved.contains(id) {
             return Err(PendingOutputServiceError::Busy);
         }
-        state
+        let record = state
             .store
             .remove(id)
-            .ok_or(PendingOutputServiceError::NotFound)
+            .ok_or(PendingOutputServiceError::NotFound)?;
+        state.metadata.remove(id);
+        Ok(record)
     }
 }
 
@@ -223,5 +282,31 @@ mod tests {
         drop(service.reserve_lease(&output.id).unwrap());
 
         assert!(service.reserve(&output.id).is_ok());
+    }
+
+    #[test]
+    fn smart_metadata_survives_pending_reservation() {
+        let service = std::sync::Arc::new(PendingOutputService::default());
+        let provenance = HistoryProvenance::smart_processed("office", "office-v1");
+        let output = service
+            .push_with_metadata(
+                7,
+                "first\nsecond".to_string(),
+                target(),
+                "target_changed",
+                "target changed",
+                PendingDeliveryMetadata {
+                    intent: DeliveryIntent::SmartDictationAtomicPaste,
+                    provenance: provenance.clone(),
+                },
+            )
+            .unwrap();
+
+        let lease = service.reserve_lease(&output.id).unwrap();
+        assert_eq!(
+            lease.metadata().intent,
+            DeliveryIntent::SmartDictationAtomicPaste
+        );
+        assert_eq!(lease.metadata().provenance, provenance);
     }
 }

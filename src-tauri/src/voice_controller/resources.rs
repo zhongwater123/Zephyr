@@ -66,6 +66,7 @@ pub(super) struct PreparedSession {
     pub audio_queue: Arc<AudioQueueMonitor>,
     pub started_at: Instant,
     pub config: AppConfig,
+    pub activation_intent: crate::text_processing::ActivationIntent,
     pub asr_hints: Option<AsrSessionHints>,
 }
 
@@ -82,6 +83,7 @@ pub(super) struct SessionResources {
     pub audio_queue: Arc<AudioQueueMonitor>,
     pub started_at: Instant,
     pub config: AppConfig,
+    pub activation_intent: crate::text_processing::ActivationIntent,
     pub state_tx: watch::Sender<crate::state::VoiceState>,
 }
 

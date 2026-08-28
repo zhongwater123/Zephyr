@@ -1,6 +1,6 @@
 # ADR-0014：智能成稿使用一次性整体粘贴交付
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-28
 - Deciders: Project maintainers
 - Drivers: 智能成稿必须在目标输入框外完整处理后一次性交付；办公和编码请求需要保留多段纯文本；不得用 Enter 逐段输入；同时保护目标身份和剪贴板并发数据

@@ -21,6 +21,7 @@ mod shortcut_manager;
 mod state;
 mod streaming_pipeline;
 mod target;
+mod text_processing;
 mod voice_controller;
 mod voice_input_service;
 mod voice_trigger;
@@ -55,6 +56,7 @@ pub fn run() {
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
+                .level_for("asr_trace", log::LevelFilter::Debug)
                 .level_for("shortcut_edit_trace", log::LevelFilter::Debug)
                 .level_for("rustls", log::LevelFilter::Warn)
                 .level_for("tungstenite", log::LevelFilter::Warn)

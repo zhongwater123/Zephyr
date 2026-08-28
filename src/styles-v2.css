@@ -799,6 +799,88 @@
   margin-bottom: 20px;
 }
 
+.polish-level-selector {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.polish-level-selector button {
+  display: grid;
+  gap: 7px;
+  min-height: 118px;
+  padding: 16px;
+  text-align: left;
+  color: var(--z-text);
+  background: var(--z-surface);
+  border: 1px solid var(--z-line);
+  border-radius: var(--z-control-radius);
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.polish-level-selector button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: var(--z-line-strong);
+}
+
+.polish-level-selector button.is-active {
+  border-color: var(--z-accent);
+  background: rgba(31, 113, 129, 0.09);
+  box-shadow: 0 0 0 1px rgba(31, 113, 129, 0.12);
+}
+
+.polish-level-selector button:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.polish-level-selector strong {
+  font-size: 15px;
+}
+
+.polish-level-selector span {
+  color: var(--z-text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.profile-override-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 0.55fr) auto;
+  gap: 8px;
+  margin: 18px 0 8px;
+}
+
+.profile-override-add select {
+  min-width: 0;
+  border: 1px solid var(--z-line-strong);
+  border-radius: var(--z-control-radius);
+  background: rgba(255, 255, 252, 0.76);
+  padding: 9px 11px;
+  color: var(--z-text);
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "Segoe UI", sans-serif;
+  font-size: 14px;
+}
+
+.profile-override-add select:focus-visible {
+  outline: 2px solid rgba(31, 113, 129, 0.46);
+  outline-offset: 2px;
+}
+
+.profile-override-add select:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.profile-override-list {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--z-line);
+  border-bottom: 1px solid var(--z-line);
+}
+
 .word-groups {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1222,6 +1304,14 @@
   }
 
   .app-context-create {
+    grid-template-columns: 1fr;
+  }
+  .polish-level-selector {
+    grid-template-columns: 1fr;
+  }
+
+
+  .profile-override-add {
     grid-template-columns: 1fr;
   }
 }

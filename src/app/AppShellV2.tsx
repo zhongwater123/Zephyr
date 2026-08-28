@@ -8,6 +8,7 @@ import {
   defaultConfigStatus,
   type AppConfig,
   type ConfigStatus,
+  type PolishLevel,
   type EndpointPurpose,
   type VoiceStatePayload,
 } from "../domain";
@@ -39,11 +40,15 @@ const ZephyrAsciiField = lazy(() =>
 );
 
 const currentWindow = getCurrentWindow();
+function normalizePolishLevel(value: number | undefined): PolishLevel {
+  return value === 1 || value === 3 ? value : 2;
+}
+
 
 function normalizeConfig(next: AppConfig): AppConfig {
   return {
     ...next,
-    schema_version: next.schema_version ?? 6,
+    schema_version: next.schema_version ?? 8,
     revision: next.revision ?? 0,
     trusted_endpoints: next.trusted_endpoints ?? [],
     injection_overrides: next.injection_overrides ?? [],
@@ -59,6 +64,7 @@ function normalizeConfig(next: AppConfig): AppConfig {
     hotword_agent_enabled: next.hotword_agent_enabled ?? false,
     hotword_agent_base_url: next.hotword_agent_base_url || "https://api.deepseek.com",
     hotword_agent_model: next.hotword_agent_model || "deepseek-v4-flash",
+    polish_level: normalizePolishLevel(next.polish_level),
     asr: next.asr ?? defaultConfig.asr,
   };
 }
@@ -85,6 +91,8 @@ export function AppShell() {
   const [clipboardCompatibilityExe, setClipboardCompatibilityExe] = useState("");
   const [compatibilitySaving, setCompatibilitySaving] = useState(false);
   const [providerTestState, setProviderTestState] = useState("");
+  const [polishSaving, setPolishSaving] = useState(false);
+  const [polishError, setPolishError] = useState("");
   const [organizerTestState, setOrganizerTestState] = useState("");
 
   const menuRef = useRef<HTMLButtonElement>(null);
@@ -123,8 +131,6 @@ export function AppShell() {
 
   const {
     hotwordState,
-    hotwordApiKey,
-    setHotwordApiKey,
     newHotwordText,
     setNewHotwordText,
     hotwordEdits,
@@ -295,9 +301,8 @@ export function AppShell() {
   }
 
   async function saveOrganizerSettings(
-    field: "enabled" | "base_url" | "model" | "api_key",
+    field: "enabled" | "base_url" | "model",
     overrides: Partial<Pick<AppConfig, "hotwords_enabled" | "hotword_agent_enabled" | "hotword_agent_base_url" | "hotword_agent_model">> = {},
-    apiKey: string | null = null,
   ) {
     const previous = config;
     const next = {
@@ -330,14 +335,12 @@ export function AppShell() {
           hotword_agent_base_url: next.hotword_agent_base_url,
           hotword_agent_model: next.hotword_agent_model,
         },
-        apiKey,
         expectedRevision,
       });
       const saved = normalizeConfig(await configApi.get());
       setConfig(saved);
       setOrganizerBaseUrl(saved.hotword_agent_base_url);
       setOrganizerModel(saved.hotword_agent_model);
-      if (apiKey) setHotwordApiKey("");
       await refreshHotwordState();
     } catch (error) {
       const conflict = conflictConfig(error);
@@ -376,6 +379,28 @@ export function AppShell() {
       setNotice(configMutation.describeError(error));
     } finally {
       setCompatibilitySaving(false);
+    }
+  }
+
+  async function savePolishLevel(level: PolishLevel) {
+    if (polishSaving || level === config.polish_level) return;
+    const previous = config;
+    const next = { ...config, polish_level: level };
+    setPolishError("");
+    setPolishSaving(true);
+    setConfig(next);
+    try {
+      const saved = normalizeConfig(await configApi.save({
+        config: next,
+        expectedRevision: previous.revision,
+      }));
+      setConfig(saved);
+    } catch (error) {
+      const conflict = conflictConfig(error);
+      setConfig(conflict ? normalizeConfig(conflict) : previous);
+      setPolishError(configMutation.describeError(error));
+    } finally {
+      setPolishSaving(false);
     }
   }
 
@@ -599,7 +624,6 @@ export function AppShell() {
             configStatus={configStatus}
             providerName={asrOptionPool?.providerDisplayName || "语音识别服务"}
             hotwordState={hotwordState}
-            hotwordApiKey={hotwordApiKey}
             organizerSaving={organizerSaving}
             organizerError={organizerError}
             compatibilityExe={clipboardCompatibilityExe}
@@ -608,6 +632,8 @@ export function AppShell() {
             historyError={historyError}
             incidentRecoverySaving={incidentRecoverySaving}
             incidentRecoveryError={incidentRecoveryError}
+            polishSaving={polishSaving}
+            polishError={polishError}
             diagnosticMessage={notice}
             providerTestState={providerTestState}
             organizerTestState={organizerTestState}
@@ -619,8 +645,6 @@ export function AppShell() {
             onOrganizerModel={setOrganizerModel}
             onOrganizerBaseUrlCommit={() => void saveOrganizerSettings("base_url")}
             onOrganizerModelCommit={() => void saveOrganizerSettings("model")}
-            onApiKey={setHotwordApiKey}
-            onSaveApiKey={() => void saveOrganizerSettings("api_key", {}, hotwordApiKey)}
             onCompatibilityExe={setClipboardCompatibilityExe}
             onAddCompatibility={() => void setClipboardCompatibility(clipboardCompatibilityExe, true)}
             onRemoveCompatibility={(name) => void setClipboardCompatibility(name, false)}
@@ -628,6 +652,7 @@ export function AppShell() {
             onIncidentRecoveryEnabled={(enabled) => void setIncidentRecoveryEnabled(enabled)}
             onRevokeEndpoint={(origin) => void revokeTrustedEndpoint(origin, "hotword_agent")}
             onCopyDiagnostics={() => void copyDiagnostics()}
+            onPolishLevel={(level) => void savePolishLevel(level)}
           />
         </ModalShell>
       ) : null}

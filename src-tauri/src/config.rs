@@ -11,10 +11,13 @@ const KEYRING_SERVICE: &str = "gy-typing";
 const KEYRING_API_KEY_USER: &str = "transcription-api-key";
 const KEYRING_APP_KEY_USER: &str = "transcription-app-key";
 const KEYRING_ACCESS_KEY_USER: &str = "transcription-access-key";
-const KEYRING_HOTWORD_AGENT_API_KEY_USER: &str = "hotword-agent-api-key";
+// Preserve the existing Credential Manager account name while treating the value
+// as the shared DeepSeek credential for separately authorized feature purposes.
+const KEYRING_DEEPSEEK_SHARED_API_KEY_USER: &str = "hotword-agent-api-key";
 const DEFAULT_HOTWORD_AGENT_BASE_URL: &str = "https://api.deepseek.com";
 const DEFAULT_HOTWORD_AGENT_MODEL: &str = "deepseek-v4-flash";
-pub const CURRENT_SCHEMA_VERSION: u32 = 6;
+pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+pub const DEFAULT_POLISH_LEVEL: u8 = 2;
 const OFFICIAL_HOTWORD_ORIGIN: &str = "https://api.deepseek.com:443";
 
 #[derive(Debug, Error)]
@@ -40,6 +43,7 @@ pub enum ConfigError {
 pub enum EndpointPurpose {
     Asr,
     HotwordAgent,
+    TextProcessing,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -129,6 +133,8 @@ pub struct AppConfig {
     pub hotword_agent_base_url: String,
     #[serde(default = "default_hotword_agent_model")]
     pub hotword_agent_model: String,
+    #[serde(default = "default_polish_level")]
+    pub polish_level: u8,
     #[serde(default)]
     pub trusted_endpoints: Vec<TrustedEndpoint>,
     #[serde(default)]
@@ -156,6 +162,7 @@ impl Default for AppConfig {
             hotword_agent_enabled: false,
             hotword_agent_base_url: default_hotword_agent_base_url(),
             hotword_agent_model: default_hotword_agent_model(),
+            polish_level: DEFAULT_POLISH_LEVEL,
             trusted_endpoints: official_endpoints(),
             injection_overrides: Vec::new(),
         }
@@ -228,6 +235,10 @@ fn default_hotword_agent_model() -> String {
     DEFAULT_HOTWORD_AGENT_MODEL.to_string()
 }
 
+fn default_polish_level() -> u8 {
+    DEFAULT_POLISH_LEVEL
+}
+
 fn default_asr_config() -> ProviderConfigEnvelope {
     crate::provider_model::VolcengineProviderModel::default_envelope()
 }
@@ -289,6 +300,7 @@ pub fn save_config_to_path(path: &Path, config: &AppConfig) -> Result<(), Config
     let mut normalized = config.clone();
     normalized.schema_version = CURRENT_SCHEMA_VERSION;
     normalize_trusted_endpoints(&mut normalized)?;
+    normalize_polish_level(&mut normalized);
     let json = serde_json::to_vec_pretty(&normalized)
         .map_err(|error| ConfigError::Parse(error.to_string()))?;
 
@@ -323,6 +335,7 @@ fn read_and_migrate_config(path: &Path) -> Result<AppConfig, ConfigError> {
     }
     config.schema_version = CURRENT_SCHEMA_VERSION;
     normalize_trusted_endpoints(&mut config)?;
+    normalize_polish_level(&mut config);
     Ok(config)
 }
 
@@ -407,17 +420,30 @@ pub fn normalize_origin(endpoint: &str) -> Result<String, ConfigError> {
 }
 
 fn official_endpoints() -> Vec<TrustedEndpoint> {
-    vec![TrustedEndpoint {
-        origin: OFFICIAL_HOTWORD_ORIGIN.to_string(),
-        purpose: EndpointPurpose::HotwordAgent,
-    }]
+    vec![
+        TrustedEndpoint {
+            origin: OFFICIAL_HOTWORD_ORIGIN.to_string(),
+            purpose: EndpointPurpose::HotwordAgent,
+        },
+        TrustedEndpoint {
+            origin: OFFICIAL_HOTWORD_ORIGIN.to_string(),
+            purpose: EndpointPurpose::TextProcessing,
+        },
+    ]
 }
 
 fn is_official_origin(origin: &str, purpose: &EndpointPurpose) -> bool {
     matches!(
         (origin, purpose),
         (OFFICIAL_HOTWORD_ORIGIN, EndpointPurpose::HotwordAgent)
+            | (OFFICIAL_HOTWORD_ORIGIN, EndpointPurpose::TextProcessing)
     )
+}
+
+fn normalize_polish_level(config: &mut AppConfig) {
+    if !(1..=3).contains(&config.polish_level) {
+        config.polish_level = DEFAULT_POLISH_LEVEL;
+    }
 }
 
 fn normalize_trusted_endpoints(config: &mut AppConfig) -> Result<(), ConfigError> {
@@ -466,7 +492,11 @@ pub fn load_access_key() -> Result<Option<String>, ConfigError> {
 }
 
 pub fn save_hotword_agent_api_key(api_key: &str) -> Result<(), ConfigError> {
-    save_secret(KEYRING_HOTWORD_AGENT_API_KEY_USER, api_key)
+    save_deepseek_api_key(api_key)
+}
+
+pub fn save_deepseek_api_key(api_key: &str) -> Result<(), ConfigError> {
+    save_secret(KEYRING_DEEPSEEK_SHARED_API_KEY_USER, api_key)
 }
 
 #[derive(Debug, Clone, Default)]
@@ -527,13 +557,17 @@ pub fn restore_credentials(snapshot: &CredentialSnapshot) -> Result<(), ConfigEr
     restore_secret(KEYRING_APP_KEY_USER, snapshot.app_key.as_deref())?;
     restore_secret(KEYRING_ACCESS_KEY_USER, snapshot.access_key.as_deref())?;
     restore_secret(
-        KEYRING_HOTWORD_AGENT_API_KEY_USER,
+        KEYRING_DEEPSEEK_SHARED_API_KEY_USER,
         snapshot.hotword_agent_api_key.as_deref(),
     )
 }
 
 pub fn load_hotword_agent_api_key() -> Result<Option<String>, ConfigError> {
-    load_secret(KEYRING_HOTWORD_AGENT_API_KEY_USER)
+    load_deepseek_api_key()
+}
+
+pub fn load_deepseek_api_key() -> Result<Option<String>, ConfigError> {
+    load_secret(KEYRING_DEEPSEEK_SHARED_API_KEY_USER)
 }
 
 fn save_secret(user: &str, value: &str) -> Result<(), ConfigError> {
@@ -628,6 +662,7 @@ mod tests {
         assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(config.revision, 0);
         assert_eq!(config.shortcut, "Ctrl+Alt+Space");
+        assert_eq!(config.polish_level, DEFAULT_POLISH_LEVEL);
         assert!(config.shortcut_binding.is_some());
     }
 
@@ -708,6 +743,21 @@ mod tests {
     }
 
     #[test]
+    fn legacy_and_invalid_polish_levels_migrate_to_standard() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut legacy = serde_json::to_value(AppConfig::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("polish_level");
+        legacy["schema_version"] = 7.into();
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(read_and_migrate_config(&path).unwrap().polish_level, 2);
+
+        legacy["polish_level"] = 9.into();
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(read_and_migrate_config(&path).unwrap().polish_level, 2);
+    }
+
+    #[test]
     fn unmappable_legacy_shortcut_is_preserved_without_silent_default() {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("config.json");
@@ -728,7 +778,7 @@ mod tests {
     #[test]
     fn new_install_uses_exact_left_physical_default_shortcut() {
         let config = AppConfig::default();
-        assert_eq!(config.schema_version, 6);
+        assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
         assert_eq!(config.shortcut, DEFAULT_SHORTCUT_LABEL);
         assert_eq!(
             config.shortcut_binding,

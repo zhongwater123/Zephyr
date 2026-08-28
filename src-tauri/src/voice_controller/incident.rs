@@ -73,6 +73,15 @@ impl IncidentAttemptGuard {
         self.finish(TerminalOutcome::Cancelled, false);
     }
 
+    pub(super) fn metric(&self, name: &'static str, value: f64, unit: &'static str) {
+        let _ = self.sink.try_emit(IncidentEvent::Metric {
+            attempt_id: self.attempt_id.clone(),
+            name,
+            value,
+            unit,
+        });
+    }
+
     pub(super) fn final_transcript(&self, text: &str, monotonic_us: u64) {
         let _ = self.sink.try_emit(IncidentEvent::FinalTranscript {
             attempt_id: self.attempt_id.clone(),

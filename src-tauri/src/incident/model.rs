@@ -6,6 +6,7 @@ use std::sync::Arc;
 pub enum Stage {
     Capture,
     Asr,
+    Processing,
     Delivery,
     History,
     Runtime,
@@ -19,6 +20,7 @@ impl Stage {
             Self::Capture => "capture",
             Self::Asr => "asr",
             Self::Delivery => "delivery",
+            Self::Processing => "processing",
             Self::History => "history",
             Self::Runtime => "runtime",
             Self::Frontend => "frontend",

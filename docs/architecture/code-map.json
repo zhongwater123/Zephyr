@@ -286,7 +286,8 @@
       "kind": "component",
       "source": [
         "src-tauri/src/services.rs",
-        "src-tauri/src/voice_input_service.rs"
+        "src-tauri/src/voice_input_service.rs",
+        "src-tauri/src/text_processing"
       ],
       "docs": [
         "docs/architecture/c4-components-backend.md",
@@ -296,7 +297,7 @@
         "docs/architecture/adr/0004-trust-before-credentials.md",
         "docs/architecture/adr/0005-revisioned-atomic-local-storage.md",
         "docs/architecture/adr/0012-unified-voice-input-control-plane.md",
-        "docs/architecture/adr/0015-internal-shared-deepseek-credential-and-isolated-prompts.md"
+        "docs/architecture/adr/0017-unified-app-aware-polishing-with-strength.md"
       ],
       "changeTriggers": [
         "服务所有权、语音输入协调、配置快照、provider 构造或凭据读取顺序变化"
@@ -335,7 +336,8 @@
         "docs/architecture/adr/0002-single-owner-bounded-voice-session.md",
         "docs/architecture/adr/0003-delivery-commit-point-and-pending-output.md",
         "docs/architecture/adr/0012-unified-voice-input-control-plane.md",
-        "docs/architecture/adr/0013-strict-mailbox-owned-voice-runtime.md"
+        "docs/architecture/adr/0013-strict-mailbox-owned-voice-runtime.md",
+        "docs/architecture/adr/0017-unified-app-aware-polishing-with-strength.md"
       ],
       "changeTriggers": [
         "会话事件、状态、取消、deadline、finalize 或所有权变化"

@@ -24,7 +24,6 @@ export const configApi = {
   save: (args: {
     config: AppConfig;
     expectedRevision: number;
-    hotwordAgentApiKey?: string | null;
   }) => invoke<AppConfig>("save_config", args),
   authorizeEndpoint: (args: {
     endpoint: string;
@@ -113,7 +112,6 @@ export const shortcutEditApi = {
 export const hotwordApi = {
   getState: () => invoke<HotwordState>("get_hotword_state"),
   saveSettings: (args: {
-    apiKey?: string | null;
     settings: {
       hotwords_enabled: boolean;
       hotword_agent_enabled: boolean;

@@ -55,6 +55,7 @@ mod tests {
         TranscriptEvent {
             text: text.to_string(),
             is_final: utterances.iter().any(|utterance| utterance.definite),
+            provider_event_sequence: 0,
             utterances,
         }
     }

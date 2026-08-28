@@ -1,7 +1,7 @@
 use crate::config::{
     self, AppConfig, ConfigError, CredentialSnapshot, CredentialUpdates, LoadedConfig,
 };
-use crate::history::{self, AppContext, HistoryError, HistoryItem};
+use crate::history::{self, AppContext, HistoryError, HistoryItem, HistoryProvenance};
 use crate::hotwords::{self, HotwordError, HotwordState};
 use async_trait::async_trait;
 use std::path::PathBuf;
@@ -43,7 +43,7 @@ pub trait CredentialStore: Send + Sync {
     fn load_api_key(&self) -> Result<Option<String>, ConfigError>;
     fn load_app_key(&self) -> Result<Option<String>, ConfigError>;
     fn load_access_key(&self) -> Result<Option<String>, ConfigError>;
-    fn load_hotword_agent_api_key(&self) -> Result<Option<String>, ConfigError>;
+    fn load_deepseek_api_key(&self) -> Result<Option<String>, ConfigError>;
     fn update_transactionally(
         &self,
         updates: &CredentialUpdates,
@@ -67,8 +67,8 @@ impl CredentialStore for WindowsCredentialStore {
         config::load_access_key()
     }
 
-    fn load_hotword_agent_api_key(&self) -> Result<Option<String>, ConfigError> {
-        config::load_hotword_agent_api_key()
+    fn load_deepseek_api_key(&self) -> Result<Option<String>, ConfigError> {
+        config::load_deepseek_api_key()
     }
 
     fn update_transactionally(
@@ -85,6 +85,12 @@ impl CredentialStore for WindowsCredentialStore {
 
 pub trait HistoryRepository: Send + Sync {
     fn insert(&self, text: &str, context: &AppContext) -> Result<HistoryItem, HistoryError>;
+    fn insert_with_provenance(
+        &self,
+        text: &str,
+        context: &AppContext,
+        provenance: &HistoryProvenance,
+    ) -> Result<HistoryItem, HistoryError>;
     fn list(
         &self,
         query: Option<String>,
@@ -103,6 +109,15 @@ pub struct SqliteStore;
 impl HistoryRepository for SqliteStore {
     fn insert(&self, text: &str, context: &AppContext) -> Result<HistoryItem, HistoryError> {
         history::insert_transcript(text, context)
+    }
+
+    fn insert_with_provenance(
+        &self,
+        text: &str,
+        context: &AppContext,
+        provenance: &HistoryProvenance,
+    ) -> Result<HistoryItem, HistoryError> {
+        history::insert_transcript_with_provenance(text, context, provenance)
     }
 
     fn list(
@@ -212,7 +227,7 @@ impl DeepSeekHotwordAgentClient {
         }
         let key = self
             .credentials
-            .load_hotword_agent_api_key()
+            .load_deepseek_api_key()
             .map_err(|error| HotwordError::Request(error.to_string()))?
             .filter(|value| !value.trim().is_empty())
             .ok_or(HotwordError::MissingApiKey)?;
@@ -252,7 +267,7 @@ mod tests {
         fn load_access_key(&self) -> Result<Option<String>, ConfigError> {
             Ok(None)
         }
-        fn load_hotword_agent_api_key(&self) -> Result<Option<String>, ConfigError> {
+        fn load_deepseek_api_key(&self) -> Result<Option<String>, ConfigError> {
             self.hotword_reads.fetch_add(1, Ordering::SeqCst);
             Ok(Some("secret".to_string()))
         }

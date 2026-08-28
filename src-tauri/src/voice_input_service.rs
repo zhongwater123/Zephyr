@@ -1,4 +1,4 @@
-use crate::config::{self, AppConfig, CredentialUpdates, InjectionStrategy};
+use crate::config::{self, AppConfig, InjectionStrategy};
 use crate::services::{ConfigService, ConfigServiceError};
 use crate::shortcut_manager::ShortcutManager;
 use crate::voice_controller::{VoiceAvailability, VoiceSessionHandle};
@@ -44,7 +44,6 @@ impl VoiceControlService {
         &self,
         mut next: AppConfig,
         expected_revision: u64,
-        hotword_agent_api_key: Option<String>,
     ) -> Result<AppConfig, VoiceControlServiceError> {
         let current = self.config.snapshot();
         if current.revision != expected_revision {
@@ -59,11 +58,7 @@ impl VoiceControlService {
         next.shortcut = current.shortcut.clone();
         next.shortcut_binding = current.shortcut_binding.clone();
         next.revision = current.revision.saturating_add(1);
-        let updates = CredentialUpdates {
-            hotword_agent_api_key: hotword_agent_api_key.filter(|key| !key.trim().is_empty()),
-            ..CredentialUpdates::default()
-        };
-        let committed = self.config.commit(expected_revision, next, &updates)?;
+        let committed = self.config.commit_config(expected_revision, next)?;
 
         // Every committed revision is a reconciliation opportunity. This also
         // repairs a previous partial commit whose Actor acknowledgement failed.

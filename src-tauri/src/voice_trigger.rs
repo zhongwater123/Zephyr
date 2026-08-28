@@ -1,3 +1,4 @@
+use crate::text_processing::ActivationIntent;
 use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -38,6 +39,7 @@ pub struct VoiceActivation {
     pub id: ActivationId,
     pub source: TriggerSource,
     pub behavior: TriggerBehavior,
+    pub intent: ActivationIntent,
 }
 
 impl VoiceActivation {
@@ -46,6 +48,7 @@ impl VoiceActivation {
             id: ActivationId::new(),
             source: TriggerSource::Shortcut,
             behavior: TriggerBehavior::PushToTalk,
+            intent: ActivationIntent::SmartDictation,
         }
     }
 }
@@ -122,6 +125,7 @@ mod tests {
         let activation = VoiceActivation::shortcut();
         assert_eq!(activation.source, TriggerSource::Shortcut);
         assert_eq!(activation.behavior, TriggerBehavior::PushToTalk);
+        assert_eq!(activation.intent, ActivationIntent::SmartDictation);
     }
 
     #[tokio::test]

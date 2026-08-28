@@ -1,3 +1,5 @@
+use crate::target::TargetWindowIdentity;
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 use thiserror::Error;
@@ -6,6 +8,28 @@ use thiserror::Error;
 pub enum InjectionMethod {
     Unicode,
     ClipboardCompatibility,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClipboardRestoration {
+    Restored,
+    SkippedConcurrentChange,
+    Failed(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AtomicPasteReceipt {
+    pub paste_submitted: bool,
+    pub clipboard_restoration: ClipboardRestoration,
+}
+
+impl AtomicPasteReceipt {
+    fn submitted(clipboard_restoration: ClipboardRestoration) -> Self {
+        Self {
+            paste_submitted: true,
+            clipboard_restoration,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -26,6 +50,17 @@ pub enum InjectError {
 
 pub trait TextInjector: Send + Sync {
     fn inject_text(&self, text: &str, method: InjectionMethod) -> Result<(), InjectError>;
+
+    fn inject_atomic_paste(
+        &self,
+        text: &str,
+        _target: &TargetWindowIdentity,
+    ) -> Result<AtomicPasteReceipt, InjectError> {
+        self.inject_text(text, InjectionMethod::ClipboardCompatibility)?;
+        Ok(AtomicPasteReceipt::submitted(
+            ClipboardRestoration::Restored,
+        ))
+    }
 }
 
 #[derive(Debug, Default)]
@@ -37,6 +72,14 @@ impl TextInjector for UnicodeTextInjector {
             InjectionMethod::Unicode => send_unicode_text(text),
             InjectionMethod::ClipboardCompatibility => paste_text_via_clipboard(text),
         }
+    }
+
+    fn inject_atomic_paste(
+        &self,
+        text: &str,
+        target: &TargetWindowIdentity,
+    ) -> Result<AtomicPasteReceipt, InjectError> {
+        paste_text_atomically(text, target)
     }
 }
 
@@ -61,9 +104,49 @@ pub fn send_unicode_text(_text: &str) -> Result<(), InjectError> {
     Err(InjectError::Unsupported)
 }
 
+fn atomic_paste_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 #[cfg(target_os = "windows")]
 pub fn paste_text_via_clipboard(text: &str) -> Result<(), InjectError> {
-    paste_with_clipboard(text, Duration::from_millis(80), || Ok(()))
+    let receipt = paste_with_clipboard(text, Duration::from_millis(80), || Ok(()))?;
+    log_restoration_issue(&receipt);
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+pub fn paste_text_atomically(
+    text: &str,
+    target: &TargetWindowIdentity,
+) -> Result<AtomicPasteReceipt, InjectError> {
+    let _guard = atomic_paste_lock()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    paste_with_clipboard(text, Duration::from_millis(80), || {
+        crate::target::validate_foreground_target(target).map_err(InjectError::Clipboard)
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn paste_text_atomically(
+    _text: &str,
+    _target: &TargetWindowIdentity,
+) -> Result<AtomicPasteReceipt, InjectError> {
+    Err(InjectError::Unsupported)
+}
+
+fn log_restoration_issue(receipt: &AtomicPasteReceipt) {
+    match &receipt.clipboard_restoration {
+        ClipboardRestoration::Restored => {}
+        ClipboardRestoration::SkippedConcurrentChange => {
+            log::warn!("clipboard changed after paste submission; skipped restoration");
+        }
+        ClipboardRestoration::Failed(message) => {
+            log::warn!("paste was submitted but clipboard restoration failed: {message}");
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -71,7 +154,7 @@ fn paste_with_clipboard(
     text: &str,
     restore_delay: Duration,
     before_paste: impl FnOnce() -> Result<(), InjectError>,
-) -> Result<(), InjectError> {
+) -> Result<AtomicPasteReceipt, InjectError> {
     use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
     use windows::Win32::System::Ole::{
         OleFlushClipboard, OleGetClipboard, OleInitialize, OleSetClipboard, OleUninitialize,
@@ -85,11 +168,11 @@ fn paste_with_clipboard(
     }
 
     unsafe { OleInitialize(None) }
-        .map_err(|error| InjectError::Clipboard(format!("OLE 初始化失败: {error}")))?;
+        .map_err(|error| InjectError::Clipboard(format!("OLE initialization failed: {error}")))?;
     let _apartment = OleApartment;
     let original = unsafe { OleGetClipboard() }.map_err(|error| {
         InjectError::Clipboard(format!(
-            "无法取得完整 IDataObject 剪贴板快照，已拒绝兼容模式注入: {error}"
+            "could not snapshot the complete IDataObject clipboard: {error}"
         ))
     })?;
 
@@ -104,18 +187,20 @@ fn paste_with_clipboard(
     thread::sleep(restore_delay);
 
     let sequence_before_restore = unsafe { GetClipboardSequenceNumber() };
-    if !clipboard_sequence_unchanged(sequence_after_write, sequence_before_restore) {
-        return paste_result.and(Err(InjectError::Clipboard(
-            "剪贴板已被用户或其他程序修改，已跳过恢复".to_string(),
-        )));
-    }
+    let restoration =
+        if !clipboard_sequence_unchanged(sequence_after_write, sequence_before_restore) {
+            ClipboardRestoration::SkippedConcurrentChange
+        } else {
+            drop(clipboard);
+            match unsafe { OleSetClipboard(&original) }.and_then(|_| unsafe { OleFlushClipboard() })
+            {
+                Ok(()) => ClipboardRestoration::Restored,
+                Err(error) => ClipboardRestoration::Failed(error.to_string()),
+            }
+        };
 
-    drop(clipboard);
-    let restore_result = unsafe { OleSetClipboard(&original) }
-        .and_then(|_| unsafe { OleFlushClipboard() })
-        .map_err(|error| InjectError::Clipboard(format!("完整恢复剪贴板失败: {error}")));
-
-    paste_result.and(restore_result)
+    paste_result?;
+    Ok(AtomicPasteReceipt::submitted(restoration))
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -224,6 +309,33 @@ mod tests {
                 actual: 2,
                 windows_error: 5,
             })
+        ));
+    }
+}
+
+#[cfg(test)]
+mod receipt_tests {
+    use super::*;
+
+    #[test]
+    fn submitted_receipt_keeps_concurrent_clipboard_change_as_success_metadata() {
+        let receipt = AtomicPasteReceipt::submitted(ClipboardRestoration::SkippedConcurrentChange);
+        assert!(receipt.paste_submitted);
+        assert_eq!(
+            receipt.clipboard_restoration,
+            ClipboardRestoration::SkippedConcurrentChange
+        );
+    }
+
+    #[test]
+    fn submitted_receipt_keeps_restore_failure_as_success_metadata() {
+        let receipt = AtomicPasteReceipt::submitted(ClipboardRestoration::Failed(
+            "restore failed".to_string(),
+        ));
+        assert!(receipt.paste_submitted);
+        assert!(matches!(
+            receipt.clipboard_restoration,
+            ClipboardRestoration::Failed(_)
         ));
     }
 }

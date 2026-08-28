@@ -1,5 +1,5 @@
 use crate::command_error::{self, CommandError, CommandResult};
-use crate::config::{AppConfig, CredentialUpdates};
+use crate::config::AppConfig;
 use crate::hotwords::{HotwordSettingsInput, HotwordState};
 use crate::services::{AppServices, ConfigServiceError};
 use tauri::{State, WebviewWindow};
@@ -52,7 +52,6 @@ pub fn get_hotword_state(
 #[tauri::command]
 pub fn save_hotword_settings(
     settings: HotwordSettingsInput,
-    api_key: Option<String>,
     expected_revision: u64,
     window: WebviewWindow,
     services: State<'_, AppServices>,
@@ -60,10 +59,6 @@ pub fn save_hotword_settings(
     command_error::require_window(&window, "main")?;
     let current = services.config.snapshot();
     require_revision(&current, expected_revision)?;
-    let updates = CredentialUpdates {
-        hotword_agent_api_key: api_key.filter(|key| !key.trim().is_empty()),
-        ..Default::default()
-    };
     let mut next = current;
     next.hotwords_enabled = settings.hotwords_enabled;
     next.hotword_agent_enabled = settings.hotword_agent_enabled;
@@ -72,7 +67,7 @@ pub fn save_hotword_settings(
     next.revision = next.revision.saturating_add(1);
     services
         .config
-        .commit(expected_revision, next, &updates)
+        .commit_config(expected_revision, next)
         .map_err(map_config_error)?;
     state(&services)
 }

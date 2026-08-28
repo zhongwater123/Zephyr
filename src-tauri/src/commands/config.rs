@@ -274,13 +274,12 @@ pub fn set_clipboard_compatibility(
 pub async fn save_config(
     config: AppConfig,
     expected_revision: u64,
-    hotword_agent_api_key: Option<String>,
     window: WebviewWindow,
     voice_input: State<'_, VoiceControlService>,
 ) -> CommandResult<AppConfig> {
     command_error::require_window(&window, "main")?;
     voice_input
-        .save_config(config, expected_revision, hotword_agent_api_key)
+        .save_config(config, expected_revision)
         .await
         .map_err(map_voice_input_error)
 }

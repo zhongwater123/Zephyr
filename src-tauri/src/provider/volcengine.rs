@@ -176,6 +176,7 @@ impl StreamingTranscriptionProvider for VolcengineAdapter {
         info: AudioStreamInfo,
         mut chunks: Receiver<AudioChunk>,
         events: watch::Sender<Option<TranscriptEvent>>,
+        session_id: u64,
         hints: Option<AsrSessionHints>,
     ) -> Result<String, ProviderError> {
         let request_id = Uuid::new_v4().to_string();
@@ -223,6 +224,7 @@ impl StreamingTranscriptionProvider for VolcengineAdapter {
         let drive_stream = async {
             let mut sent_final_audio = false;
             let mut sent_audio_chunks = 0usize;
+            let mut provider_event_sequence = 0u64;
             let mut last_text = String::new();
             let mut final_text = String::new();
 
@@ -295,7 +297,31 @@ impl StreamingTranscriptionProvider for VolcengineAdapter {
                                 is_final,
                                 is_last_package,
                                 utterances,
+                                raw_payload_json,
                             } => {
+                                provider_event_sequence += 1;
+                                crate::provider::diagnostics::log_text(
+                                    crate::provider::diagnostics::AsrTextTrace {
+                                    stage: "provider_raw_payload",
+                                    session_id,
+                                    request_id: Some(&request_id),
+                                    sequence: provider_event_sequence,
+                                    kind: "server_json",
+                                    is_final: Some(is_final),
+                                    text: &raw_payload_json,
+                                    },
+                                );
+                                crate::provider::diagnostics::log_text(
+                                    crate::provider::diagnostics::AsrTextTrace {
+                                    stage: "provider_extracted",
+                                    session_id,
+                                    request_id: Some(&request_id),
+                                    sequence: provider_event_sequence,
+                                    kind: "transcript_event",
+                                    is_final: Some(is_final),
+                                    text: &text,
+                                    },
+                                );
                                 if !text.trim().is_empty() && (text != last_text || is_final) {
                                     last_text = text.clone();
                                     log::debug!(
@@ -307,10 +333,22 @@ impl StreamingTranscriptionProvider for VolcengineAdapter {
                                     let _ = events.send(Some(TranscriptEvent {
                                         text: text.clone(),
                                         is_final,
+                                        provider_event_sequence,
                                         utterances,
                                     }));
                                 }
                                 if is_last_package {
+                                    crate::provider::diagnostics::log_text(
+                                        crate::provider::diagnostics::AsrTextTrace {
+                                        stage: "provider_final_result",
+                                        session_id,
+                                        request_id: Some(&request_id),
+                                        sequence: provider_event_sequence,
+                                        kind: "final_result",
+                                        is_final: Some(true),
+                                        text: &text,
+                                        },
+                                    );
                                     final_text = text;
                                     break;
                                 }
@@ -350,6 +388,7 @@ enum ServerMessage {
         is_final: bool,
         is_last_package: bool,
         utterances: Vec<TranscriptUtterance>,
+        raw_payload_json: String,
     },
     Empty,
 }
@@ -989,6 +1028,9 @@ fn parse_transcript_response(
         return Ok(ServerMessage::Empty);
     }
 
+    let raw_payload_json = std::str::from_utf8(&payload)
+        .map_err(|error| ProviderError::Protocol(error.to_string()))?
+        .to_string();
     let json: Value = serde_json::from_slice(&payload)
         .map_err(|error| ProviderError::Protocol(error.to_string()))?;
     let text = extract_text(&json);
@@ -1004,6 +1046,7 @@ fn parse_transcript_response(
             is_final,
             is_last_package,
             utterances,
+            raw_payload_json,
         }
     })
 }
@@ -1368,6 +1411,7 @@ mod tests {
                 is_final,
                 is_last_package,
                 utterances,
+                ..
             } => {
                 assert_eq!(text, "hello.");
                 assert!(is_final);

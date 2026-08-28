@@ -17,6 +17,7 @@ impl VoiceSessionActor {
                         starting.config.clone(),
                         session_id,
                         starting.cancellation.clone(),
+                        starting.intent,
                         self.events.clone(),
                     );
                 }
@@ -132,12 +133,13 @@ impl VoiceSessionActor {
             audio_queue,
             started_at,
             config,
+            activation_intent,
             asr_hints,
         } = prepared;
         let (provider_result_tx, provider_result) = oneshot::channel();
         let provider_task = tauri::async_runtime::spawn(async move {
             let result = provider
-                .transcribe_stream(stream_info, chunk_rx, transcript_tx, asr_hints)
+                .transcribe_stream(stream_info, chunk_rx, transcript_tx, session_id, asr_hints)
                 .await;
             let event_result = result.as_ref().map(|_| ()).map_err(Clone::clone);
             let _ = provider_result_tx.send(result);
@@ -158,6 +160,7 @@ impl VoiceSessionActor {
             audio_queue,
             started_at,
             config,
+            activation_intent,
             state_tx,
         }
     }

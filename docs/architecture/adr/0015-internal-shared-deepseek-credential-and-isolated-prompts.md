@@ -1,6 +1,6 @@
 # ADR-0015：内部分发共享 DeepSeek 凭据并隔离写作画像 Prompt
 
-- Status: Proposed
+- Status: Superseded
 - Date: 2026-08-28
 - Deciders: Project maintainers
 - Drivers: 内部团队员工无需配置 API Key；热词 Agent 与智能成稿复用同一 DeepSeek 账户；不同润色画像需要独立迭代且不能互相污染
@@ -8,7 +8,7 @@
 - Assumptions: ASM-SD-08, ASM-SD-09
 - Evidence: 2026-08-28 用户确认同一 Key、用途分离授权、画像 Prompt 独立文件，以及线下内部安装包和流量监控的 MVP 部署模型
 - Supersedes: None
-- Superseded by: None
+- Superseded by: ADR-0017
 
 ## Context
 

@@ -54,6 +54,35 @@ pub enum OutputValidationError {
     ForbiddenCharacter { index: usize, codepoint: u32 },
 }
 
+/// Normalizes and validates text for SmartDictation's atomic-paste path.
+///
+/// Legacy delivery intentionally keeps using validate_output_text, whose
+/// historical contract rejects every control character, including newlines.
+/// SmartDictation permits LF as the sole control character after normalizing
+/// CRLF and bare CR to LF.
+pub fn normalize_smart_output_text(text: &str) -> Result<String, OutputValidationError> {
+    let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+    validate_output_text_inner(&normalized, true)?;
+    Ok(normalized)
+}
+
+/// Returns true for targets where pasting a multiline payload can execute
+/// commands according to the captured executable identity.
+pub fn is_multiline_unsafe_target(executable_name: &str) -> bool {
+    const UNSAFE_EXECUTABLES: &[&str] = &[
+        "cmd.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "windowsterminal.exe",
+        "openconsole.exe",
+        "conhost.exe",
+    ];
+
+    UNSAFE_EXECUTABLES
+        .iter()
+        .any(|candidate| executable_name.eq_ignore_ascii_case(candidate))
+}
+
 impl PendingOutputStore {
     pub fn is_full(&mut self) -> bool {
         self.purge_expired();
@@ -149,6 +178,10 @@ impl PendingOutputStore {
 }
 
 pub fn validate_output_text(text: &str) -> Result<(), OutputValidationError> {
+    validate_output_text_inner(text, false)
+}
+
+fn validate_output_text_inner(text: &str, allow_lf: bool) -> Result<(), OutputValidationError> {
     if text.is_empty() {
         return Err(OutputValidationError::Empty);
     }
@@ -162,7 +195,9 @@ pub fn validate_output_text(text: &str) -> Result<(), OutputValidationError> {
 
         let codepoint = character as u32;
         let is_bidi_override_or_isolate = matches!(codepoint, 0x202A..=0x202E | 0x2066..=0x2069);
-        if character.is_control() || is_bidi_override_or_isolate {
+        if (character.is_control() && !(allow_lf && character == '\n'))
+            || is_bidi_override_or_isolate
+        {
             return Err(OutputValidationError::ForbiddenCharacter { index, codepoint });
         }
     }
@@ -432,5 +467,61 @@ mod tests {
             )
             .unwrap();
         assert!(store.list().is_empty());
+    }
+
+    #[test]
+    fn smart_output_normalizes_crlf_and_bare_cr_to_lf() {
+        assert_eq!(
+            normalize_smart_output_text("first\r\nsecond\rthird").unwrap(),
+            "first\nsecond\nthird"
+        );
+    }
+
+    #[test]
+    fn smart_output_allows_only_lf_among_control_characters() {
+        assert_eq!(
+            normalize_smart_output_text("line\nnext").unwrap(),
+            "line\nnext"
+        );
+        for text in ["column\tnext", "safe\0unsafe", "safe\u{2066}unsafe"] {
+            assert!(matches!(
+                normalize_smart_output_text(text),
+                Err(OutputValidationError::ForbiddenCharacter { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn smart_output_counts_characters_after_normalization() {
+        let exactly_limit = format!("{}\r\n", "x".repeat(MAX_OUTPUT_CHARACTERS - 1));
+        assert_eq!(
+            normalize_smart_output_text(&exactly_limit)
+                .unwrap()
+                .chars()
+                .count(),
+            MAX_OUTPUT_CHARACTERS
+        );
+        let over_limit = format!("{}\r\n", "x".repeat(MAX_OUTPUT_CHARACTERS));
+        assert_eq!(
+            normalize_smart_output_text(&over_limit),
+            Err(OutputValidationError::TooLong)
+        );
+    }
+
+    #[test]
+    fn multiline_unsafe_targets_are_case_insensitive() {
+        for executable in [
+            "cmd.exe",
+            "PowerShell.exe",
+            "pwsh.exe",
+            "WindowsTerminal.exe",
+            "OpenConsole.exe",
+            "conhost.exe",
+        ] {
+            assert!(is_multiline_unsafe_target(executable), "{executable}");
+        }
+        assert!(!is_multiline_unsafe_target("notepad.exe"));
+        assert!(!is_multiline_unsafe_target("Code.exe"));
+        assert!(!is_multiline_unsafe_target("Cursor.exe"));
     }
 }

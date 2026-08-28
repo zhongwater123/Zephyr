@@ -19,7 +19,7 @@ base_url: https://api.deepseek.com
 model:    deepseek-v4-flash
 ```
 
-The DeepSeek API key is stored in the OS keyring.
+The company-internal build reads the deployment-provisioned shared DeepSeek credential from the OS keyring after HotwordAgent-specific authorization. Employees do not configure or rotate this key in the application UI.
 
 ## Automatic Organization
 

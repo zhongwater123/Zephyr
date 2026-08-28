@@ -6,6 +6,119 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tokio::sync::{mpsc::Receiver, watch};
 
+pub(crate) mod diagnostics {
+    use sha2::{Digest, Sha256};
+
+    const TRACE_TARGET: &str = "asr_trace";
+    const TEXT_CAPTURE_ENV: &str = "ZEPHYR_ASR_TRACE_TEXT";
+    const MAX_CHARS_PER_LOG_PART: usize = 1_000;
+
+    pub(crate) struct AsrTextTrace<'a> {
+        pub stage: &'static str,
+        pub session_id: u64,
+        pub request_id: Option<&'a str>,
+        pub sequence: u64,
+        pub kind: &'static str,
+        pub is_final: Option<bool>,
+        pub text: &'a str,
+    }
+
+    pub(crate) fn log_text(trace: AsrTextTrace<'_>) {
+        let text_capture = text_capture_enabled();
+        let digest = format!("{:x}", Sha256::digest(trace.text.as_bytes()));
+        let request_id = trace.request_id.unwrap_or("none");
+        let is_final = trace
+            .is_final
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let parts = if text_capture {
+            text_parts(trace.text)
+        } else {
+            Vec::new()
+        };
+        let part_count = parts.len();
+
+        log::debug!(
+            target: TRACE_TARGET,
+            "asr_trace stage={} session_id={} request_id={} sequence={} kind={} final={} chars={} bytes={} sha256={} text_capture={} parts={}",
+            trace.stage,
+            trace.session_id,
+            request_id,
+            trace.sequence,
+            trace.kind,
+            is_final,
+            trace.text.chars().count(),
+            trace.text.len(),
+            digest,
+            text_capture,
+            part_count
+        );
+
+        for (index, part) in parts.into_iter().enumerate() {
+            let encoded = serde_json::to_string(part)
+                .unwrap_or_else(|_| "\"<failed to encode ASR trace text>\"".to_string());
+            log::debug!(
+                target: TRACE_TARGET,
+                "asr_trace_text stage={} session_id={} request_id={} sequence={} part={}/{} text_json={}",
+                trace.stage,
+                trace.session_id,
+                request_id,
+                trace.sequence,
+                index + 1,
+                part_count,
+                encoded
+            );
+        }
+    }
+
+    fn text_capture_enabled() -> bool {
+        std::env::var(TEXT_CAPTURE_ENV)
+            .ok()
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on" | "full"
+                )
+            })
+            .unwrap_or(false)
+    }
+
+    fn text_parts(text: &str) -> Vec<&str> {
+        if text.is_empty() {
+            return vec![""];
+        }
+
+        let mut parts = Vec::new();
+        let mut start = 0usize;
+        let mut chars_in_part = 0usize;
+        for (index, _) in text.char_indices() {
+            if chars_in_part == MAX_CHARS_PER_LOG_PART {
+                parts.push(&text[start..index]);
+                start = index;
+                chars_in_part = 0;
+            }
+            chars_in_part += 1;
+        }
+        parts.push(&text[start..]);
+        parts
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn trace_parts_preserve_unicode_text_exactly() {
+            let text = "。今天，，测试。".repeat(250);
+            let parts = text_parts(&text);
+
+            assert!(parts.len() > 1);
+            assert!(parts.iter().all(|part| part.chars().count() <= 1_000));
+            assert_eq!(parts.concat(), text);
+        }
+    }
+}
+
 pub use volcengine::{
     VolcengineAdapter, VolcengineAuth, VolcengineAuthMode, VolcengineRuntimeProfile,
 };
@@ -68,6 +181,7 @@ pub struct AudioStreamInfo {
 pub struct TranscriptEvent {
     pub text: String,
     pub is_final: bool,
+    pub provider_event_sequence: u64,
     pub utterances: Vec<TranscriptUtterance>,
 }
 
@@ -93,6 +207,7 @@ pub trait StreamingTranscriptionProvider: Send + Sync {
         info: AudioStreamInfo,
         chunks: Receiver<AudioChunk>,
         events: watch::Sender<Option<TranscriptEvent>>,
+        session_id: u64,
         hints: Option<AsrSessionHints>,
     ) -> Result<String, ProviderError>;
 }
@@ -109,16 +224,32 @@ impl StreamingTranscriptionProvider for MockProvider {
         _info: AudioStreamInfo,
         mut chunks: Receiver<AudioChunk>,
         events: watch::Sender<Option<TranscriptEvent>>,
+        session_id: u64,
         _hints: Option<AsrSessionHints>,
     ) -> Result<String, ProviderError> {
         let mut non_empty_chunks = 0usize;
+        let mut provider_event_sequence = 0u64;
         let mut saw_final = false;
         while let Some(chunk) = chunks.recv().await {
             if !chunk.bytes.is_empty() {
                 non_empty_chunks += 1;
+                provider_event_sequence += 1;
+                let text = format!("模拟增量结果（{non_empty_chunks}）");
+                crate::provider::diagnostics::log_text(
+                    crate::provider::diagnostics::AsrTextTrace {
+                        stage: "provider_extracted",
+                        session_id,
+                        request_id: Some("mock"),
+                        sequence: provider_event_sequence,
+                        kind: "transcript_event",
+                        is_final: Some(false),
+                        text: &text,
+                    },
+                );
                 let _ = events.send(Some(TranscriptEvent {
-                    text: format!("模拟增量结果（{non_empty_chunks}）"),
+                    text,
                     is_final: false,
+                    provider_event_sequence,
                     utterances: Vec::new(),
                 }));
             }
@@ -131,9 +262,20 @@ impl StreamingTranscriptionProvider for MockProvider {
             return Err(ProviderError::NoSpeech);
         }
         let final_text = format!("模拟识别结果（{non_empty_chunks} 个音频包）");
+        provider_event_sequence += 1;
+        crate::provider::diagnostics::log_text(crate::provider::diagnostics::AsrTextTrace {
+            stage: "provider_final_result",
+            session_id,
+            request_id: Some("mock"),
+            sequence: provider_event_sequence,
+            kind: "final_result",
+            is_final: Some(true),
+            text: &final_text,
+        });
         let _ = events.send(Some(TranscriptEvent {
             text: final_text.clone(),
             is_final: true,
+            provider_event_sequence,
             utterances: Vec::new(),
         }));
         Ok(final_text)
@@ -160,6 +302,7 @@ impl StreamingTranscriptionProvider for UnavailableProvider {
         _info: AudioStreamInfo,
         _chunks: Receiver<AudioChunk>,
         _events: watch::Sender<Option<TranscriptEvent>>,
+        _session_id: u64,
         _hints: Option<AsrSessionHints>,
     ) -> Result<String, ProviderError> {
         Err(ProviderError::InvalidConfiguration(self.message.clone()))
@@ -199,7 +342,7 @@ mod tests {
             drop(tx);
             assert_eq!(
                 MockProvider
-                    .transcribe_stream(stream_info(), rx, event_tx, None)
+                    .transcribe_stream(stream_info(), rx, event_tx, 1, None)
                     .await
                     .unwrap_err(),
                 ProviderError::NoSpeech
@@ -228,7 +371,7 @@ mod tests {
         drop(tx);
 
         let transcript = MockProvider
-            .transcribe_stream(stream_info(), rx, event_tx, None)
+            .transcribe_stream(stream_info(), rx, event_tx, 1, None)
             .await
             .unwrap();
 
@@ -238,6 +381,7 @@ mod tests {
             Some(TranscriptEvent {
                 text: transcript,
                 is_final: true,
+                provider_event_sequence: 3,
                 utterances: Vec::new(),
             })
         );
@@ -249,7 +393,7 @@ mod tests {
         let (event_tx, _) = tokio::sync::watch::channel(None);
 
         let error = UnavailableProvider::new("missing credential")
-            .transcribe_stream(stream_info(), rx, event_tx, None)
+            .transcribe_stream(stream_info(), rx, event_tx, 1, None)
             .await
             .unwrap_err();
 

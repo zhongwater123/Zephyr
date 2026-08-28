@@ -12,6 +12,7 @@ use crate::repositories::{
     HotwordAgentClient, HotwordRepository, JsonConfigRepository, SqliteStore,
     WindowsCredentialStore,
 };
+use crate::text_processing::{DeepSeekTextProcessor, PromptRepository, TextProcessor};
 use std::sync::{Arc, Mutex, RwLock};
 
 #[derive(Debug)]
@@ -118,6 +119,8 @@ pub struct AppServices {
     pub provider: Arc<ProviderService>,
     pub confirmations: Arc<dyn NativeConfirmation>,
     pub incidents: Arc<crate::incident::IncidentService>,
+    pub text_processor: Arc<dyn TextProcessor>,
+    pub prompt_repository: Arc<PromptRepository>,
 }
 
 pub struct ProviderService {
@@ -191,7 +194,7 @@ impl AppServices {
             crate::config::EndpointPurpose::HotwordAgent,
         ) {
             self.credentials
-                .load_hotword_agent_api_key()
+                .load_deepseek_api_key()
                 .map_err(|error| crate::hotwords::HotwordError::Request(error.to_string()))?
                 .is_some()
         } else {
@@ -207,6 +210,15 @@ impl AppServices {
         let loaded = repository.load().unwrap_or(loaded);
         let config = Arc::new(ConfigService::new(loaded, repository, credentials.clone()));
         let sqlite = Arc::new(SqliteStore);
+        let prompt_repository = Arc::new(
+            PromptRepository::bundled()
+                .map_err(|error| ConfigError::Read(format!("prompt bundle invalid: {error}")))?,
+        );
+        let text_processor: Arc<dyn TextProcessor> = Arc::new(
+            DeepSeekTextProcessor::production(config.clone(), credentials.clone()).map_err(
+                |error| ConfigError::Read(format!("text processor unavailable: {error}")),
+            )?,
+        );
         Ok(Self {
             config,
             credentials: credentials.clone(),
@@ -216,6 +228,8 @@ impl AppServices {
             provider,
             confirmations: Arc::new(WindowsNativeConfirmation),
             incidents: Arc::new(crate::incident::IncidentService::production()),
+            text_processor,
+            prompt_repository,
         })
     }
 }
@@ -257,7 +271,7 @@ mod tests {
         fn load_access_key(&self) -> Result<Option<String>, ConfigError> {
             Ok(None)
         }
-        fn load_hotword_agent_api_key(&self) -> Result<Option<String>, ConfigError> {
+        fn load_deepseek_api_key(&self) -> Result<Option<String>, ConfigError> {
             Ok(None)
         }
         fn update_transactionally(

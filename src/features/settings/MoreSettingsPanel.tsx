@@ -1,11 +1,12 @@
 import { useEffect, useRef } from "preact/hooks";
-import type { AppConfig, ConfigStatus, HotwordState } from "../../domain";
+import type { AppConfig, ConfigStatus, HotwordState, PolishLevel } from "../../domain";
 import { isOfficialEndpoint } from "../../security-model";
 import { BehaviorSwitch } from "./BehaviorSwitch";
 
 export type MoreSettingsSection =
   | "speech"
   | "organizer"
+  | "writing"
   | "compatibility"
   | "privacy"
   | "diagnostics";
@@ -91,9 +92,10 @@ export function MoreSettingsPanel({
   configStatus,
   providerName,
   hotwordState,
-  hotwordApiKey,
   organizerSaving,
   organizerError,
+  polishSaving,
+  polishError,
   compatibilityExe,
   compatibilitySaving,
   historySaving,
@@ -111,9 +113,8 @@ export function MoreSettingsPanel({
   onOrganizerModel,
   onOrganizerBaseUrlCommit,
   onOrganizerModelCommit,
-  onApiKey,
-  onSaveApiKey,
   onCompatibilityExe,
+  onPolishLevel,
   onAddCompatibility,
   onRemoveCompatibility,
   onHistoryEnabled,
@@ -126,10 +127,11 @@ export function MoreSettingsPanel({
   configStatus: ConfigStatus;
   providerName: string;
   hotwordState: HotwordState | null;
-  hotwordApiKey: string;
   organizerSaving: string;
   organizerError: string;
   compatibilityExe: string;
+  polishSaving: boolean;
+  polishError: string;
   compatibilitySaving: boolean;
   historySaving: boolean;
   historyError: string;
@@ -146,9 +148,8 @@ export function MoreSettingsPanel({
   onOrganizerModel: (value: string) => void;
   onOrganizerBaseUrlCommit: () => void;
   onOrganizerModelCommit: () => void;
-  onApiKey: (value: string) => void;
-  onSaveApiKey: () => void;
   onCompatibilityExe: (value: string) => void;
+  onPolishLevel: (level: PolishLevel) => void;
   onAddCompatibility: () => void;
   onRemoveCompatibility: (executableName: string) => void;
   onHistoryEnabled: (enabled: boolean) => void;
@@ -161,6 +162,7 @@ export function MoreSettingsPanel({
     { id: "organizer", label: "智能整理服务", icon: "智" },
     { id: "compatibility", label: "输入兼容性", icon: "入" },
     { id: "privacy", label: "隐私与安全", icon: "隐" },
+    { id: "writing", label: "智能润色", icon: "润" },
     { id: "diagnostics", label: "故障诊断", icon: "诊" },
   ];
 
@@ -226,7 +228,7 @@ export function MoreSettingsPanel({
                 <p>用于从本地历史中提取词条，不参与实时语音识别。</p>
               </div>
               <span className={"service-pill " + (hotwordState?.has_hotword_agent_api_key ? "online" : "offline")}>
-                {hotwordState?.has_hotword_agent_api_key ? "已配置" : "待配置"}
+                {hotwordState?.has_hotword_agent_api_key ? "服务可用" : "暂不可用"}
               </span>
             </div>
             <div className="settings-form">
@@ -254,17 +256,10 @@ export function MoreSettingsPanel({
                 onValue={onOrganizerModel}
                 onCommit={onOrganizerModelCommit}
               />
-              <DebouncedInput
-                label="API Key"
-                description={hotwordState?.has_hotword_agent_api_key ? "已保存密钥；留空不会覆盖" : "密钥保存到 Windows 凭据管理器"}
-                type="password"
-                value={hotwordApiKey}
-                disabled={organizerSaving === "api_key"}
-                error={organizerSaving === "api_key" ? "" : organizerError}
-                placeholder={hotwordState?.has_hotword_agent_api_key ? "输入新密钥以替换" : "粘贴 API Key"}
-                onValue={onApiKey}
-                onCommit={onSaveApiKey}
-              />
+              <div className="setting-note">
+                <strong>服务凭据由内部部署管理</strong>
+                <p>员工无需输入、测试或轮换服务凭据；服务不可用时请联系内部维护人员。</p>
+              </div>
             </div>
             <div className="button-row">
               <button type="button" onClick={onOrganizerTest} disabled={organizerTestState === "testing"}>
@@ -272,6 +267,39 @@ export function MoreSettingsPanel({
               </button>
             </div>
             {organizerTestState && organizerTestState !== "testing" ? <p className="inline-notice" role="status">{organizerTestState}</p> : null}
+          </section>
+        ) : null}
+
+        {section === "writing" ? (
+          <section className="panel-page" aria-labelledby="polish-level-title">
+            <div className="panel-page-heading">
+              <div>
+                <h3 id="polish-level-title">智能润色</h3>
+                <p>选择 AI 对语音原文的介入程度。默认二档，档位越高越擅长整理长表达。</p>
+              </div>
+            </div>
+            <div className="polish-level-selector" role="radiogroup" aria-label="润色强度">
+              {([
+                [1, "一档 · 轻度", "清理语气词、重复和明显语病，尽量保留原句式。"],
+                [2, "二档 · 标准", "结合当前应用改善表达，并在合适时自动整理要点。"],
+                [3, "三档 · 深度", "允许更深入地重组长篇口述，强化层次和可执行性。"],
+              ] as Array<[PolishLevel, string, string]>).map(([level, label, description]) => (
+                <button
+                  type="button"
+                  key={level}
+                  role="radio"
+                  aria-checked={config.polish_level === level}
+                  className={config.polish_level === level ? "is-active" : ""}
+                  disabled={polishSaving}
+                  onClick={() => onPolishLevel(level)}
+                >
+                  <strong>{label}</strong>
+                  <span>{description}</span>
+                </button>
+              ))}
+            </div>
+            <p className="setting-footnote">强度是最大介入程度；原文已经清晰时，AI 会保持克制。所有档位都不会新增事实。</p>
+            {polishError ? <p className="field-error" role="alert">{polishError}</p> : null}
           </section>
         ) : null}
 

@@ -21,7 +21,7 @@ Stored secret entries:
 - `transcription-api-key`
 - `transcription-app-key`
 - `transcription-access-key`
-- `hotword-agent-api-key`
+- `hotword-agent-api-key`（兼容保留的共享 DeepSeek credential reference；HotwordAgent 与 TextProcessing 分用途授权读取）
 
 Keyring service name:
 
@@ -86,4 +86,4 @@ History can be searched, edited, copied, deleted, or cleared from the UI.
 
 Hotword injection is enabled by default, but only sends hints when local hotwords or context exist.
 
-Automatic DeepSeek organization is disabled by default. It requires a DeepSeek API key and user opt-in.
+Automatic DeepSeek organization is disabled by default and still requires user opt-in. The company-internal build expects its shared DeepSeek credential to be provisioned by deployment; employees do not enter or rotate the key in application settings.

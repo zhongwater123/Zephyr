@@ -1,12 +1,14 @@
 # 场景感知智能成稿 MVP 实施计划
 
-> 状态：Proposed implementation plan。本文不是 Current 架构事实，不表示功能已经实现或验证。
+> 状态：Implementation in progress。本文仍是实施计划，不替代源码或 Feature Dossier 的当前实现与验证状态。
 >
 > 产品契约：[FEAT-SMART-DICTATION](../../features/smart-dictation.md)；候选架构：[场景感知文本路由与智能成稿](../../architecture/proposals/context-aware-text-routing.md)。
+>
+> 2026-08-28 快照：核心 Router/Processing/fallback/AtomicPaste/provenance/画像设置已进入 dirty worktree 并通过自动化基线；内部凭据非交互预置、真实 DeepSeek、Windows/WebView2 和外部应用互操作仍是发布门禁。下方任务复选框保留原始拆分，不单独作为完成声明。
 
 ## 1. MVP 目标
 
-用户按住现有快捷键 A 自然口述，松开后等待本次 ASR 权威 final；系统以不可变 `FrozenTranscript` 保存 ASR 原文，根据捕获目标的本地应用画像选择聊天、办公、编码请求或通用写作策略，在 20 秒内调用 DeepSeek 完成一次智能成稿，并将合法结果交给既有 Delivery。Chatbot 失败时使用 ASR 原文兜底；用户主动取消时不交付任何文本。
+用户按住现有快捷键 A 自然口述，松开后等待本次 ASR 权威 final；系统以不可变 `FrozenTranscript` 保存 ASR 原文，按“用户逐应用覆盖 > 内置目标 EXE 分类 > general”选择写作画像，并在 20 秒内使用默认 `deepseek-v4-flash` 完成一次智能成稿，再将合法结果交给既有 Delivery。Chatbot 失败时使用 ASR 原文兜底；用户主动取消时不交付任何文本。
 
 首版完成后，用户应能获得：
 
@@ -24,9 +26,9 @@
 - 现有快捷键 A 固定请求 `SmartDictation`；保留统一 begin/finish/cancel 控制面。
 - 一个纯本地 Router，输出有限、类型化 `ProcessingPlan`。
 - 四个内置写作画像：`general`、`chat`、`office`、`coding_request`。
-- 按目标 EXE 的内置分类、用户逐应用覆盖和 unknown → `general`。
+- 路由优先级固定为用户逐应用覆盖 > 内置目标 EXE 分类 > `general`；浏览器和 unknown 默认 `general`。
 - 独立 DeepSeek text-processing adapter 与 endpoint purpose；和 HotwordAgent 引用同一份内部预置 credential，员工不配置 Key。
-- DeepSeek Chat Completions、非流式、非思考、JSON Output，响应形状固定为 `{ "text": "..." }`。
+- DeepSeek Chat Completions 默认 `deepseek-v4-flash`、非流式、非思考、JSON Output，响应形状固定为 `{ "text": "..." }`。
 - 20 秒硬截止、8000 Unicode 字符统一上限、原文 fallback。
 - SmartDictation 专用 AtomicPaste、受控换行、剪贴板并发保护、终端防护和真实目标应用互操作验证。
 - History provenance 的最小迁移，以及阻断润色文本进入热词自动学习。
@@ -44,14 +46,14 @@
 
 ## 3. MVP 决策门
 
-`DG-SD-01` 已由用户本轮要求关闭；实施前仍需确认其余默认方案：
+四个产品决策门均已由用户关闭；实现仍需评审 Proposed ADR 并保留未实现/未验证标记：
 
 | ID | 状态 | 默认方案 / 影响 |
 | --- | --- | --- |
 | `DG-SD-01` | 已关闭 | 普通可编辑目标无需按 EXE 预配置；完整结果使用单次 AtomicPaste，不为 LF 生成 Enter；已知终端的含 LF 结果失败关闭 |
-| `DG-SD-02` | 待确认 | 场景判断只使用目标 EXE + 用户覆盖；浏览器等混合应用默认 `general`。若要求识别具体控件，需要新增 Accessibility 与隐私边界 |
+| `DG-SD-02` | 已关闭 | 场景判断只使用目标 EXE + 用户覆盖，优先级为“用户覆盖 > 内置 EXE 分类 > general”；浏览器等混合应用默认 `general`。识别具体控件不进入 MVP |
 | `DG-SD-03` | 已关闭 | HotwordAgent 与 TextProcessing 共用一份 DeepSeek credential，但保留独立 purpose 授权、审计和调用链；Key 由内部部署预置，不暴露员工配置 |
-| `DG-SD-04` | 待确认 | 默认模型使用可配置的 `deepseek-v4-flash` 并显式关闭思考模式；若固定 Pro，需要重新评估 20 秒延迟与成本 |
+| `DG-SD-04` | 已关闭 | 默认模型使用内部配置的 `deepseek-v4-flash` 并显式关闭思考模式；员工不承担模型配置 |
 
 ## 4. 目标运行链路
 
@@ -182,7 +184,7 @@ MVP 默认不把第二份 ASR 原文持久化到正式历史：
 
 - [x] `DG-SD-01` 已关闭并形成 Proposed ADR-0014；实现前评审是否接受该特性级 ADR-0006 例外。
 - [x] `DG-SD-03` 已关闭并形成 Proposed ADR-0015；实现前评审内部共享凭据、用途隔离、零员工 Key 配置和 Prompt 文件隔离。
-- [ ] 确认 `DG-SD-02` 与 `DG-SD-04`。
+- [x] `DG-SD-02` 与 `DG-SD-04` 已关闭并形成 Proposed ADR-0016：确定性优先级为用户覆盖 > 内置 EXE 分类 > `general`，浏览器默认 `general`；默认模型为关闭思考模式的 `deepseek-v4-flash`。
 - [ ] 为 20 秒 deadline、原文 fallback 和 8000 字符形成 Proposed ADR；不要与 AtomicPaste 或内部凭据部署决策混写。
 - [ ] 复核 Voice Control Dossier 中 Starting 快速松开的当前偏差；它可以与智能成稿开发并行，但必须在目标环境 MVP 验收前关闭或明确阻断完成声明。
 - [ ] 保存基线测试和 dirty worktree 变更清单，避免覆盖现有用户修改。
@@ -194,10 +196,10 @@ MVP 默认不把第二份 ASR 原文持久化到正式历史：
 **主要文件：** `voice_trigger.rs`、新增 `text_processing/model.rs`、`router.rs`、`profiles.rs`。
 
 - [ ] 先添加 Activation intent、FrozenTranscript、ProcessingPlan、ProcessedText、ProcessingFailure 和 DeliveryTextOrigin 单元测试。
-- [ ] 实现 EXE → profile 的确定性映射、大小写归一、用户覆盖优先和 unknown fallback。
+- [ ] 实现 EXE → profile 的确定性映射、大小写归一、用户覆盖优先，以及 browser/unknown → `general`。
 - [ ] 增加架构边界测试：Router 不依赖网络、存储、IncidentVault 或 Delivery adapter。
 
-**退出条件：** 纯函数测试覆盖四种画像、覆盖优先级和未来未知枚举失败关闭。
+**退出条件：** 纯函数测试覆盖四种画像、用户覆盖 > 内置分类 > `general`、浏览器/unknown fallback 和未来未知枚举失败关闭。
 
 ### Task 2：配置、凭据与授权
 
@@ -219,6 +221,7 @@ MVP 默认不把第二份 ASR 原文持久化到正式历史：
 **主要文件：** 新增 `text_processing/deepseek.rs`、`prompt_envelope.rs`、`prompt_repository.rs`、`resources/prompts/smart_dictation/<version>/*.md`、manifest 与 fake adapter。
 
 - [ ] 建立无风格 `PromptEnvelope`，只拥有 JSON Output、transcript 数据封装、响应 schema、8000 字符和通用安全协议。
+- [ ] 未显式配置模型时使用 `deepseek-v4-flash`；请求显式关闭思考模式，且模型与路由配置在一次处理内使用冻结快照。
 - [ ] 分别创建 `general.md`、`chat.md`、`office.md`、`coding_request.md`；每个文件完整拥有自己的角色、改写目标、保留项、禁止项和画像示例，不 include、继承或拼接其他画像。
 - [ ] 建立 manifest，将有限 `profile_id` 映射到文件、`prompt_version` 和 SHA-256；未知 ID、文件缺失或哈希不符失败关闭。
 - [ ] 添加画像隔离测试：修改一个 fixture 只改变该画像的有效 prompt/version，其他三个输出字节和哈希保持不变。
@@ -303,16 +306,16 @@ MVP 默认不把第二份 ASR 原文持久化到正式历史：
 - [ ] 在干净 Windows 用户环境验收内部安装/预置：员工无需 Key 交互即可使用；删除 credential 后两项用途均可诊断，智能成稿自动回退原文；重新预置/轮换后重启恢复。
 - [ ] 实现复核后才更新 Current C4、Runtime View、code map 和 Dossier implementation status。
 
-**退出条件：** `AC-SD-01` 至 `AC-SD-12` 均有对应证据；缺少真实外部应用、Windows 凭据持久化或内部安装包证据时 validation 只能保持 `partial`。
+**退出条件：** `AC-SD-01` 至 `AC-SD-13` 均有对应证据；缺少真实外部应用、Windows 凭据持久化或内部安装包证据时 validation 只能保持 `partial`。
 
 ## 7. 测试矩阵
 
 | 维度 | 必测值 |
 | --- | --- |
-| 路由 | chat / office / coding / general；内置映射、用户覆盖、unknown |
+| 路由 | chat / office / coding / general；用户覆盖 > 内置映射 > general；浏览器、unknown、配置快照 |
 | Prompt 隔离 | 四文件独立加载/版本/hash、单画像变更、missing/tampered/unknown、共享 envelope 无风格语义 |
 | 共享凭据 | 旧槽迁移、内部预置、两个 purpose 独立授权、missing/rotate/revoke/restart、frontend/config/log 零秘密 |
-| 模型结果 | valid、empty、invalid JSON、missing text、finish length、HTTP error、timeout、late result |
+| 模型配置与结果 | 默认 `deepseek-v4-flash`、关闭思考、配置快照；valid、empty、invalid JSON、missing text、finish length、HTTP error、timeout、late result |
 | 字符边界 | empty、7999、8000、8001；CRLF、CR、LF、NUL、bidi、emoji/代理对 |
 | 控制竞争 | cancel before request、cancel during request、disable、stale SessionId、ReadyToInject denied |
 | 交付 | AtomicPaste single/multiline、一次 Ctrl+V、无 Enter、target changed、terminal multiline → Pending、clipboard sequence changed、restore failure |
@@ -332,7 +335,8 @@ MVP 可以交付的最低条件：
 7. HotwordAgent 与 TextProcessing 在读取共享 Key 前分别完成 purpose 授权，任一用途不能替代另一用途；
 8. 员工端不存在 API Key 配置或秘密暴露，内部预置凭据能够迁移、轮换、吊销并跨重启使用；
 9. 四个画像 Prompt 文件独立版本化，修改、缺失或损坏一个画像不会污染或串用另一个画像；
-10. 目标环境失败会保持 Dossier 为 partial/invalidated，不能以单元测试通过宣称完整验证。
+10. Router 不读取正文并稳定执行“用户覆盖 > 内置 EXE 分类 > general”，浏览器默认 `general`；TextProcessing 默认使用关闭思考模式的 `deepseek-v4-flash`；
+11. 目标环境失败会保持 Dossier 为 partial/invalidated，不能以单元测试通过宣称完整验证。
 
 ## 9. 风险与后续
 

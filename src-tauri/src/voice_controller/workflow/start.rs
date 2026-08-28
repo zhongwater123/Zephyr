@@ -25,10 +25,19 @@ pub(crate) fn spawn_start(
     config: crate::config::AppConfig,
     session_id: u64,
     cancellation: Arc<SessionCancellation>,
+    activation_intent: crate::text_processing::ActivationIntent,
     events: VoiceInternalEventSink,
 ) {
     tauri::async_runtime::spawn(async move {
-        let outcome = prepare_start(audio, services, config, session_id, cancellation).await;
+        let outcome = prepare_start(
+            audio,
+            services,
+            config,
+            session_id,
+            cancellation,
+            activation_intent,
+        )
+        .await;
         let _ = events
             .send(VoiceInternalEvent::StartFinished(outcome))
             .await;
@@ -41,6 +50,7 @@ async fn prepare_start(
     config: crate::config::AppConfig,
     session_id: u64,
     cancellation: Arc<SessionCancellation>,
+    activation_intent: crate::text_processing::ActivationIntent,
 ) -> StartOutcome {
     if cancellation.is_cancelled() {
         return StartOutcome::Cancelled { session_id };
@@ -156,6 +166,7 @@ async fn prepare_start(
             audio_queue,
             started_at: Instant::now(),
             config,
+            activation_intent,
             asr_hints,
         },
     })

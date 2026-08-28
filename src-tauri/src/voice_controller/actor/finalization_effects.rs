@@ -105,12 +105,16 @@ impl VoiceSessionActor {
             }
             FinalizeOutcome::Pending { draft, .. } => {
                 let reason_code = draft.reason_code.clone();
-                match self.pending.push(
+                match self.pending.push_with_metadata(
                     session_id,
                     draft.text,
                     draft.target,
                     &reason_code,
                     draft.reason_message,
+                    crate::pending_output_service::PendingDeliveryMetadata {
+                        intent: draft.delivery_intent,
+                        provenance: draft.provenance,
+                    },
                 ) {
                     Ok(_) => {
                         reducer::record_outcome(

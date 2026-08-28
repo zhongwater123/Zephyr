@@ -26,6 +26,16 @@ pub fn spawn_transcript_event_relay(
                 continue;
             };
 
+            crate::provider::diagnostics::log_text(crate::provider::diagnostics::AsrTextTrace {
+                stage: "relay_received",
+                session_id,
+                request_id: None,
+                sequence: event.provider_event_sequence,
+                kind: "transcript_event",
+                is_final: Some(event.is_final),
+                text: &event.text,
+            });
+
             if event.text.trim().is_empty() {
                 continue;
             }

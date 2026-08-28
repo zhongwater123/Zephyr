@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "general": {
+      "file": "general.md",
+      "version": "smart-dictation-general-v1",
+      "sha256": "c36efffa6e837c9235ccba5d4bf5c9102eaa882d90ad3f5a1169c2b7f608761c"
+    },
+    "chat": {
+      "file": "chat.md",
+      "version": "smart-dictation-chat-v1",
+      "sha256": "4ae7662f4bfa5fcfff8029589e2bb5b370e617eeffb5c020f9a8312160d89615"
+    },
+    "office": {
+      "file": "office.md",
+      "version": "smart-dictation-office-v1",
+      "sha256": "c274222f862e7c006a9593643b9674a648687eae31cd1ec922f7059bf25ee949"
+    },
+    "coding_request": {
+      "file": "coding_request.md",
+      "version": "smart-dictation-coding-request-v1",
+      "sha256": "cf0758ec8630118d8bb726c3b2e434289b951f86e8ccea852cf3cbb33d2ca60e"
+    }
+  }
+}

@@ -41,6 +41,7 @@ struct StartingResources {
     session_id: u64,
     config: AppConfig,
     cancellation: Arc<SessionCancellation>,
+    intent: crate::text_processing::ActivationIntent,
 }
 
 struct PendingOperation {
@@ -268,6 +269,7 @@ impl VoiceSessionActor {
         }
         let config = self.services.config.snapshot();
         let session_id = presenter.begin_session();
+        let intent = activation.intent;
         let effects = match reducer::begin(
             &mut self.runtime,
             session_id,
@@ -286,6 +288,7 @@ impl VoiceSessionActor {
             session_id,
             config,
             cancellation,
+            intent,
         });
         let config_revision = self
             .runtime

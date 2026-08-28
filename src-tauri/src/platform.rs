@@ -65,6 +65,7 @@ impl NativeConfirmation for WindowsNativeConfirmation {
             let purpose_label = match purpose {
                 EndpointPurpose::Asr => "语音识别",
                 EndpointPurpose::HotwordAgent => "热词整理 Agent",
+                EndpointPurpose::TextProcessing => "智能成稿处理",
             };
             message_box(
                 window,

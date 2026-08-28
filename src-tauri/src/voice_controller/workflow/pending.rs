@@ -23,16 +23,26 @@ async fn deliver_pending(job: PendingDeliveryJob) -> PendingDeliveryOutcome {
     } = job;
     let text = lease.record().dto.text.clone();
     let target = lease.record().target.clone();
+    let metadata = lease.metadata().clone();
     let delivery = DeliveryService::new(services);
-    if let Err(error) = delivery.validate(&text, &target, true) {
-        return PendingDeliveryOutcome::Retained {
-            lease,
-            code: error.code,
-            message: error.message,
-        };
-    }
+    let text = match delivery.validate_with_intent(&text, &target, true, metadata.intent) {
+        Ok(text) => text,
+        Err(error) => {
+            return PendingDeliveryOutcome::Retained {
+                lease,
+                code: error.code,
+                message: error.message,
+            }
+        }
+    };
     if let Err(error) = delivery
-        .inject(text.clone(), injector, injection_method)
+        .inject_with_intent(
+            text.clone(),
+            target.clone(),
+            injector,
+            injection_method,
+            metadata.intent,
+        )
         .await
     {
         return PendingDeliveryOutcome::Retained {
@@ -42,13 +52,14 @@ async fn deliver_pending(job: PendingDeliveryJob) -> PendingDeliveryOutcome {
         };
     }
     let _ = delivery
-        .commit(
+        .commit_with_provenance(
             text,
             history::AppContext {
                 app_name: Some(target.executable_name),
                 app_title: target.window_title,
             },
             config,
+            metadata.provenance,
         )
         .await;
     PendingDeliveryOutcome::Delivered { lease }

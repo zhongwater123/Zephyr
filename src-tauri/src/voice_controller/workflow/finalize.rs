@@ -3,11 +3,16 @@ use super::super::contract::{
 };
 use super::super::incident::IncidentAttemptGuard;
 use super::super::resources::SessionResources;
-use crate::delivery::DeliveryService;
+use crate::delivery::{DeliveryIntent, DeliveryReceipt, DeliveryService};
+use crate::history::HistoryProvenance;
 use crate::incident::model::{
     Recoverability, Stage as IncidentStage, StageOutcome as IncidentStageOutcome, TerminalOutcome,
 };
+use crate::inject::ClipboardRestoration;
 use crate::provider::ProviderError;
+use crate::text_processing::{
+    ActivationIntent, FrozenTranscript, PolishLevel, ProcessingPlan, ProcessingRequest,
+};
 use tokio::sync::oneshot;
 use tokio::time::{timeout, Duration};
 
@@ -44,6 +49,7 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
         started_at,
         config,
         state_tx: _,
+        activation_intent,
     } = session;
     let mut incident = IncidentAttemptGuard::new(services.incidents.sink(), attempt_id);
     let has_preview = !preview_state.lock().await.rendered_text().trim().is_empty();
@@ -147,6 +153,16 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
         Some(Err(_)) => return final_timeout(session_id, &provider_task, &mut incident),
     };
 
+    crate::provider::diagnostics::log_text(crate::provider::diagnostics::AsrTextTrace {
+        stage: "aggregate_final",
+        session_id,
+        request_id: None,
+        sequence: 0,
+        kind: "final_transcript",
+        is_final: Some(true),
+        text: &transcript,
+    });
+
     incident.stage(
         IncidentStage::Capture,
         IncidentStageOutcome::Succeeded,
@@ -171,33 +187,133 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
         started_at.elapsed().as_micros().min(u64::MAX as u128) as u64,
     );
     incident.stage(IncidentStage::Asr, IncidentStageOutcome::Succeeded, None);
+    let frozen_transcript = match FrozenTranscript::new(transcript.clone()) {
+        Ok(value) => value,
+        Err(_) => {
+            incident.cancel(IncidentStage::Asr, "empty_final_transcript");
+            return FinalizeOutcome::Cancelled {
+                session_id,
+                reason: "empty_final_transcript".to_string(),
+            };
+        }
+    };
+    match activation_intent {
+        ActivationIntent::SmartDictation => {}
+    }
+    let plan = ProcessingPlan::new(
+        config.revision,
+        PolishLevel::try_from(config.polish_level).unwrap_or_default(),
+        target.executable_name.clone(),
+        app_context.app_name.clone(),
+    );
+    incident.stage(
+        IncidentStage::Processing,
+        IncidentStageOutcome::Running,
+        None,
+    );
+    let processing_started = std::time::Instant::now();
+    let processing_result = match services.prompt_repository.load() {
+        Ok(prompt) => {
+            let request = ProcessingRequest {
+                plan: plan.clone(),
+                prompt,
+                transcript: frozen_transcript.clone(),
+            };
+            tokio::select! {
+                biased;
+                _ = cancellation.cancelled() => {
+                    incident.cancel(IncidentStage::Processing, "session_cancelled");
+                    return FinalizeOutcome::Cancelled {
+                        session_id,
+                        reason: "session_cancelled".to_string(),
+                    };
+                }
+                result = services.text_processor.process(request) => {
+                    result.map_err(|error| (error.reason_code().to_string(), error.to_string()))
+                }
+            }
+        }
+        Err(error) => Err((
+            "processing_prompt_unavailable".to_string(),
+            error.to_string(),
+        )),
+    };
+    let processing_elapsed = processing_started.elapsed();
+    incident.metric(
+        "text_processing_latency_ms",
+        processing_elapsed.as_secs_f64() * 1_000.0,
+        "milliseconds",
+    );
+    let (delivery_text, provenance) = match processing_result {
+        Ok(output) => {
+            incident.stage(
+                IncidentStage::Processing,
+                IncidentStageOutcome::Succeeded,
+                None,
+            );
+            let provenance = HistoryProvenance::smart_processed(
+                &format!("smart_polish_l{}", output.polish_level.as_u8()),
+                output.prompt_version.clone(),
+            );
+            (output.text, provenance)
+        }
+        Err((reason_code, message)) => {
+            let diagnostic = format!(
+                "{message}; polish_level={}; target_executable={}; elapsed_ms={}; deadline_ms={}",
+                plan.polish_level.as_u8(),
+                plan.target_executable,
+                processing_elapsed.as_millis(),
+                plan.deadline.as_millis(),
+            );
+            incident.record_failure(
+                IncidentStage::Processing,
+                &reason_code,
+                &diagnostic,
+                Recoverability::TextAndAudio,
+            );
+            log::warn!(
+                "smart dictation processing failed; using frozen ASR fallback: {diagnostic}"
+            );
+            (
+                frozen_transcript.as_str().to_string(),
+                HistoryProvenance::asr_fallback(),
+            )
+        }
+    };
 
     let delivery = DeliveryService::new(services.clone());
+    let delivery_intent = DeliveryIntent::SmartDictationAtomicPaste;
     incident.stage(IncidentStage::Delivery, IncidentStageOutcome::Running, None);
-    if let Err(error) = delivery.validate(&transcript, &target, false) {
-        incident.record_failure(
-            IncidentStage::Delivery,
-            error.code,
-            &error.message,
-            Recoverability::TextAndAudio,
-        );
-        incident.finish(TerminalOutcome::Failed, false);
-        return FinalizeOutcome::Pending {
-            session_id,
-            draft: PendingDraft {
-                text: transcript,
-                target,
-                reason_code: error.code.to_string(),
-                reason_message: error.message,
-            },
+    let delivery_text =
+        match delivery.validate_with_intent(&delivery_text, &target, false, delivery_intent) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                incident.record_failure(
+                    IncidentStage::Delivery,
+                    error.code,
+                    &error.message,
+                    Recoverability::TextAndAudio,
+                );
+                incident.finish(TerminalOutcome::Failed, false);
+                return FinalizeOutcome::Pending {
+                    session_id,
+                    draft: PendingDraft {
+                        text: delivery_text,
+                        target,
+                        reason_code: error.code.to_string(),
+                        reason_message: error.message,
+                        delivery_intent,
+                        provenance,
+                    },
+                };
+            }
         };
-    }
 
     let (authorization, authorized) = oneshot::channel();
     if !events
         .send(VoiceInternalEvent::ReadyToInject {
             session_id,
-            text: transcript.clone(),
+            text: delivery_text.clone(),
             response: authorization,
         })
         .await
@@ -211,26 +327,85 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
         };
     }
 
-    if let Err(error) = delivery
-        .inject(transcript.clone(), injector, injection_method)
+    crate::provider::diagnostics::log_text(crate::provider::diagnostics::AsrTextTrace {
+        stage: "delivery_inject",
+        session_id,
+        request_id: None,
+        sequence: 0,
+        kind: "inject_payload",
+        is_final: Some(true),
+        text: &delivery_text,
+    });
+
+    let receipt = match delivery
+        .inject_with_intent(
+            delivery_text.clone(),
+            target.clone(),
+            injector,
+            injection_method,
+            delivery_intent,
+        )
         .await
     {
-        incident.record_failure(
-            IncidentStage::Delivery,
-            error.code,
-            &error.message,
-            Recoverability::TextAndAudio,
-        );
-        incident.finish(TerminalOutcome::Failed, false);
-        return FinalizeOutcome::Pending {
-            session_id,
-            draft: PendingDraft {
-                text: transcript,
-                target,
-                reason_code: error.code.to_string(),
-                reason_message: error.message,
-            },
-        };
+        Ok(receipt) => receipt,
+        Err(error) => {
+            incident.record_failure(
+                IncidentStage::Delivery,
+                error.code,
+                &error.message,
+                Recoverability::TextAndAudio,
+            );
+            incident.finish(TerminalOutcome::Failed, false);
+            return FinalizeOutcome::Pending {
+                session_id,
+                draft: PendingDraft {
+                    text: delivery_text,
+                    target,
+                    reason_code: error.code.to_string(),
+                    reason_message: error.message,
+                    delivery_intent,
+                    provenance,
+                },
+            };
+        }
+    };
+    if let DeliveryReceipt::AtomicPaste(receipt) = receipt {
+        if !receipt.paste_submitted {
+            let message = "atomic paste returned without a submitted paste".to_string();
+            incident.record_failure(
+                IncidentStage::Delivery,
+                "injection_not_submitted",
+                &message,
+                Recoverability::TextAndAudio,
+            );
+            incident.finish(TerminalOutcome::Failed, false);
+            return FinalizeOutcome::Pending {
+                session_id,
+                draft: PendingDraft {
+                    text: delivery_text,
+                    target,
+                    reason_code: "injection_not_submitted".to_string(),
+                    reason_message: message,
+                    delivery_intent,
+                    provenance,
+                },
+            };
+        }
+        match receipt.clipboard_restoration {
+            ClipboardRestoration::Restored => {}
+            ClipboardRestoration::SkippedConcurrentChange => incident.finding(
+                IncidentStage::Delivery,
+                "clipboard_restore_skipped",
+                "paste submitted; clipboard changed concurrently, so restoration was skipped",
+                Recoverability::None,
+            ),
+            ClipboardRestoration::Failed(message) => incident.finding(
+                IncidentStage::Delivery,
+                "clipboard_restore_failed_after_submit",
+                &format!("paste submitted; clipboard restoration failed: {message}"),
+                Recoverability::None,
+            ),
+        }
     }
     incident.stage(
         IncidentStage::Delivery,
@@ -240,7 +415,9 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
 
     let history_enabled = config.history_enabled;
     let history_committed = if history_enabled {
-        let committed = delivery.commit(transcript, app_context, config).await;
+        let committed = delivery
+            .commit_with_provenance(delivery_text, app_context, config, provenance)
+            .await;
         if committed {
             incident.stage(
                 IncidentStage::History,

@@ -49,11 +49,14 @@ export type AppConfig = {
   hotword_agent_enabled: boolean;
   hotword_agent_base_url: string;
   hotword_agent_model: string;
+  polish_level: PolishLevel;
   trusted_endpoints: TrustedEndpoint[];
   injection_overrides: InjectionOverride[];
 };
 
-export type EndpointPurpose = "hotword_agent";
+export type EndpointPurpose = "hotword_agent" | "text_processing";
+
+export type PolishLevel = 1 | 2 | 3;
 
 export type TrustedEndpoint = {
   origin: string;
@@ -251,7 +254,7 @@ export type HotwordState = {
 };
 
 export const defaultConfig: AppConfig = {
-  schema_version: 6,
+  schema_version: 8,
   revision: 0,
   enabled: true,
   shortcut: "左 Ctrl+左 Shift+Space",
@@ -274,8 +277,10 @@ export const defaultConfig: AppConfig = {
   hotword_agent_enabled: false,
   hotword_agent_base_url: "https://api.deepseek.com",
   hotword_agent_model: "deepseek-v4-flash",
+  polish_level: 2,
   trusted_endpoints: [
     { origin: "https://api.deepseek.com:443", purpose: "hotword_agent" },
+    { origin: "https://api.deepseek.com:443", purpose: "text_processing" },
   ],
   injection_overrides: [],
   asr: {

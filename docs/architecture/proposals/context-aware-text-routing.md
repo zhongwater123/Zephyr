@@ -4,7 +4,7 @@
   "viewStatus": "proposed",
   "owner": "product-maintainers",
   "createdAt": "2026-08-28",
-  "revisitWhen": "用户确认场景判定信号和端到端延迟目标，并准备进入实现设计时",
+  "revisitWhen": "需要引入 EXE 之外的上下文或新增快捷键/意图，或确认完整端到端延迟目标时",
   "relatedFeatures": ["FEAT-SMART-DICTATION"]
 }
 ---
@@ -15,7 +15,7 @@
 
 ## 1. 设计目标
 
-快捷键 A 表达的是稳定的用户能力“自然口述并智能成稿”，不是固定的一段 Prompt。系统在完整会话文本冻结后，根据显式触发意图、目标输入场景、用户偏好和完整语义选择写作画像，再调用受约束的文本处理能力生成最终可交付文本。
+快捷键 A 表达的是稳定的用户能力“自然口述并智能成稿”，不是固定的一段 Prompt。MVP 在完整会话文本冻结后，根据会话捕获的目标 EXE 和用户逐应用覆盖选择写作画像，再调用受约束的文本处理能力生成最终可交付文本；Router 不读取冻结原文做语义分类。
 
 候选链路：
 
@@ -57,18 +57,16 @@ DeliveryReceipt → history commit → learning event
 
 ### 3.2 Finalization 阶段
 
-用户结束输入且最后一个 ASR final 返回后，将有序确认片段冻结为 `FrozenTranscript`。Router 结合冻结原文和会话开始时固定的事实生成 `ProcessingPlan`；处理器不得读取后来切换到的前台窗口来悄然改变本次写作画像或交付目标。
+用户结束输入且最后一个 ASR final 返回后，将有序确认片段冻结为 `FrozenTranscript`。Router 使用会话开始时固定的目标 EXE 与路由配置快照生成 `ProcessingPlan`；`FrozenTranscript` 随后直接交给 TextProcessor，不进入 Router。处理器不得读取后来切换到的前台窗口来悄然改变本次写作画像或交付目标。
 
-候选决策优先级：
+MVP 已确认的确定性优先级：
 
-1. 用户本次显式选择的处理模式；
-2. 触发绑定携带的稳定意图；
-3. 用户为目标应用或输入表面设置的画像；
-4. 隐私边界内可获得的目标场景信号；
-5. 完整文本的保守意图推断；
-6. 通用智能成稿默认值。
+1. 快捷键 A 固定触发 `SmartDictation` 意图；
+2. 用户为目标 EXE 设置的逐应用画像覆盖；
+3. 内置目标 EXE 分类；
+4. `general` 默认画像。
 
-该优先级仍是候选设计，需结合 Feature Dossier 中的 Open Assumption 继续确认。
+浏览器和未知 EXE 均落到 `general`，除非存在用户覆盖。MVP 不读取窗口标题、网页、屏幕、Accessibility tree 或 ASR 正文做场景推断。该限制是有意的可解释降级，详细决策见 [ADR-0016](../adr/0016-deterministic-mvp-routing-and-deepseek-flash.md)。
 
 ## 4. ProcessingPlan 而不是动态 Prompt
 
@@ -77,7 +75,7 @@ Router 应输出类型化计划，而不是直接拼接可执行 Prompt：
 ```text
 ProcessingPlan
 ├── intent: SmartDictation
-├── profile: office_formal
+├── profile: office
 ├── operations: [correct_asr, remove_fillers, restructure]
 ├── meaningPolicy: preserve_facts_and_stance
 ├── outputPolicy: paste_to_captured_target
@@ -132,7 +130,7 @@ HotwordAgent 和 TextProcessing 共同引用一份由内部部署预置的 `Deep
 
 共享 Key 不合并数据用途。`HotwordAgent` 与 `TextProcessing` 仍使用独立 purpose 执行 trust/policy 检查和审计，只有各自用途通过后才能读取同一 credential reference。线下内部分发和流量监控是 MVP 接受的信任模型，但桌面共享秘密仍可能被本机账户提取；详细候选边界见 [ADR-0015](../adr/0015-internal-shared-deepseek-credential-and-isolated-prompts.md)。
 
-Chat Completions 当前文档显示思考模式可能默认开启。对 20 秒内完成的快速成稿，Proposal 建议显式关闭思考模式；该参数和模型 ID 属于 DeepSeek adapter 配置，不进入 Router 或 Delivery。实施时必须以届时的官方 [Chat Completions API](https://api-docs.deepseek.com/zh-cn/api/create-chat-completion/) 重新确认字段和可用模型。
+MVP 默认模型已确认为 `deepseek-v4-flash`，并显式关闭思考模式，以服务 20 秒内完成的快速成稿。模型 ID 与供应商参数属于 DeepSeek adapter 的内部部署配置，不进入 Router 或 Delivery，也不向员工提供配置入口；一次处理使用冻结的配置快照。实施时仍必须以届时的官方 [Chat Completions API](https://api-docs.deepseek.com/zh-cn/api/create-chat-completion/) 重新确认关闭思考模式的实际字段和模型可用性。
 
 ## 5. 语义保护边界
 
@@ -149,7 +147,9 @@ Chat Completions 当前文档显示思考模式可能默认开启。对 20 秒�
 
 ## 6. 场景信号不能等同于意图
 
-只按 EXE 分类会产生系统性误路由：聊天应用有正式工作沟通，Word 有私人笔记，IDE 中既有代码编辑器也有 AI 对话框。因此建议把应用分类降为默认画像信号，并允许用户覆盖；未知或冲突时使用保守通用画像。
+只按 EXE 分类会产生系统性误路由：聊天应用有正式工作沟通，Word 有私人笔记，IDE 中既有代码编辑器也有 AI 对话框。MVP 明确接受这一精度边界，把内置应用分类作为默认画像信号，并允许用户逐应用覆盖；浏览器和未知 EXE 使用保守的 `general`。
+
+这并不表示“EXE 等于用户意图”。Router 只是以确定性信号选择默认写作契约；更细的意图仍由未来显式快捷键、用户选择或经授权的上下文输入扩展。
 
 未来若要识别更细的输入表面，应单独评审 Accessibility 信息、窗口标题、选区、屏幕或文档内容的数据采集边界。当前 Feature Dossier 不授权读取这些内容。
 
@@ -171,12 +171,11 @@ Chatbot 从 adapter 接收请求开始，到完整响应完成 JSON 解析和应
 
 ASR 原文、模型响应或其他用户内容是否作为恢复材料保存，继续服从一次会话开始时固定的 IncidentVault 内容与文本授权快照。IncidentVault 队列满、写线程故障或内容未授权都不得阻止 ASR 原文进入 Delivery 兜底。
 
-## 9. 尚待产品确认
+## 9. 尚待确认
 
-1. 场景冲突时，用户显式画像、应用默认画像与文本推断的最终优先级。
-2. 松开快捷键到 Chatbot 请求开始前的本地预算，以及完整端到端延迟目标。
-3. 除超时和明确的 JSON/响应错误外，是否需要语义偏移检测来触发原文兜底。
+1. 松开快捷键到 Chatbot 请求开始前的本地预算，以及完整端到端延迟目标。
+2. 除超时和明确的 JSON/响应错误外，是否需要语义偏移检测来触发原文兜底。
 
 ## 10. 接受条件
 
-整体粘贴已形成 Proposed ADR-0014，共享凭据与 Prompt 隔离已形成 Proposed ADR-0015；其余产品问题确认后，再补充 Router、Processing 和场景优先级的长期决策。只有代码落地并完成源码符合性复核后，Router、Processing 和新的 Delivery 边界才能进入 Current C4、Runtime View 和代码地图。
+整体粘贴已形成 Proposed ADR-0014，共享凭据与 Prompt 隔离已形成 Proposed ADR-0015，确定性 Router 与默认模型已形成 Proposed ADR-0016。完整端到端延迟和语义偏移检测仍是开放问题。只有代码落地并完成源码符合性复核后，Router、Processing 和新的 Delivery 边界才能进入 Current C4、Runtime View 和代码地图。

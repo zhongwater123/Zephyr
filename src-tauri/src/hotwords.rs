@@ -269,9 +269,18 @@ pub fn should_auto_organize(config: &AppConfig) -> bool {
     if !config.hotword_agent_enabled {
         return false;
     }
-    get_state(config, false)
-        .map(|state| state.pending_count >= HOTWORD_BATCH_SIZE)
-        .unwrap_or(false)
+    (|| {
+        let connection = open_database(
+            &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
+        )?;
+        let mut state = load_stored_state(&connection)?;
+        if advance_cursor_over_ineligible_prefix(&connection, &mut state)? {
+            save_stored_state(&connection, &state)?;
+        }
+        pending_count(&connection, state.last_processed_rowid)
+    })()
+    .map(|count| count >= HOTWORD_BATCH_SIZE)
+    .unwrap_or(false)
 }
 
 pub async fn test_agent_connection(
@@ -358,7 +367,10 @@ pub async fn organize_hotwords(
         let connection = open_database(
             &history::history_path().map_err(|error| HotwordError::Open(error.to_string()))?,
         )?;
-        let state = load_stored_state(&connection)?;
+        let mut state = load_stored_state(&connection)?;
+        if advance_cursor_over_ineligible_prefix(&connection, &mut state)? {
+            save_stored_state(&connection, &state)?;
+        }
         let pending_count = pending_count(&connection, state.last_processed_rowid)?;
         if !force && pending_count < HOTWORD_BATCH_SIZE {
             return state_from_connection(&config, &connection, true);
@@ -419,18 +431,7 @@ fn open_database(path: &Path) -> Result<Connection, HotwordError> {
 }
 
 fn initialize_database(connection: &Connection) -> Result<(), HotwordError> {
-    connection
-        .execute(
-            "CREATE TABLE IF NOT EXISTS history_items (
-                id TEXT PRIMARY KEY,
-                text TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                app_name TEXT,
-                app_title TEXT,
-                char_count INTEGER NOT NULL
-            )",
-            [],
-        )
+    history::initialize_database(connection)
         .map_err(|error| HotwordError::Database(error.to_string()))?;
     connection
         .execute(
@@ -565,10 +566,48 @@ fn set_last_error(connection: &Connection, message: &str) -> Result<(), HotwordE
     Ok(())
 }
 
+fn advance_cursor_over_ineligible_prefix(
+    connection: &Connection,
+    state: &mut StoredHotwordState,
+) -> Result<bool, HotwordError> {
+    let next_eligible: Option<i64> = connection
+        .query_row(
+            "SELECT MIN(rowid) FROM history_items
+             WHERE rowid > ?1 AND learning_eligible = 1",
+            params![state.last_processed_rowid],
+            |row| row.get(0),
+        )
+        .map_err(|error| HotwordError::Database(error.to_string()))?;
+    let next_cursor: Option<i64> = match next_eligible {
+        Some(next_eligible) => connection
+            .query_row(
+                "SELECT MAX(rowid) FROM history_items
+                 WHERE rowid > ?1 AND rowid < ?2",
+                params![state.last_processed_rowid, next_eligible],
+                |row| row.get(0),
+            )
+            .map_err(|error| HotwordError::Database(error.to_string()))?,
+        None => connection
+            .query_row(
+                "SELECT MAX(rowid) FROM history_items WHERE rowid > ?1",
+                params![state.last_processed_rowid],
+                |row| row.get(0),
+            )
+            .map_err(|error| HotwordError::Database(error.to_string()))?,
+    };
+    let Some(next_cursor) = next_cursor else {
+        return Ok(false);
+    };
+    if next_cursor <= state.last_processed_rowid {
+        return Ok(false);
+    }
+    state.last_processed_rowid = next_cursor;
+    Ok(true)
+}
 fn pending_count(connection: &Connection, last_processed_rowid: i64) -> Result<i64, HotwordError> {
     connection
         .query_row(
-            "SELECT COUNT(*) FROM history_items WHERE rowid > ?1",
+            "SELECT COUNT(*) FROM history_items WHERE rowid > ?1 AND learning_eligible = 1",
             params![last_processed_rowid],
             |row| row.get(0),
         )
@@ -584,7 +623,7 @@ fn pending_history_items(
         .prepare(
             "SELECT rowid, text, created_at, app_name, app_title
              FROM history_items
-             WHERE rowid > ?1
+             WHERE rowid > ?1 AND learning_eligible = 1
              ORDER BY rowid ASC
              LIMIT ?2",
         )
@@ -1001,5 +1040,58 @@ mod tests {
 
         assert!(state.hotwords_enabled);
         assert_eq!(state.pending_count, 1);
+    }
+}
+
+#[cfg(test)]
+mod learning_fence_tests {
+    use super::*;
+
+    #[test]
+    fn processed_rows_are_excluded_and_cursor_crosses_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = open_database(&dir.path().join("history.db")).unwrap();
+        connection
+            .execute(
+                "INSERT INTO history_items
+                 (id, text, created_at, char_count, text_origin, learning_eligible)
+                 VALUES ('processed', 'invented', '2026-08-28 10:00:00', 8, 'smart_processed', 0),
+                        ('fallback', 'spoken', '2026-08-28 10:00:01', 6, 'asr_fallback', 1)",
+                [],
+            )
+            .unwrap();
+
+        let mut state = load_stored_state(&connection).unwrap();
+        assert!(advance_cursor_over_ineligible_prefix(&connection, &mut state).unwrap());
+        assert_eq!(state.last_processed_rowid, 1);
+        assert_eq!(
+            pending_count(&connection, state.last_processed_rowid).unwrap(),
+            1
+        );
+        let items = pending_history_items(&connection, state.last_processed_rowid, 10).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].text, "spoken");
+    }
+
+    #[test]
+    fn cursor_advances_when_only_ineligible_rows_exist() {
+        let dir = tempfile::tempdir().unwrap();
+        let connection = open_database(&dir.path().join("history.db")).unwrap();
+        connection
+            .execute(
+                "INSERT INTO history_items
+                 (id, text, created_at, char_count, text_origin, learning_eligible)
+                 VALUES ('processed', 'invented', '2026-08-28 10:00:00', 8, 'smart_processed', 0)",
+                [],
+            )
+            .unwrap();
+
+        let mut state = load_stored_state(&connection).unwrap();
+        assert!(advance_cursor_over_ineligible_prefix(&connection, &mut state).unwrap());
+        assert_eq!(state.last_processed_rowid, 1);
+        assert_eq!(
+            pending_count(&connection, state.last_processed_rowid).unwrap(),
+            0
+        );
     }
 }

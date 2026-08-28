@@ -26,6 +26,49 @@ pub struct AppContext {
     pub app_title: Option<String>,
 }
 
+pub const HISTORY_ORIGIN_ASR_DIRECT: &str = "asr_direct";
+pub const HISTORY_ORIGIN_ASR_FALLBACK: &str = "asr_fallback";
+pub const HISTORY_ORIGIN_SMART_PROCESSED: &str = "smart_processed";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryProvenance {
+    pub text_origin: String,
+    pub processor_profile: Option<String>,
+    pub processor_version: Option<String>,
+    pub learning_eligible: bool,
+}
+
+impl Default for HistoryProvenance {
+    fn default() -> Self {
+        Self {
+            text_origin: HISTORY_ORIGIN_ASR_DIRECT.to_string(),
+            processor_profile: None,
+            processor_version: None,
+            learning_eligible: true,
+        }
+    }
+}
+
+impl HistoryProvenance {
+    pub fn asr_fallback() -> Self {
+        Self {
+            text_origin: HISTORY_ORIGIN_ASR_FALLBACK.to_string(),
+            processor_profile: None,
+            processor_version: None,
+            learning_eligible: true,
+        }
+    }
+
+    pub fn smart_processed(profile: impl Into<String>, version: impl Into<String>) -> Self {
+        Self {
+            text_origin: HISTORY_ORIGIN_SMART_PROCESSED.to_string(),
+            processor_profile: Some(profile.into()),
+            processor_version: Some(version.into()),
+            learning_eligible: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct HistoryItem {
     pub id: String,
@@ -34,6 +77,10 @@ pub struct HistoryItem {
     pub app_name: Option<String>,
     pub app_title: Option<String>,
     pub char_count: i64,
+    pub text_origin: String,
+    pub processor_profile: Option<String>,
+    pub processor_version: Option<String>,
+    pub learning_eligible: bool,
 }
 
 pub fn history_path() -> Result<PathBuf, HistoryError> {
@@ -48,6 +95,14 @@ pub fn insert_transcript(
     text: &str,
     app_context: &AppContext,
 ) -> Result<HistoryItem, HistoryError> {
+    insert_transcript_with_provenance(text, app_context, &HistoryProvenance::default())
+}
+
+pub fn insert_transcript_with_provenance(
+    text: &str,
+    app_context: &AppContext,
+    provenance: &HistoryProvenance,
+) -> Result<HistoryItem, HistoryError> {
     let item = HistoryItem {
         id: Uuid::new_v4().to_string(),
         text: text.to_string(),
@@ -55,6 +110,10 @@ pub fn insert_transcript(
         app_name: app_context.app_name.clone(),
         app_title: app_context.app_title.clone(),
         char_count: text.chars().count() as i64,
+        text_origin: provenance.text_origin.clone(),
+        processor_profile: provenance.processor_profile.clone(),
+        processor_version: provenance.processor_version.clone(),
+        learning_eligible: provenance.learning_eligible,
     };
     insert_item(&history_path()?, &item)?;
     Ok(item)
@@ -101,7 +160,7 @@ fn open_database(path: &Path) -> Result<Connection, HistoryError> {
     Ok(connection)
 }
 
-fn initialize_database(connection: &Connection) -> Result<(), HistoryError> {
+pub(crate) fn initialize_database(connection: &Connection) -> Result<(), HistoryError> {
     connection
         .execute(
             "CREATE TABLE IF NOT EXISTS history_items (
@@ -110,11 +169,35 @@ fn initialize_database(connection: &Connection) -> Result<(), HistoryError> {
                 created_at TEXT NOT NULL,
                 app_name TEXT,
                 app_title TEXT,
-                char_count INTEGER NOT NULL
+                char_count INTEGER NOT NULL,
+                text_origin TEXT NOT NULL DEFAULT 'asr_direct',
+                processor_profile TEXT,
+                processor_version TEXT,
+                learning_eligible INTEGER NOT NULL DEFAULT 1
             )",
             [],
         )
         .map_err(|error| HistoryError::Database(error.to_string()))?;
+    ensure_history_column(
+        connection,
+        "text_origin",
+        "ALTER TABLE history_items ADD COLUMN text_origin TEXT NOT NULL DEFAULT 'asr_direct'",
+    )?;
+    ensure_history_column(
+        connection,
+        "processor_profile",
+        "ALTER TABLE history_items ADD COLUMN processor_profile TEXT",
+    )?;
+    ensure_history_column(
+        connection,
+        "processor_version",
+        "ALTER TABLE history_items ADD COLUMN processor_version TEXT",
+    )?;
+    ensure_history_column(
+        connection,
+        "learning_eligible",
+        "ALTER TABLE history_items ADD COLUMN learning_eligible INTEGER NOT NULL DEFAULT 1",
+    )?;
     connection
         .execute(
             "CREATE INDEX IF NOT EXISTS idx_history_items_created_at
@@ -125,20 +208,46 @@ fn initialize_database(connection: &Connection) -> Result<(), HistoryError> {
     Ok(())
 }
 
+fn ensure_history_column(
+    connection: &Connection,
+    column: &str,
+    alter_sql: &str,
+) -> Result<(), HistoryError> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(history_items)")
+        .map_err(|error| HistoryError::Database(error.to_string()))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(|error| HistoryError::Database(error.to_string()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| HistoryError::Database(error.to_string()))?;
+    if !columns.iter().any(|existing| existing == column) {
+        connection
+            .execute(alter_sql, [])
+            .map_err(|error| HistoryError::Database(error.to_string()))?;
+    }
+    Ok(())
+}
+
 fn insert_item(path: &Path, item: &HistoryItem) -> Result<(), HistoryError> {
     let connection = open_database(path)?;
     connection
         .execute(
             "INSERT INTO history_items
-             (id, text, created_at, app_name, app_title, char_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             (id, text, created_at, app_name, app_title, char_count, text_origin,
+              processor_profile, processor_version, learning_eligible)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 &item.id,
                 &item.text,
                 &item.created_at,
                 &item.app_name,
                 &item.app_title,
-                item.char_count
+                item.char_count,
+                &item.text_origin,
+                &item.processor_profile,
+                &item.processor_version,
+                item.learning_eligible
             ],
         )
         .map_err(|error| HistoryError::Database(error.to_string()))?;
@@ -163,7 +272,8 @@ fn list_history_from_path(
         let pattern = format!("%{query}%");
         let mut statement = connection
             .prepare(
-                "SELECT id, text, created_at, app_name, app_title, char_count
+                "SELECT id, text, created_at, app_name, app_title, char_count,
+                        text_origin, processor_profile, processor_version, learning_eligible
                  FROM history_items
                  WHERE text LIKE ?1 OR app_name LIKE ?1 OR app_title LIKE ?1
                  ORDER BY created_at DESC, id DESC
@@ -179,7 +289,8 @@ fn list_history_from_path(
     } else {
         let mut statement = connection
             .prepare(
-                "SELECT id, text, created_at, app_name, app_title, char_count
+                "SELECT id, text, created_at, app_name, app_title, char_count,
+                        text_origin, processor_profile, processor_version, learning_eligible
                  FROM history_items
                  ORDER BY created_at DESC, id DESC
                  LIMIT ?1 OFFSET ?2",
@@ -248,6 +359,10 @@ fn row_to_history_item(row: &rusqlite::Row<'_>) -> rusqlite::Result<HistoryItem>
         app_name: row.get(3)?,
         app_title: row.get(4)?,
         char_count: row.get(5)?,
+        text_origin: row.get(6)?,
+        processor_profile: row.get(7)?,
+        processor_version: row.get(8)?,
+        learning_eligible: row.get::<_, i64>(9)? != 0,
     })
 }
 
@@ -271,6 +386,10 @@ mod tests {
             app_name: Some("notepad.exe".to_string()),
             app_title: Some("记事本".to_string()),
             char_count: 9,
+            text_origin: HISTORY_ORIGIN_ASR_DIRECT.to_string(),
+            processor_profile: None,
+            processor_version: None,
+            learning_eligible: true,
         };
         let second = HistoryItem {
             id: "second".to_string(),
@@ -279,6 +398,10 @@ mod tests {
             app_name: Some("chrome.exe".to_string()),
             app_title: Some("网页".to_string()),
             char_count: 7,
+            text_origin: HISTORY_ORIGIN_ASR_DIRECT.to_string(),
+            processor_profile: None,
+            processor_version: None,
+            learning_eligible: true,
         };
 
         insert_item(&path, &first).unwrap();
@@ -305,5 +428,47 @@ mod tests {
         assert!(list_history_from_path(&path, None, 20, 0)
             .unwrap()
             .is_empty());
+    }
+}
+
+#[cfg(test)]
+mod provenance_migration_tests {
+    use super::*;
+
+    #[test]
+    fn old_history_schema_migrates_idempotently_with_learning_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("history.db");
+        let connection = Connection::open(&path).unwrap();
+        connection
+            .execute(
+                "CREATE TABLE history_items (
+                    id TEXT PRIMARY KEY,
+                    text TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    app_name TEXT,
+                    app_title TEXT,
+                    char_count INTEGER NOT NULL
+                )",
+                [],
+            )
+            .unwrap();
+
+        initialize_database(&connection).unwrap();
+        initialize_database(&connection).unwrap();
+        connection
+            .execute(
+                "INSERT INTO history_items (id, text, created_at, char_count)
+                 VALUES ('legacy', 'spoken', '2026-08-28 10:00:00', 6)",
+                [],
+            )
+            .unwrap();
+        drop(connection);
+
+        let items = list_history_from_path(&path, None, 10, 0).unwrap();
+        assert_eq!(items[0].text_origin, HISTORY_ORIGIN_ASR_DIRECT);
+        assert!(items[0].learning_eligible);
+        assert!(items[0].processor_profile.is_none());
+        assert!(items[0].processor_version.is_none());
     }
 }

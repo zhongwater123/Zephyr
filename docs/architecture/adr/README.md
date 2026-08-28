@@ -19,8 +19,10 @@ ADR 记录已经影响代码边界、数据安全或演进成本的决策。Acce
 | [ADR-0013](0013-strict-mailbox-owned-voice-runtime.md) | Accepted | 严格 mailbox-owned 语音运行时与控制/执行分层 |
 
 ## 状态
-| [ADR-0014](0014-atomic-smart-dictation-paste.md) | Proposed | 智能成稿先完整定稿，再通过一次性整体粘贴交付 |
-| [ADR-0015](0015-internal-shared-deepseek-credential-and-isolated-prompts.md) | Proposed | 内部分发共享 DeepSeek 凭据，并以独立文件隔离写作画像 Prompt |
+| [ADR-0014](0014-atomic-smart-dictation-paste.md) | Accepted | 智能成稿先完整定稿，再通过一次性整体粘贴交付 |
+| [ADR-0015](0015-internal-shared-deepseek-credential-and-isolated-prompts.md) | Superseded | 内部分发共享 DeepSeek 凭据，并以独立文件隔离写作画像 Prompt |
+| [ADR-0016](0016-deterministic-mvp-routing-and-deepseek-flash.md) | Superseded | Router 使用用户覆盖 > 内置 EXE 分类 > general，文本处理默认 DeepSeek Flash |
+| [ADR-0017](0017-unified-app-aware-polishing-with-strength.md) | Accepted | 单一 Prompt 接收应用上下文与三档强度，由模型自主完成场景化润色 |
 
 - **Proposed**：已提出，尚未承诺。
 - **Accepted**：当前实现和演进应遵循。
