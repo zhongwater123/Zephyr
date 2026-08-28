@@ -20,6 +20,7 @@ ADR 记录已经影响代码边界、数据安全或演进成本的决策。Acce
 
 ## 状态
 | [ADR-0014](0014-atomic-smart-dictation-paste.md) | Proposed | 智能成稿先完整定稿，再通过一次性整体粘贴交付 |
+| [ADR-0015](0015-internal-shared-deepseek-credential-and-isolated-prompts.md) | Proposed | 内部分发共享 DeepSeek 凭据，并以独立文件隔离写作画像 Prompt |
 
 - **Proposed**：已提出，尚未承诺。
 - **Accepted**：当前实现和演进应遵循。

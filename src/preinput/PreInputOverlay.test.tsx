@@ -33,6 +33,8 @@ describe("PreInputOverlay", () => {
     expect(shell?.getAttribute("data-state")).toBe("transcribing");
     expect(container.querySelector(".preinput-status")).toBeNull();
     expect(screen.queryByText("正在识别")).toBeNull();
+    expect(container.querySelectorAll(".preinput-loader__particle")).toHaveLength(54);
+    expect(container.querySelectorAll(".preinput-loader__particle--active")).toHaveLength(8);
     expect(screen.getByText("已经确认")).toBeTruthy();
     expect(screen.getByText("等待识别")).toBeTruthy();
     expect(container.querySelector(".preinput-text__reveal")?.textContent).toBe("已经确认");

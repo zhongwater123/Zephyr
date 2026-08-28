@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "preact/hooks";
 
 const PARTICLE_COUNT = 54;
+const ACTIVE_GLOW_PARTICLE_COUNT = 8;
 
 export function RoseCurveLoader({ compact = false }: { compact?: boolean }) {
   const groupRef = useRef<SVGGElement | null>(null);
@@ -46,7 +47,9 @@ export function RoseCurveLoader({ compact = false }: { compact?: boolean }) {
               ref={(node) => {
                 particleRefs.current[index] = node;
               }}
-              className="preinput-loader__particle"
+              className={`preinput-loader__particle${
+                index < ACTIVE_GLOW_PARTICLE_COUNT ? " preinput-loader__particle--active" : ""
+              }`}
             />
           ))}
         </g>
@@ -105,13 +108,13 @@ function buildRosePath(detailScale: number, steps = 360) {
 
 function getRoseParticle(index: number, progress: number, detailScale: number) {
   const tailOffset = index / (PARTICLE_COUNT - 1);
-  const point = getRosePoint(normalizeRoseProgress(progress - tailOffset * 0.34), detailScale);
-  const fade = Math.pow(1 - tailOffset, 0.58);
+  const point = getRosePoint(normalizeRoseProgress(progress - tailOffset * 0.27), detailScale);
+  const fade = Math.pow(1 - tailOffset, 0.9);
 
   return {
     x: point.x,
     y: point.y,
-    radius: 0.62 + fade * 2.1,
-    opacity: 0.03 + fade * 0.82,
+    radius: 0.5 + fade * 1.9,
+    opacity: 0.01 + fade * 0.82,
   };
 }

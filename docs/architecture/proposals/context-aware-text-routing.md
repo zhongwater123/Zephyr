@@ -90,7 +90,13 @@ ProcessingPlan
 
 首版优先使用有限、可审计的画像和操作集合，不建立任意节点、任意 Prompt 的通用工作流引擎。多个逻辑操作可以由一次模型调用完成。
 
-### 4.1 DeepSeek JSON Output adapter 契约
+### 4.1 独立画像 Prompt 文件
+
+四种画像分别使用 `general.md`、`chat.md`、`office.md` 和 `coding_request.md`。每个文件独立拥有自己的角色、改写目标、保留项、禁止项和画像示例，不 include、继承或拼接其他画像。manifest 把有限 `profile_id` 映射到文件、版本和内容哈希；缺失、未知或哈希不符时失败关闭，不降级加载另一个画像。
+
+JSON Output 指令、用户文本的 JSON 数据封装、输出 schema、8000 字符上限和通用安全规则由无风格 `PromptEnvelope` 统一提供。这样公共协议只维护一份，而修改办公画像不会改变聊天或编码画像的有效语义。MVP 不提供用户 Prompt 编辑器或远程 Prompt 下发，画像随内部构建独立版本化发布。
+
+### 4.2 DeepSeek JSON Output adapter 契约
 
 智能成稿的 DeepSeek adapter 采用官方 [JSON Output](https://api-docs.deepseek.com/zh-cn/guides/json_mode/) 契约：
 
@@ -119,6 +125,12 @@ system 或 user prompt 必须包含字面量 `json`，并提供应用拥有的�
 6. 校验通过的完整 `text` 作为 `ProcessedText` 交给 Delivery，不做静默截断。
 
 任一检查失败都产生类型化 `ProcessingFailure` 并选择 `FrozenTranscript` 兜底。官方文档明确提示 JSON Output 可能返回空 `content`，因此 HTTP 200 不能单独成为成功条件。`max_tokens` 必须显式设置，避免 `finish_reason=length` 导致截断；具体值属于处理画像/adapter 配置，应在供应商允许范围内设置为足以覆盖本次成稿的值。`max_tokens` 与产品字符数不是同一单位；应用在响应解析后独立执行 8000 Unicode 字符校验。
+
+### 4.3 内部分发与共享 DeepSeek Credential
+
+HotwordAgent 和 TextProcessing 共同引用一份由内部部署预置的 `DeepSeekSharedCredential`，员工设置页不出现 API Key。秘密只保存于 Windows Credential Manager，不进入源码、前端 bundle、普通配置、Prompt 或日志；缺失时 TextProcessing 类型化失败并立即选择 ASR 原文。
+
+共享 Key 不合并数据用途。`HotwordAgent` 与 `TextProcessing` 仍使用独立 purpose 执行 trust/policy 检查和审计，只有各自用途通过后才能读取同一 credential reference。线下内部分发和流量监控是 MVP 接受的信任模型，但桌面共享秘密仍可能被本机账户提取；详细候选边界见 [ADR-0015](../adr/0015-internal-shared-deepseek-credential-and-isolated-prompts.md)。
 
 Chat Completions 当前文档显示思考模式可能默认开启。对 20 秒内完成的快速成稿，Proposal 建议显式关闭思考模式；该参数和模型 ID 属于 DeepSeek adapter 配置，不进入 Router 或 Delivery。实施时必须以届时的官方 [Chat Completions API](https://api-docs.deepseek.com/zh-cn/api/create-chat-completion/) 重新确认字段和可用模型。
 
@@ -167,4 +179,4 @@ ASR 原文、模型响应或其他用户内容是否作为恢复材料保存，�
 
 ## 10. 接受条件
 
-整体粘贴的候选边界已经形成 Proposed ADR-0014；其余产品问题确认后，再补充 Router、Processing 和场景优先级的长期决策。只有代码落地并完成源码符合性复核后，Router、Processing 和新的 Delivery 边界才能进入 Current C4、Runtime View 和代码地图。
+整体粘贴已形成 Proposed ADR-0014，共享凭据与 Prompt 隔离已形成 Proposed ADR-0015；其余产品问题确认后，再补充 Router、Processing 和场景优先级的长期决策。只有代码落地并完成源码符合性复核后，Router、Processing 和新的 Delivery 边界才能进入 Current C4、Runtime View 和代码地图。

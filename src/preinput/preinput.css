@@ -131,10 +131,6 @@
 
 .preinput-text__flow {
   display: block;
-  text-align: center;
-}
-
-.preinput-text__copy[data-has-previous-line] .preinput-text__flow {
   text-align: left;
 }
 
@@ -194,7 +190,7 @@
 
 .preinput-loader__track {
   fill: none;
-  stroke: color-mix(in srgb, var(--preinput-accent) 16%, transparent);
+  stroke: color-mix(in srgb, var(--preinput-accent) 5%, transparent);
   stroke-width: 3.6;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -202,8 +198,13 @@
 }
 
 .preinput-loader__particle {
-  fill: color-mix(in srgb, var(--preinput-accent) 90%, transparent);
-  filter: drop-shadow(0 0 3px var(--preinput-accent-soft));
+  fill: color-mix(in srgb, var(--preinput-accent) 92%, transparent);
+}
+
+.preinput-loader__particle--active {
+  filter: drop-shadow(
+    0 0 1.25px color-mix(in srgb, var(--preinput-accent) 32%, transparent)
+  );
 }
 
 .preinput-loader__label {

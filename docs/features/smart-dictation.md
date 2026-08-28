@@ -20,8 +20,8 @@
     "knownDeviations": []
   },
   "validationStatus": "unverified",
-  "components": ["system.zephyr", "frontend.features", "backend.services", "backend.voice-controller", "backend.streaming", "backend.delivery", "backend.shortcut", "backend.incident-vault"],
-  "decisions": ["ADR-0002", "ADR-0003", "ADR-0004", "ADR-0008", "ADR-0012", "ADR-0013", "ADR-0014"],
+  "components": ["system.zephyr", "frontend.features", "backend.services", "backend.repositories", "backend.voice-controller", "backend.streaming", "backend.delivery", "backend.shortcut", "backend.incident-vault", "platform.windows"],
+  "decisions": ["ADR-0002", "ADR-0003", "ADR-0004", "ADR-0008", "ADR-0012", "ADR-0013", "ADR-0014", "ADR-0015"],
   "validationSlices": [
     { "id": "AC-SD-01", "components": ["backend.voice-controller", "backend.streaming"], "requiredEvidence": ["automated", "fault_injection"] },
     { "id": "AC-SD-02", "components": ["backend.services", "backend.voice-controller", "backend.delivery"], "requiredEvidence": ["automated", "fault_injection"] },
@@ -32,7 +32,9 @@
     { "id": "AC-SD-07", "components": ["backend.services", "backend.delivery"], "requiredEvidence": ["automated", "fault_injection"] },
     { "id": "AC-SD-08", "components": ["backend.services", "backend.voice-controller", "backend.delivery"], "requiredEvidence": ["automated", "fault_injection"] },
     { "id": "AC-SD-09", "components": ["backend.services", "backend.incident-vault"], "requiredEvidence": ["automated", "fault_injection"] },
-    { "id": "AC-SD-10", "components": ["backend.voice-controller", "backend.delivery"], "requiredEvidence": ["automated", "fault_injection", "external_app_interop"] }
+    { "id": "AC-SD-10", "components": ["backend.voice-controller", "backend.delivery"], "requiredEvidence": ["automated", "fault_injection", "external_app_interop"] },
+    { "id": "AC-SD-11", "components": ["backend.services"], "requiredEvidence": ["automated"] },
+    { "id": "AC-SD-12", "components": ["frontend.features", "backend.services", "backend.repositories", "platform.windows"], "requiredEvidence": ["automated", "windows_webview2", "restart_persistence"] }
   ],
   "evidence": [],
   "impactAssessments": []
@@ -55,6 +57,8 @@ Chatbot 可以根据冻结原文的完整上下文推测并替换无法确定是
 
 智能成稿和兜底选择必须在目标输入框外全部完成。普通可编辑文本目标接收的是一份完整、已校验的最终纯文本，系统应像用户日常粘贴大段内容一样一次性整体写入并保留段落，而不是边生成边输入、逐段注入或为换行模拟 Enter。已知终端、shell 等粘贴换行可能执行命令的目标不属于普通文本框，必须失败关闭或转为用户主动交付。
 
+MVP 面向线下分发的公司内部员工。员工不负责提供、输入、测试或轮换 DeepSeek API Key；内部部署流程预置一份由 HotwordAgent 与 TextProcessing 共同引用的凭据，两项用途仍分别授权和审计。`general`、`chat`、`office`、`coding_request` 四种润色画像的语义 Prompt 必须使用互不继承、互不拼接的独立版本化文件管理，修改一个画像不能改变其他画像。
+
 ## 验收场景
 
 | ID | 用户可观察结果 | 当前验证要求 |
@@ -69,6 +73,8 @@ Chatbot 可以根据冻结原文的完整上下文推测并替换无法确定是
 | `AC-SD-08` | Chatbot 从 adapter 接收请求开始，到完整响应完成 JSON 解析并通过应用层结果校验为止具有 20 秒硬截止；20 秒内没有产生有效最终文本，或发生网络/服务错误、空响应、非法 JSON、字段缺失、空文本、截断等无效响应时，系统选择冻结的 ASR 确认原文继续进入既有 Delivery；用户主动取消仍然禁止任何文本交付，目标复验或注入失败仍按 Delivery/Pending 语义处理 | 自动化 + 20 秒边界/取消/无效响应/注入故障注入 |
 | `AC-SD-09` | Chatbot 超时必须向 IncidentVault 非阻塞地提交带会话关联、处理阶段、耗时、超时预算、画像和稳定原因码的异常轨迹；文本等用户内容仍服从 IncidentVault 已有授权快照，Vault 拥塞或故障不得阻断原文兜底 | 自动化 + IncidentVault 拥塞/故障注入 |
 | `AC-SD-10` | 智能成稿或 ASR 兜底在进入 Delivery 前已经完整确定；对普通可编辑文本目标，单行和多行结果都作为一个纯文本载荷一次性粘贴，不要求用户预先按 EXE 启用 `clipboard_compatibility`，不为 LF 生成 Enter；目标复验或 Ctrl+V 提交前失败进入 Pending，提交后剪贴板并发变化只跳过恢复并记录异常，不能触发可能重复的再次交付；已知终端或命令执行表面不自动接收含 LF 的生成文本 | 自动化 + 剪贴板竞争故障注入 + 聊天/办公/编码输入框互操作 |
+| `AC-SD-11` | Router 只选择有限 `profile_id`；四种画像分别加载自己的版本化 Prompt 文件，共享部分只包含 JSON Output 和安全数据封装等无风格协议。修改、缺失或损坏任一画像文件不会改变或串用其他画像，未知 ID 失败关闭 | Prompt manifest/hash/缺失/画像隔离自动化 + 分画像语料回归 |
+| `AC-SD-12` | 内部员工安装和使用时看不到也不需要处理 API Key 配置；HotwordAgent 与 TextProcessing 读取同一个预置 DeepSeek credential reference，但保留独立 purpose 授权和使用轨迹。Key 缺失时智能成稿直接使用 ASR 原文兜底并提供非秘密诊断，不把 Key 写入前端、普通配置、Prompt、日志或 Incident | 凭据零序列化/零前端暴露/用途隔离自动化 + Windows Credential Manager 重启持久化 + 内部安装包验收 |
 
 ## 明确不规定的实现
 
@@ -78,6 +84,8 @@ Chatbot 可以根据冻结原文的完整上下文推测并替换无法确定是
 - “使用目标场景”不授权把屏幕、文档正文、聊天历史、源代码或既有剪贴板内容作为 Router/Prompt 上下文；若未来需要这些上下文，必须形成单独的知情授权和数据边界。AtomicPaste 为本地恢复而持有的不透明 OLE 快照不得进入 Router、Prompt、History 或日志。
 - 快捷键 A 的正常成功路径不增加原文确认步骤；冻结的 ASR 确认原文作为 Chatbot 失败后的自动兜底值存在。
 - MVP 不要求用户为普通可编辑目标预先理解或配置 `clipboard_compatibility`。实现可以演进具体剪贴板或目标控件技术，但必须保持“完整定稿后一次性交付、不模拟 Enter、终端失败关闭”的可观察结果。
+- MVP 不提供员工可见的 API Key 配置或 Prompt 编辑器；凭据预置、轮换和 Prompt 发布属于内部部署职责。
+- “画像 Prompt 独立”不要求复制 JSON schema、数据转义和通用安全 envelope；这些无风格协议可以共享，但不得在画像之间共享可变写作语义。
 - DeepSeek 请求仍需按供应商协议设置有限的 `max_tokens`；token 上限与产品的 8000 Unicode 字符上限是不同单位。应用在 JSON 解析后按与 Delivery 相同的字符定义校验，不得通过截断来满足上限。
 
 ## 局部假设
@@ -89,6 +97,8 @@ Chatbot 可以根据冻结原文的完整上下文推测并替换无法确定是
 - `ASM-SD-05`（Partially resolved）：Chatbot 处理硬截止已确认为 20 秒；处理失败统一使用 ASR 确认原文兜底，超时轨迹进入 IncidentVault。松开快捷键到请求开始前的本地处理预算，以及完整端到端延迟目标仍未确认。
 - `ASM-SD-06`（Resolved）：办公和 vibe coding 成稿允许受控换行；普通可编辑文本目标使用完整定稿后的单次整体粘贴，不要求按 EXE 预先启用兼容模式，也不把 LF 转为 Enter。已知终端、shell 或命令执行表面保持失败关闭。除允许的 LF 外，NUL、双向覆盖/隔离符和其他控制字符仍不因此获得授权。
 - `ASM-SD-07`（Resolved）：Processing 与 Delivery 统一使用 8000 Unicode 字符硬上限；模型结果超过上限视为处理失败并回退 ASR 原文，不截断模型结果。ASR 原文本身超过上限时仍由 Delivery 按既有失败/Pending 语义处理。
+- `ASM-SD-08`（Resolved）：四种润色画像的语义 Prompt 分别保存在独立、版本化文件中，不互相 include、继承或运行时拼接；共享层仅承载 JSON Output、数据封装、输出 schema 和通用安全边界。
+- `ASM-SD-09`（Confirmed for internal MVP）：安装包只线下分发给公司内部员工，维护者负责同一 DeepSeek Key 的预置、监控、轮换和吊销，员工无需配置。该信任模型接受桌面端共享秘密可能被本机账户提取的剩余风险，不把流量监控表述为绝对防泄露保证；外部分发时必须重新评估。
 
 ## 架构决策
 
@@ -99,6 +109,7 @@ Chatbot 可以根据冻结原文的完整上下文推测并替换无法确定是
 - [ADR-0012：统一语音输入控制面所有权](../architecture/adr/0012-unified-voice-input-control-plane.md)
 - [ADR-0013：严格 mailbox-owned 语音运行时](../architecture/adr/0013-strict-mailbox-owned-voice-runtime.md)
 - [ADR-0014：智能成稿使用一次性整体粘贴交付（Proposed）](../architecture/adr/0014-atomic-smart-dictation-paste.md)
+- [ADR-0015：内部分发共享 DeepSeek 凭据并隔离写作画像 Prompt（Proposed）](../architecture/adr/0015-internal-shared-deepseek-credential-and-isolated-prompts.md)
 - [场景感知文本路由与智能成稿 Proposal](../architecture/proposals/context-aware-text-routing.md)
 
 现有 ADR 尚未决定智能成稿 Router、处理画像或新增 Chatbot endpoint 的长期边界。方案确认后应新增 Proposed ADR，不得把本 Dossier 中的候选实现直接升级为 Accepted 决策。
@@ -126,3 +137,4 @@ Chatbot 可以根据冻结原文的完整上下文推测并替换无法确定是
 - 2026-08-28：用户确认首版 Processing 不限制 Chatbot 输出文本长度，并选择后续调整 Delivery 及注入边界以支持办公和 vibe coding 的受控多段文本；Delivery 现有 8000 字符上限是否移除仍作为独立安全问题待确认。
 - 2026-08-28：用户进一步确认 Processing 与 Delivery 统一采用当前 8000 Unicode 字符上限，替代上一轮“Processing 不限长”的候选表述；超过上限使用原文兜底，不做静默截断。
 - 2026-08-28：用户确认所有智能成稿处理应在写入目标输入框前完成，最终结果像日常粘贴大段格式化内容一样一次性整体进入输入框；按应用预先启用剪贴板兼容不再作为普通文本框的 MVP 前置条件。参考 OpenWhispr 后保留目标复验、剪贴板并发保护和终端换行执行防护。
+- 2026-08-28：用户确认 HotwordAgent 与 TextProcessing 共用同一 DeepSeek Key，但用途继续隔离；MVP 仅供公司内部员工线下安装，Key 由内部部署预置和维护，员工不接触配置。四种润色画像的语义 Prompt 必须使用相互隔离的独立文件，以支持快速并行迭代。

@@ -25,7 +25,7 @@
 - 一个纯本地 Router，输出有限、类型化 `ProcessingPlan`。
 - 四个内置写作画像：`general`、`chat`、`office`、`coding_request`。
 - 按目标 EXE 的内置分类、用户逐应用覆盖和 unknown → `general`。
-- 独立 DeepSeek text-processing adapter、endpoint purpose、凭据和设置。
+- 独立 DeepSeek text-processing adapter 与 endpoint purpose；和 HotwordAgent 引用同一份内部预置 credential，员工不配置 Key。
 - DeepSeek Chat Completions、非流式、非思考、JSON Output，响应形状固定为 `{ "text": "..." }`。
 - 20 秒硬截止、8000 Unicode 字符统一上限、原文 fallback。
 - SmartDictation 专用 AtomicPaste、受控换行、剪贴板并发保护、终端防护和真实目标应用互操作验证。
@@ -50,7 +50,7 @@
 | --- | --- | --- |
 | `DG-SD-01` | 已关闭 | 普通可编辑目标无需按 EXE 预配置；完整结果使用单次 AtomicPaste，不为 LF 生成 Enter；已知终端的含 LF 结果失败关闭 |
 | `DG-SD-02` | 待确认 | 场景判断只使用目标 EXE + 用户覆盖；浏览器等混合应用默认 `general`。若要求识别具体控件，需要新增 Accessibility 与隐私边界 |
-| `DG-SD-03` | 待确认 | `text_processing` 使用独立 endpoint purpose 和 Credential Manager 槽；不复用 `hotword_agent` 的授权或密钥路径 |
+| `DG-SD-03` | 已关闭 | HotwordAgent 与 TextProcessing 共用一份 DeepSeek credential，但保留独立 purpose 授权、审计和调用链；Key 由内部部署预置，不暴露员工配置 |
 | `DG-SD-04` | 待确认 | 默认模型使用可配置的 `deepseek-v4-flash` 并显式关闭思考模式；若固定 Pro，需要重新评估 20 秒延迟与成本 |
 
 ## 4. 目标运行链路
@@ -121,7 +121,7 @@ Router 不访问网络、凭据、History、IncidentVault 或 Delivery，也不�
 
 新增可替换端口 `TextProcessor`。DeepSeek adapter 负责：
 
-- 在请求前按 `scheme + host + effective port + text_processing purpose` 重新检查授权，再读取独立凭据；撤销授权立即阻止请求；
+- 在请求前按 `scheme + host + effective port + text_processing purpose` 重新检查授权，再读取共享 DeepSeek credential reference；撤销该用途授权立即阻止请求；
 - 使用会话开始时固定的 endpoint、model 和画像配置，但不绕过实时 trust 撤销；
 - `response_format={"type":"json_object"}`、`stream=false`、非思考模式；
 - system prompt 含字面量 `json` 和 `{ "text": "..." }` 示例；用户转写通过 JSON 序列化作为数据嵌入，不用字符串拼接；
@@ -181,8 +181,9 @@ MVP 默认不把第二份 ASR 原文持久化到正式历史：
 **文档：** Dossier、Proposal、新 Proposed ADR、ADR 索引。
 
 - [x] `DG-SD-01` 已关闭并形成 Proposed ADR-0014；实现前评审是否接受该特性级 ADR-0006 例外。
-- [ ] 确认 `DG-SD-02` 至 `DG-SD-04`。
-- [ ] 为独立 text-processing purpose、20 秒 deadline、原文 fallback 和 8000 字符形成 Proposed ADR；不要与 AtomicPaste 的数据完整性决策混写。
+- [x] `DG-SD-03` 已关闭并形成 Proposed ADR-0015；实现前评审内部共享凭据、用途隔离、零员工 Key 配置和 Prompt 文件隔离。
+- [ ] 确认 `DG-SD-02` 与 `DG-SD-04`。
+- [ ] 为 20 秒 deadline、原文 fallback 和 8000 字符形成 Proposed ADR；不要与 AtomicPaste 或内部凭据部署决策混写。
 - [ ] 复核 Voice Control Dossier 中 Starting 快速松开的当前偏差；它可以与智能成稿开发并行，但必须在目标环境 MVP 验收前关闭或明确阻断完成声明。
 - [ ] 保存基线测试和 dirty worktree 变更清单，避免覆盖现有用户修改。
 
@@ -200,27 +201,34 @@ MVP 默认不把第二份 ASR 原文持久化到正式历史：
 
 ### Task 2：配置、凭据与授权
 
-**主要文件：** `config.rs`、`repositories.rs`、`services.rs`、config commands、`src/domain.ts`、设置 controller/UI。
+**主要文件：** `config.rs`、`repositories.rs`、`services.rs`、内部安装/凭据 provisioner、迁移与安全测试。
 
-- [ ] 配置 schema 升级并迁移 base URL、model、profile overrides；快捷键 A 不增加绕过 Chatbot 的产品开关。
+- [ ] 配置 schema 升级并迁移内部 base URL、model、profile overrides；快捷键 A 不增加绕过 Chatbot 的产品开关。
+- [ ] 把现有 `hotword-agent-api-key` 事务迁移为单一 `deepseek-shared-api-key` credential reference；确认新值可读后才删除旧槽，并提供幂等回滚测试。
+- [ ] 新增 `EndpointPurpose::TextProcessing`；HotwordAgent 与 TextProcessing 保持不同 purpose，但共同调用 `load_deepseek_shared_credential()`。
+- [ ] 增加管理员/打包工具使用的非交互 provisioner，在安装或首次运行前写入 Windows Credential Manager；不新增员工端 Key command 或设置字段。
 - [ ] 未配置、凭据不可用或配置不受信任时立即产生类型化 `ProcessingFailure`，并按失败契约回退 `FrozenTranscript`。
-- [ ] 新增 `EndpointPurpose::TextProcessing`、独立 CredentialStore 方法和 Windows Credential Manager key。
-- [ ] 新增保存、测试连接、授权、撤销及 revision CAS/凭据回滚测试。
-- [ ] 证明未授权 endpoint 在读取密钥前失败；HotwordAgent 授权不能替代 TextProcessing 授权。
+- [ ] 证明两种 purpose 都在读取共享密钥前独立完成 trust/policy 检查；HotwordAgent 授权不能替代 TextProcessing 授权。
+- [ ] 覆盖共享 Key 轮换、吊销、重启持久化和一个功能失败不篡改另一个用途状态。
+- [ ] 证明 Key 不会序列化到普通配置、前端 DTO、Prompt、日志、Incident 或测试快照。
 
-**退出条件：** 设置往返、旧配置迁移、并发 revision、授权撤销和 trust-before-credential 全部通过。
+**退出条件：** 旧凭据幂等迁移、内部预置、重启持久化、用途隔离、授权撤销、零员工 UI 暴露和 trust-before-credential 全部通过。
 
 ### Task 3：DeepSeek adapter 与 Prompt profiles
 
-**主要文件：** 新增 `text_processing/deepseek.rs`、`prompt.rs`、测试 fake server/adapter。
+**主要文件：** 新增 `text_processing/deepseek.rs`、`prompt_envelope.rs`、`prompt_repository.rs`、`resources/prompts/smart_dictation/<version>/*.md`、manifest 与 fake adapter。
 
-- [ ] 建立应用拥有的 JSON schema 和四个版本化 Prompt profile。
+- [ ] 建立无风格 `PromptEnvelope`，只拥有 JSON Output、transcript 数据封装、响应 schema、8000 字符和通用安全协议。
+- [ ] 分别创建 `general.md`、`chat.md`、`office.md`、`coding_request.md`；每个文件完整拥有自己的角色、改写目标、保留项、禁止项和画像示例，不 include、继承或拼接其他画像。
+- [ ] 建立 manifest，将有限 `profile_id` 映射到文件、`prompt_version` 和 SHA-256；未知 ID、文件缺失或哈希不符失败关闭。
+- [ ] 添加画像隔离测试：修改一个 fixture 只改变该画像的有效 prompt/version，其他三个输出字节和哈希保持不变。
 - [ ] 用结构化 JSON 封装 transcript，验证口述中的伪 system 指令不能改变输出协议。
 - [ ] 覆盖正常 JSON、空 content、非法 JSON、缺字段、空 text、额外控制字段、`finish_reason=length`、7999/8000/8001 字符、HTTP/连接错误。
 - [ ] 使用可暂停时间测试 20 秒边界；禁止后台迟到响应进入 Delivery。
 - [ ] 取消 token 优先于 fallback：用户取消时 abort 请求且不交付原文。
+- [ ] 为四个画像维护独立语料回归，不用一个画像的 golden output 作为另一个画像的验收依据。
 
-**退出条件：** adapter 只返回合法 `ProcessedText` 或类型化 failure，没有第三种半成功状态。
+**退出条件：** adapter 只返回合法 `ProcessedText` 或类型化 failure；Prompt 文件、manifest 和共享 envelope 的边界测试证明画像互不污染。
 
 ### Task 4：Workflow 集成与 Actor 仲裁
 
@@ -276,13 +284,13 @@ MVP 默认不把第二份 ASR 原文持久化到正式历史：
 
 **主要文件：** `MoreSettingsPanel.tsx`、`AppShellV2.tsx`、domain/ipc client、overlay/presentation tests。
 
-- [ ] 增加 endpoint、model、API key、测试连接和独立授权说明，不提供把快捷键 A 改回原文直出的开关。
-- [ ] 增加逐 EXE 写作画像覆盖；不提供任意 Prompt 编辑器。
+- [ ] 不新增 API Key 输入、显示、测试、复制或删除控件；内部 endpoint/model/credential 由部署配置拥有，员工端只接收不含秘密的服务可用性结果。
+- [ ] 增加逐 EXE 写作画像覆盖；不提供任意 Prompt 编辑器，也不允许前端直接读取画像文件正文。
 - [ ] 普通文本框不展示 `clipboard_compatibility` 前置提示；只有真实 Pending、终端防护或手动复制时提供用户可理解的反馈。
-- [ ] Overlay 增加 processing 状态；fallback 后给出短暂、非阻塞提示。
-- [ ] 保持配置 revision conflict 和凭据保存失败回滚语义。
+- [ ] Overlay 增加 processing 状态；missing key 等内部部署故障只显示“智能成稿暂不可用，已使用原文”，不要求员工配置 Key。
+- [ ] 保持画像覆盖的 config revision conflict 语义；凭据预置和轮换不经过 WebView 配置事务。
 
-**退出条件：** 前端测试覆盖加载、保存、冲突、授权拒绝、缺密钥、fallback 提示和 profile override。
+**退出条件：** 前端测试覆盖画像加载/保存/冲突、fallback 提示和 profile override，并证明 bundle、DTO、DOM 与错误详情中不存在 Key 或 Key 配置入口。
 
 ### Task 9：全链路验证与发布门禁
 
@@ -292,15 +300,18 @@ MVP 默认不把第二份 ASR 原文持久化到正式历史：
 - [ ] 真实 Windows 快捷键覆盖正常长按、快速按放、慢设备、松开后取消和前台切换。
 - [ ] 真实目标矩阵至少覆盖：普通编辑器、一个聊天工具、一个 Office 编辑器、一个编码助手输入框和一个终端；单行/多行都要确认只粘贴一次，聊天不自动发送，终端换行不执行。
 - [ ] 保存 build identity、source revision、worktree、目标应用版本和验收录像/记录。
+- [ ] 在干净 Windows 用户环境验收内部安装/预置：员工无需 Key 交互即可使用；删除 credential 后两项用途均可诊断，智能成稿自动回退原文；重新预置/轮换后重启恢复。
 - [ ] 实现复核后才更新 Current C4、Runtime View、code map 和 Dossier implementation status。
 
-**退出条件：** `AC-SD-01` 至 `AC-SD-09` 均有对应证据；缺少真实外部应用互操作时 validation 只能保持 `partial`。
+**退出条件：** `AC-SD-01` 至 `AC-SD-12` 均有对应证据；缺少真实外部应用、Windows 凭据持久化或内部安装包证据时 validation 只能保持 `partial`。
 
 ## 7. 测试矩阵
 
 | 维度 | 必测值 |
 | --- | --- |
 | 路由 | chat / office / coding / general；内置映射、用户覆盖、unknown |
+| Prompt 隔离 | 四文件独立加载/版本/hash、单画像变更、missing/tampered/unknown、共享 envelope 无风格语义 |
+| 共享凭据 | 旧槽迁移、内部预置、两个 purpose 独立授权、missing/rotate/revoke/restart、frontend/config/log 零秘密 |
 | 模型结果 | valid、empty、invalid JSON、missing text、finish length、HTTP error、timeout、late result |
 | 字符边界 | empty、7999、8000、8001；CRLF、CR、LF、NUL、bidi、emoji/代理对 |
 | 控制竞争 | cancel before request、cancel during request、disable、stale SessionId、ReadyToInject denied |
@@ -318,8 +329,10 @@ MVP 可以交付的最低条件：
 4. Processing 和 Delivery 统一 8000 Unicode 字符且不静默截断；
 5. 普通输入框的单行和多行结果都一次性整体粘贴且不会通过 Enter 误发送；终端含 LF 结果失败关闭；
 6. 润色文本不会进入热词学习；
-7. 未授权 text-processing endpoint 不读取凭据、不发送完整转写；
-8. 目标环境失败会保持 Dossier 为 partial/invalidated，不能以单元测试通过宣称完整验证。
+7. HotwordAgent 与 TextProcessing 在读取共享 Key 前分别完成 purpose 授权，任一用途不能替代另一用途；
+8. 员工端不存在 API Key 配置或秘密暴露，内部预置凭据能够迁移、轮换、吊销并跨重启使用；
+9. 四个画像 Prompt 文件独立版本化，修改、缺失或损坏一个画像不会污染或串用另一个画像；
+10. 目标环境失败会保持 Dossier 为 partial/invalidated，不能以单元测试通过宣称完整验证。
 
 ## 9. 风险与后续
 
@@ -327,5 +340,6 @@ MVP 可以交付的最低条件：
 - **场景误判：** EXE 分类不能识别同一应用内不同控件；MVP 通过 general fallback 和用户覆盖控制，后续再评估 Accessibility。
 - **AtomicPaste 风险：** Ctrl+V 只能证明输入事件已提交，不能单靠 API 证明目标已插入；必须用聊天、Office、编码助手和终端实机矩阵验收，并把剪贴板恢复失败与粘贴提交状态分开。
 - **模型语义漂移：** 用户允许模型猜测 ASR 错词；MVP 保留会话内原文和 fallback，但不做二次语义模型校验。
+- **共享 Key 风险：** 内部分发和流量监控不让桌面秘密变得不可提取；一个 Key 的滥用或吊销会同时影响热词与智能成稿，必须有轮换、吊销和外部分发前重评门禁。
 - **热词债务：** MVP 只有学习 eligibility 栅栏，完整 provenance、游标、历史编辑重学仍按既有重构待办推进。
 - **延迟：** 已确认的是 Chatbot 20 秒硬截止，不是松开快捷键到交付的完整 SLA；ASR final 最坏等待仍是独立预算。
