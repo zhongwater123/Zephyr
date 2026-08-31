@@ -12,11 +12,11 @@
   "implementationStatus": "in_progress",
   "implementationReview": {
     "status": "deviating",
-    "sourceRevision": "180ba6d474007c9c063ac945a357dceff5a8215b",
+    "sourceRevision": "b0c2faa1e116763a18cfeb318cb50bbbb238996a",
     "worktreeState": "clean",
     "reviewedAt": "2026-08-31",
-    "summary": "四档输出、ASR final 冻结、Processing 兜底和 Delivery 路由已有源码与自动化复核；但生产 AtomicPaste 仍把 OleGetClipboard 返回的活 IDataObject 当作完整快照重新发布并 Flush。真实 Windows 目标环境已在 delivery_inject 后重复发生 tokio worker 栈溢出并终止主进程，交付实现不符合用户可用性与剪贴板安全契约。",
-    "knownDeviations": ["生产 SmartDictation AtomicPaste 仍使用活 OLE IDataObject 恢复；2026-08-28 与 2026-08-31 的真实 Windows 运行均在交付阶段以 0xc000041d 终止进程，尚未实现自有数据快照、完整事务串行化或原生故障隔离。"]
+    "summary": "四档输出、ASR final 冻结、Processing 兜底和 History provenance 已有源码与自动化复核；但生产 SmartDictation 的首次交付与 Pending 重新交付都仍进入进程内 AtomicPaste，旧 clipboard_compatibility 配置也仍可触发同一 OLE 活对象恢复。现有自动化没有执行真实 Windows 原生剪贴板路径，目标环境崩溃结论仍然有效。",
+    "knownDeviations": ["生产 SmartDictation 的首次交付和 Pending 重新交付仍使用活 OLE IDataObject 恢复；2026-08-28 与 2026-08-31 的真实 Windows 运行均在交付阶段以 0xc000041d 终止进程。", "Legacy clipboard_compatibility 仍可由配置启用并进入进程内剪贴板注入；当前串行锁只覆盖 SmartDictation AtomicPaste 函数，不构成所有自动剪贴板写入的单一事务所有权。", "现有 Rust 自动化只验证文本规范化、回执元数据和 SendInput 计数错误，没有实际执行 Windows OLE 捕获、恢复或崩溃隔离；尚未实现自有数据快照、跨首次/Pending 的完整事务串行化或原生故障隔离。"]
   },
   "validationStatus": "invalidated",
   "components": ["system.zephyr", "frontend.features", "backend.services", "backend.repositories", "backend.voice-controller", "backend.streaming", "backend.delivery", "backend.shortcut", "backend.incident-vault", "platform.windows"],
@@ -87,7 +87,7 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 | `AC-SD-13` | 快捷键 A 固定请求 SmartDictation；非 `Fast` 处理冻结并传递完整 ASR 原文、目标 EXE、可选应用名称和三种 LLM 整理程度的快照，默认自然表达。请求不得包含窗口标题、页面、屏幕、聊天历史、文档正文、源代码或剪贴板内容；未覆盖部署配置时使用关闭思考模式的 `deepseek-v4-flash` | 请求数据边界/三种 LLM 程度配置迁移与快照/默认模型自动化 + 真实快捷键运行时 |
 | `AC-SD-14` | 首页设置栏的“输入效果”末尾显示唯一的智能润色入口；用户可选择 `Fast`、轻微整理、自然表达或理清重点，默认自然表达。`Fast` 显示“快速响应，仅识别原话”；其余文案说明允许的整理结果，不暴露 Prompt、模型、画像、路由或“介入强度”等专业术语。选择后自动保存并在重启后保持 | 前端自动化 + 目标用户可用性观察 + Windows WebView2 视觉/键盘可访问性 + 重启持久化 |
 | `AC-SD-15` | 用户选择 `Fast` 后，系统仍等待并冻结有序的完整 ASR final，但不创建 TextProcessing/Chatbot 请求，不等待 LLM、不加载语义 Prompt，也不把该路径记录为超时或失败兜底；确认原文经允许的本地转换后直接进入既有 Delivery。History 必须把它标记为用户主动选择的 ASR 直出来源，而不是 LLM 失败；因此该档响应时间不包含 LLM 往返 | 自动化旁路与 provenance 契约 + 真实快捷键运行时 + 真实输入框互操作 + 重启持久化 |
-| `AC-SD-16` | 自动交付保存和恢复剪贴板时不得让主进程崩溃；只有已经复制为应用自有数据且可以安全重建的原格式才能自动恢复。发现无法保存的格式时必须在覆盖剪贴板前失败关闭、改用不触碰剪贴板的安全交付或进入 Pending；粘贴辅助执行异常不得自动重试可能已经提交的文本，也不得把内容送往未经复验的当前窗口 | 自动化 + 原生辅助进程/剪贴板格式故障注入 + 真实 Windows 文本/HTML/RTF/图片/文件/自定义格式互操作 |
+| `AC-SD-16` | 自动交付保存和恢复剪贴板时不得让主进程崩溃；只有已经复制为应用自有数据且可以安全重建的原格式才能自动恢复。发现无法保存的格式时必须在覆盖剪贴板前失败关闭、改用不触碰剪贴板的安全交付或进入 Pending；任何交付方式只提交了部分输入事件、在不可逆提交附近失联或不能证明尚未提交时，都必须标记为状态不确定并禁止自动重试。剪贴板清空、事务标记写入、逐格式写入和恢复之间的任一辅助进程故障不得被误判为可安全重放，也不得把内容送往未经复验的当前窗口 | 自动化 + 原生辅助进程/剪贴板格式/部分 SendInput 故障注入 + 真实 Windows 文本/HTML/RTF/图片/文件/自定义格式互操作 |
 
 ## 明确不规定的实现
 
@@ -158,16 +158,16 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 - 首页智能润色为四档控件：`Fast`、轻微整理、自然表达和理清重点；相关入口与保存链路：`src/features/settings/PolishLevelSetting.tsx`、`src/features/settings/SettingsSidebar.tsx`、`src/app/AppShellV2.tsx`
 - 异常捕获：`src-tauri/src/incident/`
 
-当前 finalize 链路只在权威 ASR final 返回后创建不可变 `FrozenTranscript`。 `Fast` 在此后把 Processing 标记为策略跳过，不加载 Prompt、不创建 TextProcessing 请求、不记录 LLM 超时或失败，并以 `asr_direct` provenance 交给既有 Delivery；其余三档才创建 ProcessingPlan、调用 Processor，任何非取消处理失败选择冻结原文并标记 `asr_fallback`。所有路径共用一次 ReadyToInject、AtomicPaste、Pending 和 History 提交链路；模型结果标记为不可参与热词学习。当前生产 AtomicPaste 仍在进程内保存活 OLE `IDataObject`，写入文本、发送 Ctrl+V，并在 80ms 后重新发布和 Flush 原对象；该事实已被目标环境崩溃证据判定为不安全，ADR-0018 的自有快照与辅助进程尚未实现。
+当前 finalize 链路只在权威 ASR final 返回后创建不可变 `FrozenTranscript`。 `Fast` 在此后把 Processing 标记为策略跳过，不加载 Prompt、不创建 TextProcessing 请求、不记录 LLM 超时或失败，并以 `asr_direct` provenance 交给既有 Delivery；其余三档才创建 ProcessingPlan、调用 Processor，任何非取消处理失败选择冻结原文并标记 `asr_fallback`。所有 SmartDictation 路径共用一次 ReadyToInject、AtomicPaste、Pending 和 History 提交链路；模型结果标记为不可参与热词学习。当前首次自动交付与 Pending 的“发送到原窗口”都会保留 `SmartDictationAtomicPaste` intent，旧 `clipboard_compatibility` 配置仍可让 Legacy 交付进入剪贴板路径。生产 AtomicPaste 仍在进程内保存活 OLE `IDataObject`，写入文本、发送 Ctrl+V，并在 80ms 后重新发布和 Flush 原对象；该事实已被目标环境崩溃证据判定为不安全，ADR-0018 的自有快照与辅助进程尚未实现。
 
 ## 验证状态
 
-当前实现状态为 `in_progress`，验证状态为 `invalidated`。自动化曾覆盖四档滑块、Fast 旁路、配置持久化、冻结 ASR 文本原样交付、`asr_direct` provenance 和 Mock AtomicPaste 契约，但这些结果没有执行真实 Windows OLE 恢复路径。2026-08-31 的真实 Tauri 运行中，13 字文本从 provider final 到 delivery payload 的长度、bytes 和哈希完全一致，进入 `delivery_inject` 后仍发生 `tokio-rt-worker` 栈溢出并以 `0xc000041d` 终止进程；2026-08-28 的较长文本也在同一边界崩溃。因此 `AC-SD-10`、`AC-SD-15` 的真实交付部分和新增 `AC-SD-16` 均未通过，自动化通过不能支持整体完成声明。
+当前实现状态为 `in_progress`，验证状态为 `invalidated`。自动化曾覆盖四档滑块、Fast 旁路、配置持久化、冻结 ASR 文本原样交付、`asr_direct` provenance、文本规范化和 Mock AtomicPaste 回执，但这些结果没有执行真实 Windows OLE 捕获、恢复或辅助进程故障路径。源码复核还确认，现有 `TextInjector` 默认实现会在普通注入成功后伪造“已提交且已恢复”，而原生测试只检查部分 `SendInput` 被视为错误，尚未把它表达为可能已经产生副作用的 `Unknown`。2026-08-31 的真实 Tauri 运行中，13 字文本从 provider final 到 delivery payload 的长度、bytes 和哈希完全一致，进入 `delivery_inject` 后仍发生 `tokio-rt-worker` 栈溢出并以 `0xc000041d` 终止进程；2026-08-28 的较长文本也在同一边界崩溃。因此 `AC-SD-10`、`AC-SD-15` 的真实交付部分和新增 `AC-SD-16` 均未通过，自动化通过不能支持整体完成声明。
 
 
 现有自动化证据不具备 `human_quality_eval` 或 `usability_observation` 能力，因此不能回答“用户是否感到明显润色”“三档是否可预测”或“结果是否比原文更可用”。这些问题属于未完成的产品验证，不应再用链路测试通过来代替。
 
-仍未完成：停用 OLE 活对象恢复；实现并验证自有剪贴板快照、事务标记、恢复竞争保护、完整串行化和隔离粘贴辅助进程；覆盖文本、HTML、RTF、图片、文件和自定义格式的真实 Windows 故障矩阵；携带测试听写内容的真实 DeepSeek 成稿与人工质量评测；干净 Windows 目标机安装后的 WebView2/全局快捷键完整链路；聊天、Office、编码助手和终端输入框互操作；覆盖安装后的配置与历史持久化；完整 finalize 竞争和 IncidentVault 拥塞故障注入。目标环境崩溃关闭前不得恢复为 `partial`，缺少完整证据时不得升级为 `validated` 或发布完成。
+仍未完成：从首次 SmartDictation、Pending 重新交付和 Legacy `clipboard_compatibility` 三条自动路径停用 OLE 活对象恢复；让 Unicode 安全降级和最终 helper 共享 `NotSubmitted | Submitted | Unknown` 提交语义；实现并验证自有剪贴板快照、事务标记、清空/逐格式写入故障恢复、恢复竞争保护、完整串行化和隔离剪贴板事务辅助进程；覆盖文本、HTML、RTF、图片、文件和自定义格式的真实 Windows 故障矩阵；携带测试听写内容的真实 DeepSeek 成稿与人工质量评测；干净 Windows 目标机安装后的 WebView2/全局快捷键完整链路；聊天、Office、编码助手和终端输入框互操作；覆盖安装后的配置与历史持久化；完整 finalize 竞争和 IncidentVault 拥塞故障注入。目标环境崩溃关闭前不得恢复为 `partial`，缺少完整证据时不得升级为 `validated` 或发布完成。
 
 ## 澄清历史
 
@@ -188,3 +188,4 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 - 2026-08-28：用户提出更丝滑的连续渐变滑轨与三个阶段的范围吸附，并明确本轮先讨论参数化润色量化，不立即把候选的 `0–100` 方案写成已确认验收；同时授权直接挑战和改进仍处于 MVP 阶段的文档系统。
 - 2026-08-31：用户确认智能润色改为四档，并将第一档命名为 `Fast`，面向用户说明“快速响应，仅识别原话”；该档主动跳过 LLM Chatbot，仅在完整 ASR final 冻结后进入本地转换和 Delivery。
 - 2026-08-31：用户提供第二次真实 Windows 短文本崩溃日志；13 字文本在 provider、relay、aggregate 和 delivery 阶段哈希一致，排除长文本、ASR 聚合和 LLM 润色后仍在 AtomicPaste 边界栈溢出。用户确认把“自有剪贴板快照、单一事务所有者、隔离粘贴辅助进程、无法安全保存时失败关闭”的替代计划写入文档系统。
+- 2026-08-31：基于 revision `b0c2faa1e116763a18cfeb318cb50bbbb238996a` 的源码复核确认，当前 SmartDictation 首次交付与 Pending 重新交付共用危险 AtomicPaste，Legacy `clipboard_compatibility` 仍可启用，现有自动化未执行原生 OLE 路径。用户进一步确认文档应区分当前已证实偏差与迁移方案风险，并把部分 `SendInput`、提交附近失联以及剪贴板清空后标记写入前崩溃纳入不可自动重试边界。
