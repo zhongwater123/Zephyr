@@ -222,7 +222,45 @@
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 16px 20px 24px;
-  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--z-muted) 22%, transparent) transparent;
+}
+
+.settings-sidebar-scroll:hover,
+.settings-sidebar-scroll:focus-within {
+  scrollbar-color: color-mix(in srgb, var(--z-muted) 55%, transparent) transparent;
+}
+
+.settings-sidebar-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-sidebar-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.settings-sidebar-scroll::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--z-muted) 22%, transparent);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  transition: background-color 150ms ease;
+}
+
+.settings-sidebar-scroll:hover::-webkit-scrollbar-thumb,
+.settings-sidebar-scroll:focus-within::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--z-muted) 55%, transparent);
+}
+
+.settings-sidebar-scroll::-webkit-scrollbar-thumb:hover,
+.settings-sidebar-scroll::-webkit-scrollbar-thumb:active {
+  background-color: color-mix(in srgb, var(--z-muted) 72%, transparent);
 }
 
 .runtime-status-card {
