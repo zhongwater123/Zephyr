@@ -53,10 +53,12 @@ impl AppStateMachine {
         Self::default()
     }
 
+    #[allow(dead_code)]
     pub fn state(&self) -> &VoiceState {
         &self.state
     }
 
+    #[allow(dead_code)]
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }

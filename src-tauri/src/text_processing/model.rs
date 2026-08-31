@@ -20,6 +20,7 @@ impl FrozenTranscript {
         &self.0
     }
 
+    #[allow(dead_code)]
     pub fn into_inner(self) -> String {
         self.0
     }
@@ -36,11 +37,12 @@ pub enum ActivationIntent {
     SmartDictation,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(try_from = "u8", into = "u8")]
 pub enum PolishLevel {
     Fast = 0,
     Light = 1,
+    #[default]
     Standard = 2,
     Deep = 3,
 }
@@ -52,12 +54,6 @@ impl PolishLevel {
 
     pub const fn is_fast(self) -> bool {
         matches!(self, Self::Fast)
-    }
-}
-
-impl Default for PolishLevel {
-    fn default() -> Self {
-        Self::Standard
     }
 }
 

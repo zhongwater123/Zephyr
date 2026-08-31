@@ -28,6 +28,7 @@ impl TranscriptPreviewState {
         self.confirmed_chars
     }
 
+    #[allow(dead_code)]
     pub fn last_event_at(&self) -> Option<Instant> {
         self.last_event_at
     }

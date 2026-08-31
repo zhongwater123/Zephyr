@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
+#[allow(dead_code)]
 const MANIFEST_FILE: &str = "manifest.json";
 const PROMPT_FILE: &str = "smart_polish.md";
 
@@ -21,6 +22,7 @@ pub struct PromptRepository {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 enum PromptSource {
     Directory(PathBuf),
     Bundled,
@@ -29,6 +31,7 @@ enum PromptSource {
 #[derive(Debug, Error)]
 pub enum PromptRepositoryError {
     #[error("failed to read prompt manifest: {0}")]
+    #[allow(dead_code)]
     ManifestRead(String),
     #[error("failed to parse prompt manifest: {0}")]
     ManifestParse(String),
@@ -60,6 +63,7 @@ struct ManifestEntry {
 }
 
 impl PromptRepository {
+    #[allow(dead_code)]
     pub fn open(root: impl Into<PathBuf>) -> Result<Self, PromptRepositoryError> {
         let root = root.into();
         let bytes = fs::read(root.join(MANIFEST_FILE))

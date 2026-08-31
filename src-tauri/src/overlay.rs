@@ -93,6 +93,7 @@ pub fn begin_preinput_session() -> u64 {
     0
 }
 
+#[allow(dead_code)]
 pub fn current_preinput_session_id() -> u64 {
     preinput_store()
         .lock()

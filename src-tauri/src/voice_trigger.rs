@@ -23,6 +23,7 @@ impl fmt::Display for ActivationId {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum TriggerSource {
     Shortcut,
     UserInterface,
@@ -44,6 +45,7 @@ pub struct VoiceActivation {
 }
 
 impl VoiceActivation {
+    #[allow(dead_code)]
     pub fn shortcut() -> Self {
         Self::shortcut_for(TriggerBehavior::PushToTalk)
     }
@@ -59,6 +61,7 @@ impl VoiceActivation {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum VoiceCancelReason {
     TriggerInterrupted,
     UserRequested,
@@ -96,7 +99,9 @@ impl ActivationCompletionReceipt {
 
 #[derive(Debug)]
 pub struct AcceptedActivation {
+    #[allow(dead_code)]
     pub session_id: u64,
+    #[allow(dead_code)]
     pub config_revision: u64,
     pub completion: ActivationCompletionReceipt,
 }

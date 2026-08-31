@@ -80,6 +80,7 @@ impl DeliveryService {
         Self { services }
     }
 
+    #[allow(dead_code)]
     pub fn validate(
         &self,
         text: &str,
@@ -187,6 +188,7 @@ impl DeliveryService {
             })
     }
 
+    #[allow(dead_code)]
     pub async fn commit(
         &self,
         text: String,

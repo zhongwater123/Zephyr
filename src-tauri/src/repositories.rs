@@ -112,6 +112,7 @@ impl CredentialStore for WindowsCredentialStore {
 }
 
 pub trait HistoryRepository: Send + Sync {
+    #[allow(dead_code)]
     fn insert(&self, text: &str, context: &AppContext) -> Result<HistoryItem, HistoryError>;
     fn insert_with_provenance(
         &self,

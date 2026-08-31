@@ -27,9 +27,11 @@ pub enum VoiceAvailability {
 pub struct VoiceStatusSnapshot {
     pub payload: VoiceStatePayload,
     pub session_active: bool,
+    #[allow(dead_code)]
     pub desired_enabled: bool,
     pub desired_revision: u64,
     pub availability: VoiceAvailability,
+    #[allow(dead_code)]
     pub shortcut_error: Option<String>,
 }
 
@@ -93,6 +95,7 @@ pub(super) enum VoiceInternalEvent {
     },
 }
 
+#[allow(clippy::large_enum_variant)]
 pub(super) enum ActorMessage {
     Command(VoiceCommand),
     Internal(VoiceInternalEvent),
@@ -187,6 +190,7 @@ pub(super) struct StartedSession {
     pub prepared: PreparedSession,
 }
 
+#[allow(clippy::large_enum_variant)]
 pub(super) enum StartOutcome {
     Started(StartedSession),
     Cancelled { session_id: u64 },

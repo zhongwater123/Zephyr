@@ -124,6 +124,7 @@ pub use volcengine::{
 };
 
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ProviderError {
     #[error("未检测到可识别的语音")]
     NoSpeech,

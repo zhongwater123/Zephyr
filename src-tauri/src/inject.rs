@@ -33,6 +33,7 @@ impl AtomicPasteReceipt {
 }
 
 #[derive(Debug, Error)]
+#[allow(dead_code)]
 pub enum InjectError {
     #[error("clipboard compatibility mode is unavailable: {0}")]
     Clipboard(String),

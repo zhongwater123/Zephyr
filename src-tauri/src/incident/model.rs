@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Stage {
     Capture,
     Asr,
@@ -30,6 +31,7 @@ impl Stage {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum StageOutcome {
     NotStarted,
     Running,
@@ -55,6 +57,7 @@ impl StageOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum TerminalOutcome {
     Succeeded,
     Failed,
@@ -74,6 +77,7 @@ impl TerminalOutcome {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum Recoverability {
     None,
     PartialText,
@@ -105,6 +109,7 @@ pub struct AttemptPolicy {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum IncidentEvent {
     AttemptStarted {
         attempt_id: String,
@@ -175,6 +180,7 @@ pub enum IncidentEvent {
 }
 
 impl IncidentEvent {
+    #[allow(dead_code)]
     pub fn attempt_id(&self) -> &str {
         match self {
             Self::AudioChunk { attempt_id, .. } | Self::AudioGap { attempt_id } => {

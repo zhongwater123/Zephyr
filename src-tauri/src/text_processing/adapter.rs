@@ -56,6 +56,7 @@ pub struct ProcessedText {
 }
 
 #[derive(Clone, Debug, Error, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum ProcessingFailure {
     #[error("text processing was cancelled")]
     Cancelled,

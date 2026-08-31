@@ -86,6 +86,7 @@ impl PendingOutputService {
             .is_full()
     }
 
+    #[allow(dead_code)]
     pub fn push(
         &self,
         session_id: u64,

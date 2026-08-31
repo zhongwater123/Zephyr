@@ -70,6 +70,7 @@ pub(super) struct VoiceSessionActor {
     active_completion: Option<(ActivationId, oneshot::Sender<()>)>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn build_actor(
     app: AppHandle,
     enabled: bool,

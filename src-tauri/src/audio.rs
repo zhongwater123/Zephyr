@@ -157,6 +157,7 @@ impl Recorder {
         Self::default()
     }
 
+    #[allow(dead_code)]
     pub fn warm_up(&mut self) -> Result<(), AudioError> {
         self.ensure_stream(DEFAULT_CHUNK_MS)
     }

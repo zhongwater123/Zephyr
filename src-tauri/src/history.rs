@@ -95,6 +95,7 @@ pub fn history_path() -> Result<PathBuf, HistoryError> {
     Ok(dir.join("history.db"))
 }
 
+#[allow(dead_code)]
 pub fn insert_transcript(
     text: &str,
     app_context: &AppContext,

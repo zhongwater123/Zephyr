@@ -275,7 +275,7 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
                 None,
             );
             let provenance = HistoryProvenance::smart_processed(
-                &format!("smart_polish_l{}", output.polish_level.as_u8()),
+                format!("smart_polish_l{}", output.polish_level.as_u8()),
                 output.prompt_version.clone(),
             );
             (output.text, provenance)
