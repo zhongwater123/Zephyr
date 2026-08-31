@@ -1,9 +1,14 @@
 use crate::history::{AppContext, HistoryProvenance};
 use crate::hotwords;
-use crate::inject::{AtomicPasteReceipt, InjectionMethod, TextInjector};
+use crate::inject::{
+    DeliveryExecutor, DeliveryMode, DeliveryReceipt, DeliveryRequest, InjectError,
+};
 use crate::services::AppServices;
 use crate::target;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use std::time::Instant;
+use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct DeliveryFailure {
@@ -14,18 +19,12 @@ pub struct DeliveryFailure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeliveryIntent {
     Legacy,
-    SmartDictationAtomicPaste,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum DeliveryReceipt {
-    LegacyInjected,
-    AtomicPaste(AtomicPasteReceipt),
+    SmartDictation,
 }
 
 pub fn prepare_delivery_text(
     text: &str,
-    target_window: &target::TargetWindowIdentity,
+    _target_window: &target::TargetWindowIdentity,
     intent: DeliveryIntent,
 ) -> Result<String, DeliveryFailure> {
     let prepared = match intent {
@@ -33,21 +32,15 @@ pub fn prepare_delivery_text(
             target::validate_output_text(text).map_err(map_output_validation_error)?;
             text.to_string()
         }
-        DeliveryIntent::SmartDictationAtomicPaste => {
+        DeliveryIntent::SmartDictation => {
             target::normalize_smart_output_text(text).map_err(map_output_validation_error)?
         }
     };
 
-    if intent == DeliveryIntent::SmartDictationAtomicPaste
-        && prepared.contains('\n')
-        && target::is_multiline_unsafe_target(&target_window.executable_name)
-    {
+    if intent == DeliveryIntent::SmartDictation && prepared.contains('\n') {
         return Err(DeliveryFailure {
-            code: "multiline_target_unsafe",
-            message: format!(
-                "multiline automatic paste is disabled for {}",
-                target_window.executable_name
-            ),
+            code: "atomic_paste_temporarily_unavailable",
+            message: "多行整体粘贴正在安全升级，结果已进入待处理区".to_string(),
         });
     }
 
@@ -143,49 +136,47 @@ impl DeliveryService {
         &self,
         text: String,
         target_window: target::TargetWindowIdentity,
-        injector: Arc<dyn TextInjector>,
-        method: InjectionMethod,
+        executor: Arc<dyn DeliveryExecutor>,
+        requested_mode: DeliveryMode,
         intent: DeliveryIntent,
     ) -> Result<DeliveryReceipt, DeliveryFailure> {
-        match intent {
-            DeliveryIntent::Legacy => {
-                self.inject(text, injector, method).await?;
-                Ok(DeliveryReceipt::LegacyInjected)
-            }
-            DeliveryIntent::SmartDictationAtomicPaste => {
-                tauri::async_runtime::spawn_blocking(move || {
-                    injector.inject_atomic_paste(&text, &target_window)
-                })
-                .await
-                .map_err(|error| DeliveryFailure {
-                    code: "injection_task_failed",
-                    message: error.to_string(),
-                })?
-                .map(DeliveryReceipt::AtomicPaste)
-                .map_err(|error| DeliveryFailure {
-                    code: "injection_rejected_before_submit",
-                    message: error.to_string(),
-                })
-            }
-        }
-    }
-
-    pub async fn inject(
-        &self,
-        text: String,
-        injector: Arc<dyn TextInjector>,
-        method: InjectionMethod,
-    ) -> Result<(), DeliveryFailure> {
-        tauri::async_runtime::spawn_blocking(move || injector.inject_text(&text, method))
-            .await
-            .map_err(|error| DeliveryFailure {
-                code: "injection_task_failed",
-                message: error.to_string(),
-            })?
-            .map_err(|error| DeliveryFailure {
-                code: "injection_rejected",
-                message: error.to_string(),
+        let transaction_id = Uuid::new_v4();
+        let mode = match intent {
+            DeliveryIntent::Legacy => requested_mode,
+            DeliveryIntent::SmartDictation => DeliveryMode::Unicode,
+        };
+        let started = Instant::now();
+        let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
+        log::info!(
+            "delivery_inject_started transaction_id={transaction_id} mode={mode:?} chars={} bytes={} sha256={digest} target_exe={} target_pid={}",
+            text.chars().count(),
+            text.len(),
+            target_window.executable_name,
+            target_window.process_id
+        );
+        let result = executor
+            .deliver(DeliveryRequest {
+                transaction_id,
+                text,
+                target: target_window,
+                mode,
             })
+            .await
+            .map_err(map_inject_error);
+        match &result {
+            Ok(receipt) => log::info!(
+                "delivery_inject_finished transaction_id={transaction_id} submission={:?} restoration={:?} elapsed_ms={}",
+                receipt.submission,
+                receipt.restoration,
+                started.elapsed().as_millis()
+            ),
+            Err(error) => log::warn!(
+                "delivery_inject_finished transaction_id={transaction_id} code={} elapsed_ms={}",
+                error.code,
+                started.elapsed().as_millis()
+            ),
+        }
+        result
     }
 
     #[allow(dead_code)]
@@ -237,6 +228,19 @@ impl DeliveryService {
     }
 }
 
+fn map_inject_error(error: InjectError) -> DeliveryFailure {
+    match error {
+        InjectError::ClipboardTemporarilyUnavailable => DeliveryFailure {
+            code: "clipboard_compatibility_temporarily_unavailable",
+            message: "剪贴板兼容模式正在安全升级，结果已进入待处理区".to_string(),
+        },
+        other => DeliveryFailure {
+            code: "injection_task_failed",
+            message: other.to_string(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -247,6 +251,7 @@ mod tests {
             process_id: 2,
             process_started_at: 3,
             executable_name: executable_name.to_string(),
+            executable_path: format!(r"C:\\Apps\\{executable_name}"),
             window_title: None,
         }
     }
@@ -266,40 +271,28 @@ mod tests {
     }
 
     #[test]
-    fn smart_delivery_normalizes_multiline_text_for_ordinary_targets() {
+    fn smart_delivery_keeps_single_line_text() {
         assert_eq!(
             prepare_delivery_text(
-                "first\r\nsecond\rthird",
+                "first second",
                 &target("notepad.exe"),
-                DeliveryIntent::SmartDictationAtomicPaste,
+                DeliveryIntent::SmartDictation,
             )
             .unwrap(),
-            "first\nsecond\nthird"
+            "first second"
         );
     }
 
     #[test]
-    fn smart_multiline_fails_closed_only_for_known_command_targets() {
-        for executable in ["cmd.exe", "PowerShell.exe", "WindowsTerminal.exe"] {
+    fn smart_multiline_fails_closed_until_atomic_paste_is_available() {
+        for executable in ["notepad.exe", "Code.exe", "WindowsTerminal.exe"] {
             let error = prepare_delivery_text(
                 "first\nsecond",
                 &target(executable),
-                DeliveryIntent::SmartDictationAtomicPaste,
+                DeliveryIntent::SmartDictation,
             )
             .unwrap_err();
-            assert_eq!(error.code, "multiline_target_unsafe");
+            assert_eq!(error.code, "atomic_paste_temporarily_unavailable");
         }
-        assert!(prepare_delivery_text(
-            "first\nsecond",
-            &target("Code.exe"),
-            DeliveryIntent::SmartDictationAtomicPaste,
-        )
-        .is_ok());
-        assert!(prepare_delivery_text(
-            "first\nsecond",
-            &target("Cursor.exe"),
-            DeliveryIntent::SmartDictationAtomicPaste,
-        )
-        .is_ok());
     }
 }

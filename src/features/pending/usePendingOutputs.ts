@@ -14,9 +14,9 @@ export function usePendingOutputs(onNotice: (message: string) => void) {
     }
   }
 
-  async function deliverPendingOutput(id: string) {
+  async function deliverPendingOutput(id: string, confirmUncertain = false) {
     try {
-      await pendingApi.deliver(id);
+      await pendingApi.deliver(id, confirmUncertain);
       await refreshPendingOutputs();
       onNotice("待处理结果已发送到原窗口。 ");
     } catch (error) {

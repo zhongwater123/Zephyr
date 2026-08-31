@@ -3,12 +3,12 @@ use super::super::contract::{
 };
 use super::super::incident::IncidentAttemptGuard;
 use super::super::resources::SessionResources;
-use crate::delivery::{DeliveryIntent, DeliveryReceipt, DeliveryService};
+use crate::delivery::{DeliveryIntent, DeliveryService};
 use crate::history::HistoryProvenance;
 use crate::incident::model::{
     Recoverability, Stage as IncidentStage, StageOutcome as IncidentStageOutcome, TerminalOutcome,
 };
-use crate::inject::ClipboardRestoration;
+use crate::inject::{RestorationState, SubmissionState};
 use crate::provider::ProviderError;
 use crate::text_processing::{
     ActivationIntent, FrozenTranscript, PolishLevel, ProcessingPlan, ProcessingRequest,
@@ -42,8 +42,8 @@ pub(crate) fn spawn_finalization(job: FinalizationJob, events: VoiceInternalEven
 async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> FinalizeOutcome {
     let FinalizationJob {
         session,
-        injector,
-        injection_method,
+        executor,
+        delivery_mode,
         services,
     } = job;
     let SessionResources {
@@ -305,7 +305,7 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
     };
 
     let delivery = DeliveryService::new(services.clone());
-    let delivery_intent = DeliveryIntent::SmartDictationAtomicPaste;
+    let delivery_intent = DeliveryIntent::SmartDictation;
     incident.stage(IncidentStage::Delivery, IncidentStageOutcome::Running, None);
     let delivery_text =
         match delivery.validate_with_intent(&delivery_text, &target, false, delivery_intent) {
@@ -327,6 +327,7 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
                         reason_message: error.message,
                         delivery_intent,
                         provenance,
+                        certainty: crate::target::DeliveryCertainty::Retryable,
                     },
                 };
             }
@@ -364,8 +365,8 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
         .inject_with_intent(
             delivery_text.clone(),
             target.clone(),
-            injector,
-            injection_method,
+            executor,
+            delivery_mode,
             delivery_intent,
         )
         .await
@@ -388,13 +389,14 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
                     reason_message: error.message,
                     delivery_intent,
                     provenance,
+                    certainty: crate::target::DeliveryCertainty::Retryable,
                 },
             };
         }
     };
-    if let DeliveryReceipt::AtomicPaste(receipt) = receipt {
-        if !receipt.paste_submitted {
-            let message = "atomic paste returned without a submitted paste".to_string();
+    match receipt.submission {
+        SubmissionState::NotSubmitted => {
+            let message = "未向目标提交任何输入事件".to_string();
             incident.record_failure(
                 IncidentStage::Delivery,
                 "injection_not_submitted",
@@ -411,24 +413,48 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
                     reason_message: message,
                     delivery_intent,
                     provenance,
+                    certainty: crate::target::DeliveryCertainty::Retryable,
                 },
             };
         }
-        match receipt.clipboard_restoration {
-            ClipboardRestoration::Restored => {}
-            ClipboardRestoration::SkippedConcurrentChange => incident.finding(
+        SubmissionState::Unknown => {
+            let message = "文本可能已经输入，请先检查目标窗口；系统不会自动重试".to_string();
+            incident.record_failure(
                 IncidentStage::Delivery,
-                "clipboard_restore_skipped",
-                "paste submitted; clipboard changed concurrently, so restoration was skipped",
-                Recoverability::None,
-            ),
-            ClipboardRestoration::Failed(message) => incident.finding(
-                IncidentStage::Delivery,
-                "clipboard_restore_failed_after_submit",
-                &format!("paste submitted; clipboard restoration failed: {message}"),
-                Recoverability::None,
-            ),
+                "delivery_submission_unknown",
+                &message,
+                Recoverability::TextAndAudio,
+            );
+            incident.finish(TerminalOutcome::Failed, false);
+            return FinalizeOutcome::Pending {
+                session_id,
+                draft: PendingDraft {
+                    text: delivery_text,
+                    target,
+                    reason_code: "delivery_submission_unknown".to_string(),
+                    reason_message: message,
+                    delivery_intent,
+                    provenance,
+                    certainty: crate::target::DeliveryCertainty::MayHaveBeenSubmitted,
+                },
+            };
         }
+        SubmissionState::Submitted => {}
+    }
+    match receipt.restoration {
+        RestorationState::NotNeeded | RestorationState::Restored => {}
+        RestorationState::SkippedConcurrentChange => incident.finding(
+            IncidentStage::Delivery,
+            "clipboard_restore_skipped",
+            "paste submitted; clipboard changed concurrently, so restoration was skipped",
+            Recoverability::None,
+        ),
+        RestorationState::Failed => incident.finding(
+            IncidentStage::Delivery,
+            "clipboard_restore_failed_after_submit",
+            "paste submitted; clipboard restoration failed",
+            Recoverability::None,
+        ),
     }
     incident.stage(
         IncidentStage::Delivery,

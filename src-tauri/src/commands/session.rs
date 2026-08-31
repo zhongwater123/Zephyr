@@ -96,9 +96,12 @@ pub fn copy_pending_output(
 #[tauri::command]
 pub async fn deliver_pending_output(
     id: String,
+    confirm_uncertain: Option<bool>,
     window: WebviewWindow,
     voice: State<'_, VoiceSessionHandle>,
 ) -> CommandResult<()> {
     command_error::require_window(&window, "main")?;
-    voice.deliver_pending(id).await
+    voice
+        .deliver_pending(id, confirm_uncertain.unwrap_or(false))
+        .await
 }

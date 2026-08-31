@@ -12,6 +12,7 @@ pub struct TargetWindowIdentity {
     pub process_id: u32,
     pub process_started_at: u64,
     pub executable_name: String,
+    pub executable_path: String,
     pub window_title: Option<String>,
 }
 
@@ -28,6 +29,14 @@ pub struct PendingOutput {
     pub target_available: bool,
     pub reason_code: String,
     pub reason_message: String,
+    pub delivery_certainty: DeliveryCertainty,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DeliveryCertainty {
+    Retryable,
+    MayHaveBeenSubmitted,
 }
 
 #[derive(Clone, Debug)]
@@ -97,23 +106,45 @@ impl PendingOutputStore {
         reason_code: impl Into<String>,
         reason_message: impl Into<String>,
     ) -> Result<PendingOutput, PendingOutputError> {
-        self.push_with_ttl(
+        self.push_with_certainty_and_ttl(
             session_id,
             text,
             target,
             reason_code,
             reason_message,
+            DeliveryCertainty::Retryable,
             PENDING_OUTPUT_TTL,
         )
     }
 
-    fn push_with_ttl(
+    pub fn push_with_certainty(
         &mut self,
         session_id: u64,
         text: String,
         target: TargetWindowIdentity,
         reason_code: impl Into<String>,
         reason_message: impl Into<String>,
+        certainty: DeliveryCertainty,
+    ) -> Result<PendingOutput, PendingOutputError> {
+        self.push_with_certainty_and_ttl(
+            session_id,
+            text,
+            target,
+            reason_code,
+            reason_message,
+            certainty,
+            PENDING_OUTPUT_TTL,
+        )
+    }
+
+    fn push_with_certainty_and_ttl(
+        &mut self,
+        session_id: u64,
+        text: String,
+        target: TargetWindowIdentity,
+        reason_code: impl Into<String>,
+        reason_message: impl Into<String>,
+        certainty: DeliveryCertainty,
         ttl: Duration,
     ) -> Result<PendingOutput, PendingOutputError> {
         self.purge_expired();
@@ -135,6 +166,7 @@ impl PendingOutputStore {
             target_available: validate_target_exists(&target).is_ok(),
             reason_code: reason_code.into(),
             reason_message: reason_message.into(),
+            delivery_certainty: certainty,
         };
 
         self.entries.push_back(PendingOutputRecord {
@@ -169,6 +201,23 @@ impl PendingOutputStore {
         self.purge_expired();
         let index = self.entries.iter().position(|record| record.dto.id == id)?;
         self.entries.remove(index)
+    }
+
+    pub fn update_delivery_failure(
+        &mut self,
+        id: &str,
+        certainty: DeliveryCertainty,
+        reason_code: impl Into<String>,
+        reason_message: impl Into<String>,
+    ) -> bool {
+        self.purge_expired();
+        let Some(record) = self.entries.iter_mut().find(|record| record.dto.id == id) else {
+            return false;
+        };
+        record.dto.delivery_certainty = certainty;
+        record.dto.reason_code = reason_code.into();
+        record.dto.reason_message = reason_message.into();
+        true
     }
 
     fn purge_expired(&mut self) {
@@ -235,7 +284,7 @@ fn process_started_at(process_id: u32) -> Result<u64, String> {
 }
 
 #[cfg(target_os = "windows")]
-fn executable_name(process_id: u32) -> Result<String, String> {
+fn executable_path(process_id: u32) -> Result<String, String> {
     use windows::core::PWSTR;
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Threading::{
@@ -259,12 +308,15 @@ fn executable_name(process_id: u32) -> Result<String, String> {
         let _ = CloseHandle(process);
     }
     result.map_err(|error| format!("无法读取目标程序路径: {error}"))?;
-    let path = String::from_utf16_lossy(&buffer[..length as usize]);
-    Ok(std::path::Path::new(&path)
+    Ok(String::from_utf16_lossy(&buffer[..length as usize]))
+}
+
+fn executable_name_from_path(path: &str) -> String {
+    std::path::Path::new(path)
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or(&path)
-        .to_string())
+        .to_string()
 }
 
 #[cfg(target_os = "windows")]
@@ -296,11 +348,13 @@ pub fn capture_foreground_target() -> Result<TargetWindowIdentity, String> {
         return Err("无法识别目标窗口所属进程".to_string());
     }
 
+    let executable_path = executable_path(process_id)?;
     Ok(TargetWindowIdentity {
         hwnd: hwnd.0 as isize,
         process_id,
         process_started_at: process_started_at(process_id)?,
-        executable_name: executable_name(process_id)?,
+        executable_name: executable_name_from_path(&executable_path),
+        executable_path,
         window_title: window_title(hwnd),
     })
 }
@@ -322,7 +376,10 @@ pub fn validate_target_exists(target: &TargetWindowIdentity) -> Result<(), Strin
     if process_started_at(process_id)? != target.process_started_at {
         return Err("原目标进程已经被替换".to_string());
     }
-    if !executable_name(process_id)?.eq_ignore_ascii_case(&target.executable_name) {
+    let current_path = executable_path(process_id)?;
+    if !current_path.eq_ignore_ascii_case(&target.executable_path)
+        || !executable_name_from_path(&current_path).eq_ignore_ascii_case(&target.executable_name)
+    {
         return Err("原目标程序身份已经变化".to_string());
     }
     Ok(())
@@ -410,6 +467,7 @@ mod tests {
             process_id: 20,
             process_started_at: 30,
             executable_name: "app.exe".to_string(),
+            executable_path: r"C:\\Apps\\app.exe".to_string(),
             window_title: None,
         };
         let mut reused = first.clone();
@@ -424,6 +482,7 @@ mod tests {
             process_id: 0,
             process_started_at: 0,
             executable_name: "app.exe".to_string(),
+            executable_path: r"C:\\Apps\\app.exe".to_string(),
             window_title: None,
         };
         let mut store = PendingOutputStore::default();
@@ -453,16 +512,18 @@ mod tests {
             process_id: 0,
             process_started_at: 0,
             executable_name: "app.exe".to_string(),
+            executable_path: r"C:\\Apps\\app.exe".to_string(),
             window_title: None,
         };
         let mut store = PendingOutputStore::default();
         store
-            .push_with_ttl(
+            .push_with_certainty_and_ttl(
                 1,
                 "expired".to_string(),
                 target,
                 "test",
                 "test",
+                DeliveryCertainty::Retryable,
                 Duration::ZERO,
             )
             .unwrap();

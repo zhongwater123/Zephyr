@@ -228,6 +228,31 @@ mod tests {
     }
 
     #[test]
+    fn automatic_delivery_cannot_restore_live_ole_clipboard_objects() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut files = vec![
+            manifest.join("src/delivery.rs"),
+            manifest.join("src/inject.rs"),
+        ];
+        files.extend(rust_sources(&manifest.join("src/voice_controller")));
+        for path in files {
+            let source = std::fs::read_to_string(&path).unwrap();
+            for forbidden in [
+                "OleGetClipboard",
+                "OleSetClipboard",
+                "OleFlushClipboard",
+                "IDataObject",
+            ] {
+                assert!(
+                    !source.contains(forbidden),
+                    "{} must not use forbidden automatic clipboard token {forbidden}",
+                    path.display()
+                );
+            }
+        }
+    }
+
+    #[test]
     fn voice_runtime_has_exactly_one_source_writer() {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let voice_root = manifest.join("src/voice_controller");

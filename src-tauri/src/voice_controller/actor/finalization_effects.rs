@@ -59,18 +59,16 @@ impl VoiceSessionActor {
                     .config
                     .injection_strategy_for(&session.target.executable_name)
                 {
-                    InjectionStrategy::Unicode => InjectionMethod::Unicode,
-                    InjectionStrategy::ClipboardCompatibility => {
-                        InjectionMethod::ClipboardCompatibility
-                    }
+                    InjectionStrategy::Unicode => DeliveryMode::Unicode,
+                    InjectionStrategy::ClipboardCompatibility => DeliveryMode::ClipboardPaste,
                 };
                 self.finalizing_cancellation = Some((session_id, session.cancellation.clone()));
                 presenter.emit_state(payload);
                 workflow::spawn_finalization(
                     FinalizationJob {
                         session,
-                        injector: self.injector.clone(),
-                        injection_method: method,
+                        executor: self.executor.clone(),
+                        delivery_mode: method,
                         services: self.services.clone(),
                     },
                     self.events.clone(),
@@ -114,6 +112,7 @@ impl VoiceSessionActor {
                     crate::pending_output_service::PendingDeliveryMetadata {
                         intent: draft.delivery_intent,
                         provenance: draft.provenance,
+                        certainty: draft.certainty,
                     },
                 ) {
                     Ok(_) => {

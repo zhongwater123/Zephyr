@@ -118,10 +118,18 @@ impl VoiceSessionHandle {
             .map_err(|_| VoiceTriggerError::ControlPlaneUnavailable)
     }
 
-    pub async fn deliver_pending(&self, id: String) -> crate::command_error::CommandResult<()> {
+    pub async fn deliver_pending(
+        &self,
+        id: String,
+        confirm_uncertain: bool,
+    ) -> crate::command_error::CommandResult<()> {
         let (response, result) = oneshot::channel();
-        self.submit(VoiceCommand::DeliverPending { id, response })
-            .map_err(map_trigger_error)?;
+        self.submit(VoiceCommand::DeliverPending {
+            id,
+            confirm_uncertain,
+            response,
+        })
+        .map_err(map_trigger_error)?;
         result.await.map_err(|_| {
             crate::command_error::CommandError::new("voice_control_unavailable", "语音控制面不可用")
         })?

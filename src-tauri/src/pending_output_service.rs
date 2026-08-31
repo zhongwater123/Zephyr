@@ -1,7 +1,7 @@
 use crate::delivery::DeliveryIntent;
 use crate::history::HistoryProvenance;
 use crate::target::{
-    PendingOutput, PendingOutputError, PendingOutputRecord, PendingOutputStore,
+    DeliveryCertainty, PendingOutput, PendingOutputError, PendingOutputRecord, PendingOutputStore,
     TargetWindowIdentity,
 };
 use std::collections::{HashMap, HashSet};
@@ -18,6 +18,7 @@ pub enum PendingOutputServiceError {
 pub struct PendingDeliveryMetadata {
     pub intent: DeliveryIntent,
     pub provenance: HistoryProvenance,
+    pub certainty: DeliveryCertainty,
 }
 
 impl Default for PendingDeliveryMetadata {
@@ -25,6 +26,7 @@ impl Default for PendingDeliveryMetadata {
         Self {
             intent: DeliveryIntent::Legacy,
             provenance: HistoryProvenance::default(),
+            certainty: DeliveryCertainty::Retryable,
         }
     }
 }
@@ -66,6 +68,19 @@ impl PendingOutputLease {
         let completed = self.service.complete(&self.id)?;
         self.terminal = true;
         Ok(completed)
+    }
+
+    pub fn retain(
+        mut self,
+        certainty: DeliveryCertainty,
+        reason_code: impl Into<String>,
+        reason_message: impl Into<String>,
+    ) -> Result<(), PendingOutputServiceError> {
+        self.service
+            .update_delivery_failure(&self.id, certainty, reason_code, reason_message)?;
+        self.service.release(&self.id);
+        self.terminal = true;
+        Ok(())
     }
 }
 
@@ -120,7 +135,14 @@ impl PendingOutputService {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let output = state
             .store
-            .push(session_id, text, target, reason_code, reason_message)
+            .push_with_certainty(
+                session_id,
+                text,
+                target,
+                reason_code,
+                reason_message,
+                metadata.certainty,
+            )
             .map_err(|error| match error {
                 PendingOutputError::Full => PendingOutputServiceError::Full,
             })?;
@@ -182,6 +204,27 @@ impl PendingOutputService {
             .remove(id);
     }
 
+    fn update_delivery_failure(
+        &self,
+        id: &str,
+        certainty: DeliveryCertainty,
+        reason_code: impl Into<String>,
+        reason_message: impl Into<String>,
+    ) -> Result<(), PendingOutputServiceError> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !state.reserved.contains(id) {
+            return Err(PendingOutputServiceError::NotFound);
+        }
+        state
+            .store
+            .update_delivery_failure(id, certainty, reason_code, reason_message)
+            .then_some(())
+            .ok_or(PendingOutputServiceError::NotFound)
+    }
+
     pub fn complete(&self, id: &str) -> Result<PendingOutputRecord, PendingOutputServiceError> {
         let mut state = self
             .state
@@ -225,6 +268,7 @@ mod tests {
             process_id: 2,
             process_started_at: 3,
             executable_name: "editor.exe".to_string(),
+            executable_path: r"C:\\Apps\\editor.exe".to_string(),
             window_title: Some("Editor".to_string()),
         }
     }
@@ -297,17 +341,40 @@ mod tests {
                 "target_changed",
                 "target changed",
                 PendingDeliveryMetadata {
-                    intent: DeliveryIntent::SmartDictationAtomicPaste,
+                    intent: DeliveryIntent::SmartDictation,
                     provenance: provenance.clone(),
+                    certainty: DeliveryCertainty::Retryable,
                 },
             )
             .unwrap();
 
         let lease = service.reserve_lease(&output.id).unwrap();
-        assert_eq!(
-            lease.metadata().intent,
-            DeliveryIntent::SmartDictationAtomicPaste
-        );
+        assert_eq!(lease.metadata().intent, DeliveryIntent::SmartDictation);
         assert_eq!(lease.metadata().provenance, provenance);
+    }
+
+    #[test]
+    fn uncertain_retention_updates_the_public_retry_boundary() {
+        let service = std::sync::Arc::new(PendingOutputService::default());
+        let output = service
+            .push(1, "hello".to_string(), target(), "test", "test")
+            .unwrap();
+        service
+            .reserve_lease(&output.id)
+            .unwrap()
+            .retain(
+                DeliveryCertainty::MayHaveBeenSubmitted,
+                "delivery_submission_unknown",
+                "可能已经输入",
+            )
+            .unwrap();
+
+        let retained = service.list().into_iter().next().unwrap();
+        assert_eq!(
+            retained.delivery_certainty,
+            DeliveryCertainty::MayHaveBeenSubmitted
+        );
+        assert_eq!(retained.reason_code, "delivery_submission_unknown");
+        assert!(service.reserve(&output.id).is_ok());
     }
 }

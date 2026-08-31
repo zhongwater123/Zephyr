@@ -21,7 +21,7 @@ use crate::config::{AppConfig, InjectionStrategy};
 use crate::incident::model::{
     IncidentEvent, Recoverability, Stage as IncidentStage, StageOutcome, TerminalOutcome,
 };
-use crate::inject::{InjectionMethod, TextInjector, UnicodeTextInjector};
+use crate::inject::{DeliveryExecutor, DeliveryMode, SafeModeDeliveryExecutor};
 use crate::pending_output_service::{PendingOutputService, PendingOutputServiceError};
 use crate::services::AppServices;
 use crate::state::{ReleaseDecision, VoiceState};
@@ -62,7 +62,7 @@ pub(super) struct VoiceSessionActor {
     fail_closed: Arc<AtomicBool>,
     fail_closed_notify: Arc<tokio::sync::Notify>,
     audio: AudioSessionHandle,
-    injector: Arc<dyn TextInjector>,
+    executor: Arc<dyn DeliveryExecutor>,
     starting: Option<StartingResources>,
     resources: Option<SessionResources>,
     finalizing_cancellation: Option<(u64, Arc<SessionCancellation>)>,
@@ -96,7 +96,7 @@ pub(super) fn build_actor(
             fail_closed,
             fail_closed_notify,
             audio: AudioSessionHandle::spawn(),
-            injector: Arc::new(UnicodeTextInjector),
+            executor: Arc::new(SafeModeDeliveryExecutor),
             starting: None,
             resources: None,
             finalizing_cancellation: None,
@@ -180,9 +180,11 @@ impl VoiceSessionActor {
                 self.execute_effects(effects, presenter);
                 let _ = response.send(Ok(self.runtime.snapshot()));
             }
-            VoiceCommand::DeliverPending { id, response } => {
-                self.begin_pending_delivery(id, response)
-            }
+            VoiceCommand::DeliverPending {
+                id,
+                confirm_uncertain,
+                response,
+            } => self.begin_pending_delivery(id, confirm_uncertain, response),
             VoiceCommand::QueryMetrics { response } => {
                 let _ = response.send(self.metrics_snapshot());
             }

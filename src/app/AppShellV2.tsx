@@ -35,6 +35,7 @@ import {
 import { useHistoryController } from "../features/history/useHistoryController";
 import { useShortcutBindingController } from "../features/shortcut/useShortcutBindingController";
 import { useHotwordController } from "../features/hotwords/useHotwordController";
+import { usePendingOutputs } from "../features/pending/usePendingOutputs";
 
 const ZephyrAsciiField = lazy(() =>
   import("../ZephyrAsciiField").then(({ ZephyrAsciiField }) => ({ default: ZephyrAsciiField })),
@@ -115,6 +116,13 @@ export function AppShell() {
   });
 
   const configMutation = useRevisionedConfigMutation(setConfig, refreshConfigStatus);
+  const {
+    pendingOutputs,
+    refreshPendingOutputs,
+    deliverPendingOutput,
+    copyPendingOutput,
+    discardPendingOutput,
+  } = usePendingOutputs(setNotice);
 
   const {
     historyQuery,
@@ -185,6 +193,7 @@ export function AppShell() {
     void refreshConfigStatus();
     void loadAsrOptionPool();
     void refreshHotwordState();
+    void refreshPendingOutputs();
     void sessionApi.getVoiceState().then(setVoiceStatus).catch((error) => {
       setNotice("语音状态读取失败：" + commandErrorMessage(error));
     });
@@ -192,8 +201,12 @@ export function AppShell() {
     const unlisten = listen<VoiceStatePayload>("voice_state_changed", (event) => {
       setVoiceStatus(event.payload);
     });
+    const unlistenPending = listen("pending_outputs_changed", () => {
+      void refreshPendingOutputs();
+    });
     return () => {
       void unlisten.then((dispose) => dispose());
+      void unlistenPending.then((dispose) => dispose());
     };
   }, []);
 
@@ -679,6 +692,7 @@ export function AppShell() {
             diagnosticMessage={notice}
             providerTestState={providerTestState}
             organizerTestState={organizerTestState}
+            pendingOutputs={pendingOutputs}
             onSection={setMoreSection}
             onProviderTest={() => void runProviderTest()}
             onOrganizerTest={() => void runOrganizerTest()}
@@ -694,6 +708,9 @@ export function AppShell() {
             onIncidentRecoveryEnabled={(enabled) => void setIncidentRecoveryEnabled(enabled)}
             onRevokeEndpoint={(origin) => void revokeTrustedEndpoint(origin, "hotword_agent")}
             onCopyDiagnostics={() => void copyDiagnostics()}
+            onDeliverPending={(id, confirmUncertain) => void deliverPendingOutput(id, confirmUncertain)}
+            onCopyPending={(id) => void copyPendingOutput(id)}
+            onDiscardPending={(id) => void discardPendingOutput(id)}
           />
         </ModalShell>
       ) : null}

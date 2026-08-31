@@ -55,7 +55,8 @@ export const configApi = {
 
 export const pendingApi = {
   list: () => invoke<PendingOutput[]>("list_pending_outputs"),
-  deliver: (id: string) => invoke<void>("deliver_pending_output", { id }),
+  deliver: (id: string, confirmUncertain = false) =>
+    invoke<void>("deliver_pending_output", { id, confirmUncertain }),
   copy: (id: string) => invoke<void>("copy_pending_output", { id }),
   discard: (id: string) => invoke<void>("discard_pending_output", { id }),
 };

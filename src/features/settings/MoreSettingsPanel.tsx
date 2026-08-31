@@ -1,12 +1,14 @@
 import { useEffect, useRef } from "preact/hooks";
-import type { AppConfig, ConfigStatus, HotwordState } from "../../domain";
+import type { AppConfig, ConfigStatus, HotwordState, PendingOutput } from "../../domain";
 import { isOfficialEndpoint } from "../../security-model";
+import { PendingOutputsPanel } from "../pending/PendingOutputsPanel";
 import { BehaviorSwitch } from "./BehaviorSwitch";
 
 export type MoreSettingsSection =
   | "speech"
   | "organizer"
   | "compatibility"
+  | "pending"
   | "privacy"
   | "diagnostics";
 
@@ -102,6 +104,7 @@ export function MoreSettingsPanel({
   diagnosticMessage,
   providerTestState,
   organizerTestState,
+  pendingOutputs,
   onSection,
   onProviderTest,
   onOrganizerTest,
@@ -117,6 +120,9 @@ export function MoreSettingsPanel({
   onIncidentRecoveryEnabled,
   onRevokeEndpoint,
   onCopyDiagnostics,
+  onDeliverPending,
+  onCopyPending,
+  onDiscardPending,
 }: {
   section: MoreSettingsSection;
   config: AppConfig;
@@ -134,6 +140,7 @@ export function MoreSettingsPanel({
   diagnosticMessage: string;
   providerTestState: string;
   organizerTestState: string;
+  pendingOutputs: PendingOutput[];
   onSection: (section: MoreSettingsSection) => void;
   onProviderTest: () => void;
   onOrganizerTest: () => void;
@@ -149,11 +156,15 @@ export function MoreSettingsPanel({
   onRevokeEndpoint: (origin: string) => void;
   onIncidentRecoveryEnabled: (enabled: boolean) => void;
   onCopyDiagnostics: () => void;
+  onDeliverPending: (id: string, confirmUncertain: boolean) => void;
+  onCopyPending: (id: string) => void;
+  onDiscardPending: (id: string) => void;
 }) {
   const sections: Array<{ id: MoreSettingsSection; label: string; icon: string }> = [
     { id: "speech", label: "语音服务", icon: "声" },
     { id: "organizer", label: "智能整理服务", icon: "智" },
     { id: "compatibility", label: "输入兼容性", icon: "入" },
+    { id: "pending", label: "待处理结果", icon: "待" },
     { id: "privacy", label: "隐私与安全", icon: "隐" },
     { id: "diagnostics", label: "故障诊断", icon: "诊" },
   ];
@@ -272,10 +283,10 @@ export function MoreSettingsPanel({
             </div>
             <div className="setting-note">
               <strong>自动输入方式</strong>
-              <p>优先使用 Windows 原生文字输入。只有明确加入兼容列表的旧应用才使用剪贴板模式。</p>
+              <p>优先使用 Windows 原生文字输入。剪贴板兼容模式正在安全升级，暂时不能新增应用。</p>
               <details>
                 <summary>技术说明</summary>
-                <p>默认方式为 Unicode SendInput；兼容模式会短暂使用系统剪贴板。</p>
+                <p>默认方式为 Unicode SendInput；旧兼容配置会安全失败并保留待处理文本，不会触碰剪贴板。</p>
               </details>
             </div>
             <div className="compatibility-add">
@@ -286,7 +297,7 @@ export function MoreSettingsPanel({
                 onInput={(event) => onCompatibilityExe(event.currentTarget.value)}
                 onKeyDown={(event) => { if (event.key === "Enter") onAddCompatibility(); }}
               />
-              <button type="button" onClick={onAddCompatibility} disabled={compatibilitySaving}>加入兼容列表</button>
+              <button type="button" onClick={onAddCompatibility} disabled>安全升级中</button>
             </div>
             <div className="compatibility-list">
               {config.injection_overrides.length ? config.injection_overrides.map((entry) => (
@@ -343,6 +354,23 @@ export function MoreSettingsPanel({
                 </div>
               ))}
             </div>
+          </section>
+        ) : null}
+
+        {section === "pending" ? (
+          <section className="panel-page" aria-labelledby="pending-title">
+            <div className="panel-page-heading">
+              <div>
+                <h3 id="pending-title">待处理结果</h3>
+                <p>检查未自动交付或交付状态不确定的文本。</p>
+              </div>
+            </div>
+            <PendingOutputsPanel
+              outputs={pendingOutputs}
+              onDeliver={onDeliverPending}
+              onCopy={onCopyPending}
+              onDiscard={onDiscardPending}
+            />
           </section>
         ) : null}
 
