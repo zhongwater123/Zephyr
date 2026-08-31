@@ -12,11 +12,12 @@
   "implementationStatus": "in_progress",
   "implementationReview": {
     "status": "deviating",
-    "sourceRevision": "b0c2faa1e116763a18cfeb318cb50bbbb238996a",
+    "sourceRevision": "ce04cfb",
     "worktreeState": "clean",
+    "changedPaths": ["src-tauri/src/clipboard_transaction.rs", "src-tauri/src/delivery.rs", "src-tauri/src/inject.rs", "src-tauri/src/voice_controller", "src-tauri/crates/paste-protocol", "src-tauri/crates/zephyr-paste-helper", "src-tauri/tauri.conf.json", "scripts/build-paste-helper.mjs", "scripts/tauri.mjs", "scripts/package-windows.mjs"],
     "reviewedAt": "2026-08-31",
-    "summary": "四档输出、ASR final 冻结、Processing 兜底和 History provenance 已有源码与自动化复核；但生产 SmartDictation 的首次交付与 Pending 重新交付都仍进入进程内 AtomicPaste，旧 clipboard_compatibility 配置也仍可触发同一 OLE 活对象恢复。现有自动化没有执行真实 Windows 原生剪贴板路径，目标环境崩溃结论仍然有效。",
-    "knownDeviations": ["生产 SmartDictation 的首次交付和 Pending 重新交付仍使用活 OLE IDataObject 恢复；2026-08-28 与 2026-08-31 的真实 Windows 运行均在交付阶段以 0xc000041d 终止进程。", "Legacy clipboard_compatibility 仍可由配置启用并进入进程内剪贴板注入；当前串行锁只覆盖 SmartDictation AtomicPaste 函数，不构成所有自动剪贴板写入的单一事务所有权。", "现有 Rust 自动化只验证文本规范化、回执元数据和 SendInput 计数错误，没有实际执行 Windows OLE 捕获、恢复或崩溃隔离；尚未实现自有数据快照、跨首次/Pending 的完整事务串行化或原生故障隔离。"]
+    "summary": "revision f93bc4d 已独立移除生产自动交付的 OLE 活对象路径；revision 3ea6d9f 实现共享协议、单例事务 service、隔离 Windows helper、DPAPI 自有快照、三态回执、Unknown 二次确认与 Tauri sidecar；revision ce04cfb 增加实际 NSIS 的 helper 架构、协议、自检、运行目录哈希和发布清单门禁。自动化和开发打包已经通过，但尚无安装后完整真实 Windows 互操作/强杀矩阵，因此此前目标环境崩溃造成的 invalidated 状态保持不变。",
+    "knownDeviations": ["Phase 0 和最终 helper 尚未在真实 Windows 外部目标矩阵上证明主进程不再退出；2026-08-28 与 2026-08-31 的既有 0xc000041d 失败证据仍是最近的目标环境结论。", "开发打包已经验证 NSIS 生成、sidecar 运行目录包含性、AMD64 PE、协议、自检与哈希一致；尚未验证安装后的启动、覆盖安装、签名或外部目标交付。", "自动化覆盖协议、状态仲裁、格式边界、DPAPI 快照原子替换和部分 SendInput 分类，但尚未在真实 helper 进程上完成每个阶段强杀、剪贴板占用、并发复制及 Office/浏览器/编辑器/终端互操作矩阵。", "helper 不可用时当前最终实现对自动交付统一失败关闭进入 Pending；它没有恢复进程内 Phase 0 Unicode 注入，因为最终源码门禁要求所有自动 SendInput 只能存在于 helper。"]
   },
   "validationStatus": "invalidated",
   "components": ["system.zephyr", "frontend.features", "backend.services", "backend.repositories", "backend.voice-controller", "backend.streaming", "backend.delivery", "backend.shortcut", "backend.incident-vault", "platform.windows"],
@@ -144,7 +145,7 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 - [ADR-0018：以自有剪贴板快照和隔离粘贴进程替代 OLE 活对象恢复（Proposed）](../architecture/adr/0018-owned-clipboard-transaction-and-isolated-paste.md)
 - [场景感知文本路由与智能成稿 Proposal](../architecture/proposals/context-aware-text-routing.md)
 
-固定画像 Router 与四份隔离 Prompt 已由 ADR-0017 替代。MVP 当前采用单一应用感知 Prompt 和全局三档强度；未来多快捷键、多意图路由仍未成为 Accepted 决策。ADR-0018 记录拟替代 ADR-0014 中 OLE 活对象恢复的交付计划；在其被评审接受并实现前，源码中的现有 AtomicPaste 仍是失效但实际存在的实现，不能把 Proposed 决策写成 Current 事实。
+固定画像 Router 与四份隔离 Prompt 已由 ADR-0017 替代。MVP 当前采用单一应用感知 Prompt 和全局三档强度；未来多快捷键、多意图路由仍未成为 Accepted 决策。ADR-0018 记录替代 ADR-0014 中 OLE 活对象恢复的候选架构。当前分支已经按该候选边界实现 helper 隔离，但实现先行不等于决策已被接受，也不等于目标环境验证通过；ADR-0018 在指定收口者完成评审前继续保持 `Proposed`。
 
 ## 当前实现入口
 
@@ -153,21 +154,24 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 - ASR provider 与 preview：`src-tauri/src/provider.rs`、`src-tauri/src/streaming_pipeline.rs`、`src-tauri/src/preview.rs`
 - 冻结原文、应用上下文计划、Prompt Repository 与 DeepSeek adapter：`src-tauri/src/text_processing/`
 - 统一智能润色 Prompt：`src-tauri/resources/prompts/smart_dictation/v2/`
-- 文本交付与 Pending：`src-tauri/src/delivery.rs`、`src-tauri/src/inject.rs`、`src-tauri/src/pending_output_service.rs`
+- 文本交付、事务仲裁与 Pending：`src-tauri/src/delivery.rs`、`src-tauri/src/clipboard_transaction.rs`、`src-tauri/src/inject.rs`、`src-tauri/src/pending_output_service.rs`
+- 共享 helper 协议与隔离 Windows 实现：`src-tauri/crates/paste-protocol/`、`src-tauri/crates/zephyr-paste-helper/`
 - History provenance 与热词学习栅栏：`src-tauri/src/history.rs`、`src-tauri/src/hotwords.rs`
 - 首页智能润色为四档控件：`Fast`、轻微整理、自然表达和理清重点；相关入口与保存链路：`src/features/settings/PolishLevelSetting.tsx`、`src/features/settings/SettingsSidebar.tsx`、`src/app/AppShellV2.tsx`
 - 异常捕获：`src-tauri/src/incident/`
 
-当前 finalize 链路只在权威 ASR final 返回后创建不可变 `FrozenTranscript`。 `Fast` 在此后把 Processing 标记为策略跳过，不加载 Prompt、不创建 TextProcessing 请求、不记录 LLM 超时或失败，并以 `asr_direct` provenance 交给既有 Delivery；其余三档才创建 ProcessingPlan、调用 Processor，任何非取消处理失败选择冻结原文并标记 `asr_fallback`。所有 SmartDictation 路径共用一次 ReadyToInject、AtomicPaste、Pending 和 History 提交链路；模型结果标记为不可参与热词学习。当前首次自动交付与 Pending 的“发送到原窗口”都会保留 `SmartDictationAtomicPaste` intent，旧 `clipboard_compatibility` 配置仍可让 Legacy 交付进入剪贴板路径。生产 AtomicPaste 仍在进程内保存活 OLE `IDataObject`，写入文本、发送 Ctrl+V，并在 80ms 后重新发布和 Flush 原对象；该事实已被目标环境崩溃证据判定为不安全，ADR-0018 的自有快照与辅助进程尚未实现。
+当前 finalize 链路只在权威 ASR final 返回后创建不可变 `FrozenTranscript`。`Fast` 在此后把 Processing 标记为策略跳过，不加载 Prompt、不创建 TextProcessing 请求、不记录 LLM 超时或失败，并以 `asr_direct` provenance 交给 Delivery；其余三档才创建 ProcessingPlan、调用 Processor，任何非取消处理失败选择冻结原文并标记 `asr_fallback`。普通可编辑目标的 SmartDictation 单行和多行都请求一次 `clipboardPaste`，已知终端含 LF 仍在不可逆写入前进入 Pending。
+
+Bootstrap 为首次交付和 Pending 重发注入同一个 `ClipboardTransactionService`。它用异步互斥锁覆盖 helper 自检、捕获、发布、提交、500ms 载荷保留、恢复及最多一次 recover；显式复制不取锁。主进程通过 stdin 单请求和 stdout NDJSON 驱动 `zephyr-paste-helper`，按最后可信阶段仲裁 `NotSubmitted | Submitted | Unknown`。helper 按值验证并保存受支持格式，使用当前用户 DPAPI 和 UUID 事务文件，发布私有标记与 Unicode 文本，并在目标 HWND/PID/创建时间/规范化 EXE/前台身份复验后发送一次 Ctrl+V。恢复在同一次剪贴板锁内重验 sequence、标记和指纹；竞争变化只跳过恢复。生产自动交付主进程不再含 OLE、Win32 剪贴板写入或 `SendInput`。
 
 ## 验证状态
 
-当前实现状态为 `in_progress`，验证状态为 `invalidated`。自动化曾覆盖四档滑块、Fast 旁路、配置持久化、冻结 ASR 文本原样交付、`asr_direct` provenance、文本规范化和 Mock AtomicPaste 回执，但这些结果没有执行真实 Windows OLE 捕获、恢复或辅助进程故障路径。源码复核还确认，现有 `TextInjector` 默认实现会在普通注入成功后伪造“已提交且已恢复”，而原生测试只检查部分 `SendInput` 被视为错误，尚未把它表达为可能已经产生副作用的 `Unknown`。2026-08-31 的真实 Tauri 运行中，13 字文本从 provider final 到 delivery payload 的长度、bytes 和哈希完全一致，进入 `delivery_inject` 后仍发生 `tokio-rt-worker` 栈溢出并以 `0xc000041d` 终止进程；2026-08-28 的较长文本也在同一边界崩溃。因此 `AC-SD-10`、`AC-SD-15` 的真实交付部分和新增 `AC-SD-16` 均未通过，自动化通过不能支持整体完成声明。
+当前实现状态为 `in_progress`，验证状态为 `invalidated`。本分支自动化已经覆盖共享协议、三态阶段仲裁、Unknown 后端确认、终端多行失败关闭、格式白名单与基础结构验证、64/128 MiB 边界、DPAPI 快照编解密及阶段原子替换、部分 `SendInput` 分类和主进程源码隔离门禁；开发打包还验证了实际 NSIS 生成与运行目录 sidecar 哈希一致。这些结果不能替代真实 sidecar 进程强杀、安装后启动和目标应用互操作。2026-08-31 的真实 Tauri 运行中，13 字文本从 provider final 到 delivery payload 的长度、bytes 和哈希完全一致，旧 AtomicPaste 仍以 `0xc000041d` 终止进程；2026-08-28 的较长文本也在同一边界崩溃。新的隔离路径尚未产生同等级目标环境反证，因此 `AC-SD-10`、`AC-SD-15` 和 `AC-SD-16` 仍未通过，自动化通过不能支持整体完成声明。
 
 
 现有自动化证据不具备 `human_quality_eval` 或 `usability_observation` 能力，因此不能回答“用户是否感到明显润色”“三档是否可预测”或“结果是否比原文更可用”。这些问题属于未完成的产品验证，不应再用链路测试通过来代替。
 
-仍未完成：从首次 SmartDictation、Pending 重新交付和 Legacy `clipboard_compatibility` 三条自动路径停用 OLE 活对象恢复；让 Unicode 安全降级和最终 helper 共享 `NotSubmitted | Submitted | Unknown` 提交语义；实现并验证自有剪贴板快照、事务标记、清空/逐格式写入故障恢复、恢复竞争保护、完整串行化和隔离剪贴板事务辅助进程；覆盖文本、HTML、RTF、图片、文件和自定义格式的真实 Windows 故障矩阵；携带测试听写内容的真实 DeepSeek 成稿与人工质量评测；干净 Windows 目标机安装后的 WebView2/全局快捷键完整链路；聊天、Office、编码助手和终端输入框互操作；覆盖安装后的配置与历史持久化；完整 finalize 竞争和 IncidentVault 拥塞故障注入。目标环境崩溃关闭前不得恢复为 `partial`，缺少完整证据时不得升级为 `validated` 或发布完成。
+仍未完成：安装 clean revision 生成的实际 NSIS 并验证 helper 启动自检；在真实 helper 进程上覆盖每个阶段强杀、超时、剪贴板占用、部分提交和单次 recover；覆盖文本、HTML、RTF、图片、文件、自定义/延迟渲染格式与并发复制；验证记事本、浏览器/WebView2、Word/Outlook、VS Code/Cursor 和终端；执行 1–2 分钟长语音并复核 ASR/润色/Delivery 哈希、单次提交、恢复规则和主进程存活；完成真实 DeepSeek 成稿质量评测、Windows Credential Manager 重启持久化、覆盖安装以及 IncidentVault 拥塞故障注入。目标环境崩溃关闭前不得恢复为 `partial`，缺少完整证据时不得升级为 `validated` 或发布完成。
 
 ## 澄清历史
 

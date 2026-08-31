@@ -14,9 +14,13 @@
 
 ADR-0014 已接受“完整定稿后一次性整体粘贴、不为 LF 模拟 Enter、目标失败关闭、提交后不自动重复交付”的用户侧目标，但同时把“保存完整 OLE `IDataObject` 快照，再通过 `OleSetClipboard` 与 `OleFlushClipboard` 恢复”写成了具体决策。
 
-当前实现调用 `OleGetClipboard` 后只持有一个可能转发 COM/RPC 和延迟渲染的活对象，并未把所有格式复制为 Zephyr 自己拥有的不可变数据。交付写入语音文本、发送 Ctrl+V、等待 80ms，然后把该读取对象重新设为剪贴板数据源并 Flush。真实 Windows 已至少两次在 `delivery_inject` 后发生 `tokio-rt-worker` 栈溢出并以 `0xc000041d` 终止主进程；其中一次只有 13 个字符，且 provider final、relay、aggregate 和 delivery payload 的长度与哈希完全一致。该结果否定了目标环境完成声明，但现有日志尚不足以把具体栈溢出指令断言为 `OleSetClipboard` 或 `OleFlushClipboard`。
+被 revision `f93bc4d` 替换前，生产实现调用 `OleGetClipboard` 后只持有一个可能转发 COM/RPC 和延迟渲染的活对象，并未把所有格式复制为 Zephyr 自己拥有的不可变数据。交付写入语音文本、发送 Ctrl+V、等待 80ms，然后把该读取对象重新设为剪贴板数据源并 Flush。真实 Windows 已至少两次在 `delivery_inject` 后发生 `tokio-rt-worker` 栈溢出并以 `0xc000041d` 终止主进程；其中一次只有 13 个字符，且 provider final、relay、aggregate 和 delivery payload 的长度与哈希完全一致。该结果否定了目标环境完成声明，但现有日志尚不足以把具体栈溢出指令断言为 `OleSetClipboard` 或 `OleFlushClipboard`。
 
 OpenWhispr 提供了较安全的方向：它把有限的文本、HTML、RTF 和图片格式按值读入 Electron 主进程，串行等待恢复完成，并让独立 Windows helper 发送粘贴快捷键。它仍有格式白名单不完整、固定延迟、只比较文本以及目标恢复失败后可能粘贴到当前窗口等限制，不能直接复制。
+
+### 未验证的实现进度
+
+revision `3ea6d9f` 已实现本 ADR 描述的共享协议 crate、单例事务 service、独立 Windows helper、DPAPI 快照、恢复竞争保护、三态仲裁与 Tauri sidecar；revision `ce04cfb` 增加实际 NSIS 的 helper 架构、协议、自检、运行目录哈希和发布清单门禁。自动交付主进程源码不再调用 OLE、Win32 剪贴板写入或 `SendInput`。这只是实现和开发打包事实，不改变本 ADR 的 `Proposed` 状态：尚无安装后的完整真实 Windows 应用/格式/强杀矩阵，Dossier 仍为 `invalidated`。
 
 ## Decision
 
