@@ -11,17 +11,16 @@
   "specStatus": "confirmed",
   "implementationStatus": "in_progress",
   "implementationReview": {
-    "status": "partial",
-    "sourceRevision": "c4c3cac5a6680084c607b360eb794987a1e4c831",
-    "worktreeState": "dirty",
-    "changedPaths": ["src-tauri/src/text_processing/", "src-tauri/resources/prompts/smart_dictation/", "src-tauri/src/voice_controller/", "src-tauri/src/delivery.rs", "src-tauri/src/inject.rs", "src-tauri/src/history.rs", "src-tauri/src/hotwords.rs", "src-tauri/src/config.rs", "src/features/settings/", "src/app/AppShellV2.tsx"],
+    "status": "deviating",
+    "sourceRevision": "180ba6d474007c9c063ac945a357dceff5a8215b",
+    "worktreeState": "clean",
     "reviewedAt": "2026-08-31",
-    "summary": "核心 MVP 源码已切换为统一的应用感知 Prompt 与四档输出方式：首页‘输入效果’末尾提供 Fast、轻微整理、自然表达和理清重点；Fast 在 ASR final 冻结后直接进入 Delivery，其余三档使用 DeepSeek JSON Processing。ASR final 冻结、取消/失败兜底、AtomicPaste、History provenance、热词学习栅栏和强度设置已有源码与自动化复核。内部安装凭据预置、真实模型联调和目标环境仍未闭环。",
-    "knownDeviations": []
+    "summary": "四档输出、ASR final 冻结、Processing 兜底和 Delivery 路由已有源码与自动化复核；但生产 AtomicPaste 仍把 OleGetClipboard 返回的活 IDataObject 当作完整快照重新发布并 Flush。真实 Windows 目标环境已在 delivery_inject 后重复发生 tokio worker 栈溢出并终止主进程，交付实现不符合用户可用性与剪贴板安全契约。",
+    "knownDeviations": ["生产 SmartDictation AtomicPaste 仍使用活 OLE IDataObject 恢复；2026-08-28 与 2026-08-31 的真实 Windows 运行均在交付阶段以 0xc000041d 终止进程，尚未实现自有数据快照、完整事务串行化或原生故障隔离。"]
   },
-  "validationStatus": "partial",
+  "validationStatus": "invalidated",
   "components": ["system.zephyr", "frontend.features", "backend.services", "backend.repositories", "backend.voice-controller", "backend.streaming", "backend.delivery", "backend.shortcut", "backend.incident-vault", "platform.windows"],
-  "decisions": ["ADR-0002", "ADR-0003", "ADR-0004", "ADR-0008", "ADR-0012", "ADR-0013", "ADR-0014", "ADR-0017"],
+  "decisions": ["ADR-0002", "ADR-0003", "ADR-0004", "ADR-0008", "ADR-0012", "ADR-0013", "ADR-0014", "ADR-0017", "ADR-0018"],
   "validationSlices": [
     { "id": "AC-SD-01", "components": ["backend.voice-controller", "backend.streaming"], "requiredEvidence": ["automated", "fault_injection"] },
     { "id": "AC-SD-02", "components": ["backend.services", "backend.voice-controller", "backend.delivery"], "requiredEvidence": ["automated", "fault_injection"] },
@@ -37,9 +36,10 @@
     { "id": "AC-SD-12", "components": ["frontend.features", "backend.services", "backend.repositories", "platform.windows"], "requiredEvidence": ["automated", "windows_webview2", "restart_persistence"] },
     { "id": "AC-SD-13", "components": ["backend.shortcut", "backend.services", "backend.voice-controller"], "requiredEvidence": ["automated", "runtime_hook"] },
     { "id": "AC-SD-14", "components": ["frontend.features", "backend.repositories"], "requiredEvidence": ["automated", "usability_observation", "windows_webview2", "restart_persistence"] },
-    { "id": "AC-SD-15", "components": ["frontend.features", "backend.voice-controller", "backend.delivery", "backend.repositories"], "requiredEvidence": ["automated", "runtime_hook", "external_app_interop", "restart_persistence"] }
+    { "id": "AC-SD-15", "components": ["frontend.features", "backend.voice-controller", "backend.delivery", "backend.repositories"], "requiredEvidence": ["automated", "runtime_hook", "external_app_interop", "restart_persistence"] },
+    { "id": "AC-SD-16", "components": ["backend.delivery", "platform.windows"], "requiredEvidence": ["automated", "fault_injection", "external_app_interop"] }
   ],
-  "evidence": [{"id":"EV-SD-MVP-AUTOMATED-20260828","acceptanceIds":["AC-SD-01","AC-SD-02","AC-SD-03","AC-SD-04","AC-SD-05","AC-SD-06","AC-SD-07","AC-SD-08","AC-SD-09","AC-SD-10","AC-SD-11","AC-SD-12","AC-SD-13"],"acceptanceCoverage":[{"acceptanceId":"AC-SD-01","coverage":"partial"},{"acceptanceId":"AC-SD-02","coverage":"partial"},{"acceptanceId":"AC-SD-03","coverage":"partial"},{"acceptanceId":"AC-SD-04","coverage":"partial"},{"acceptanceId":"AC-SD-05","coverage":"partial"},{"acceptanceId":"AC-SD-06","coverage":"partial"},{"acceptanceId":"AC-SD-07","coverage":"partial"},{"acceptanceId":"AC-SD-08","coverage":"partial"},{"acceptanceId":"AC-SD-09","coverage":"partial"},{"acceptanceId":"AC-SD-10","coverage":"partial"},{"acceptanceId":"AC-SD-11","coverage":"partial"},{"acceptanceId":"AC-SD-12","coverage":"partial"},{"acceptanceId":"AC-SD-13","coverage":"partial"}],"method":"automated","result":"pass","freshness":"current","capabilities":["automated","fault_injection"],"scope":"Rust 181 项库测试、前端 48 项测试、production build、秘密扫描、架构检查和 ASR 边界检查通过；覆盖统一 Prompt、应用上下文数据边界、三档强度、配置迁移、失败兜底、AtomicPaste、History provenance 与热词学习栅栏","testRefs":["cargo test --manifest-path src-tauri/Cargo.toml --lib","src-tauri/src/text_processing/model.rs","src-tauri/src/text_processing/adapter.rs","src-tauri/src/text_processing/unified_prompt_repository.rs","src-tauri/src/config.rs","src-tauri/src/voice_controller/workflow/finalize.rs","src-tauri/src/delivery.rs","src-tauri/src/inject.rs","src-tauri/src/history.rs","src-tauri/src/hotwords.rs","src/features/settings/MoreSettingsPanel.test.tsx","npm test","npm run build","npm run security:secrets","npm run architecture:check","npm run architecture:asr"],"limitations":["未启动真实 Tauri/WebView2 与 Windows 全局快捷键","未使用真实 DeepSeek 凭据进行网络联调","未验证聊天、Office、编码助手和终端输入框互操作","未验证 Windows Credential Manager 重启持久化与内部安装包预置","缺少完整 finalize 竞争与 IncidentVault 拥塞集成故障注入","缺少三档跨应用语料质量评测","dirty worktree evidence 没有不可变 build identity"],"sourceRevision":"c4c3cac5a6680084c607b360eb794987a1e4c831","worktreeState":"dirty","changedPaths":["src-tauri/src/text_processing","src-tauri/resources/prompts/smart_dictation","src-tauri/src/voice_controller","src-tauri/src/delivery.rs","src-tauri/src/inject.rs","src-tauri/src/history.rs","src-tauri/src/hotwords.rs","src-tauri/src/config.rs","src/features/settings","src/app/AppShellV2.tsx"],"environment":"Windows development workspace; Rust tests and happy-dom frontend tests; no immutable package identity","validatedAt":"2026-08-28"}],
+  "evidence": [{"id":"EV-SD-MVP-AUTOMATED-20260828","acceptanceIds":["AC-SD-01","AC-SD-02","AC-SD-03","AC-SD-04","AC-SD-05","AC-SD-06","AC-SD-07","AC-SD-08","AC-SD-09","AC-SD-10","AC-SD-11","AC-SD-12","AC-SD-13"],"acceptanceCoverage":[{"acceptanceId":"AC-SD-01","coverage":"partial"},{"acceptanceId":"AC-SD-02","coverage":"partial"},{"acceptanceId":"AC-SD-03","coverage":"partial"},{"acceptanceId":"AC-SD-04","coverage":"partial"},{"acceptanceId":"AC-SD-05","coverage":"partial"},{"acceptanceId":"AC-SD-06","coverage":"partial"},{"acceptanceId":"AC-SD-07","coverage":"partial"},{"acceptanceId":"AC-SD-08","coverage":"partial"},{"acceptanceId":"AC-SD-09","coverage":"partial"},{"acceptanceId":"AC-SD-10","coverage":"partial"},{"acceptanceId":"AC-SD-11","coverage":"partial"},{"acceptanceId":"AC-SD-12","coverage":"partial"},{"acceptanceId":"AC-SD-13","coverage":"partial"}],"method":"automated","result":"pass","freshness":"current","capabilities":["automated","fault_injection"],"scope":"Rust 181 项库测试、前端 48 项测试、production build、秘密扫描、架构检查和 ASR 边界检查通过；覆盖统一 Prompt、应用上下文数据边界、三档强度、配置迁移、失败兜底、AtomicPaste、History provenance 与热词学习栅栏","testRefs":["cargo test --manifest-path src-tauri/Cargo.toml --lib","src-tauri/src/text_processing/model.rs","src-tauri/src/text_processing/adapter.rs","src-tauri/src/text_processing/unified_prompt_repository.rs","src-tauri/src/config.rs","src-tauri/src/voice_controller/workflow/finalize.rs","src-tauri/src/delivery.rs","src-tauri/src/inject.rs","src-tauri/src/history.rs","src-tauri/src/hotwords.rs","src/features/settings/MoreSettingsPanel.test.tsx","npm test","npm run build","npm run security:secrets","npm run architecture:check","npm run architecture:asr"],"limitations":["未启动真实 Tauri/WebView2 与 Windows 全局快捷键","未使用真实 DeepSeek 凭据进行网络联调","未验证聊天、Office、编码助手和终端输入框互操作","未验证 Windows Credential Manager 重启持久化与内部安装包预置","缺少完整 finalize 竞争与 IncidentVault 拥塞集成故障注入","缺少三档跨应用语料质量评测","dirty worktree evidence 没有不可变 build identity"],"sourceRevision":"c4c3cac5a6680084c607b360eb794987a1e4c831","worktreeState":"dirty","changedPaths":["src-tauri/src/text_processing","src-tauri/resources/prompts/smart_dictation","src-tauri/src/voice_controller","src-tauri/src/delivery.rs","src-tauri/src/inject.rs","src-tauri/src/history.rs","src-tauri/src/hotwords.rs","src-tauri/src/config.rs","src/features/settings","src/app/AppShellV2.tsx"],"environment":"Windows development workspace; Rust tests and happy-dom frontend tests; no immutable package identity","validatedAt":"2026-08-28"},{"id":"EV-SD-WINDOWS-ATOMIC-PASTE-CRASH-20260831","acceptanceIds":["AC-SD-10","AC-SD-15","AC-SD-16"],"acceptanceCoverage":[{"acceptanceId":"AC-SD-10","coverage":"partial"},{"acceptanceId":"AC-SD-15","coverage":"partial"},{"acceptanceId":"AC-SD-16","coverage":"partial"}],"method":"manual","result":"fail","freshness":"current","capabilities":["runtime_hook","external_app_interop"],"scope":"真实 Windows Tauri 开发运行中，13 字/39 bytes 的 provider final、relay、aggregate 与 delivery payload 哈希完全一致；进入 delivery_inject 后 tokio-rt-worker 栈溢出，进程以 0xc000041d 退出。2026-08-28 的较长文本运行也在相同边界发生同类崩溃，说明故障不依赖长文本、ASR 聚合或 LLM 润色。","limitations":["现有日志只定位到 Delivery/AtomicPaste 边界，尚无 native crash dump 或 OleGetClipboard、SendInput、OleSetClipboard、OleFlushClipboard 的逐步轨迹，不能仅凭该证据断言具体栈溢出指令。"],"sourceRevision":"41b8702177692aae88cdf434f22e5c6b26577faa","worktreeState":"clean","environment":"Windows development machine; npm run tauri dev; real global trigger and external editable target; revision observed immediately after the run","validatedAt":"2026-08-31"}],
   "impactAssessments": []
 }
 ---
@@ -64,7 +64,7 @@ MVP 的快捷键 A 固定表达 SmartDictation 意图。系统把冻结的完整
 
 润色设置位于首页设置栏“输入效果”的最下方，只保留一处入口。用户通过四档控件选择 `Fast`、轻微整理、自然表达或理清重点；`Fast` 的用户说明固定为“快速响应，仅识别原话”。界面用最终可观察结果解释能力，不向 C 端用户暴露 Prompt、模型、画像、路由或“介入强度”等实现术语。
 
-智能成稿和兜底选择必须在目标输入框外全部完成。普通可编辑文本目标接收的是一份完整、已校验的最终纯文本，系统应像用户日常粘贴大段内容一样一次性整体写入并保留段落，而不是边生成边输入、逐段注入或为换行模拟 Enter。已知终端、shell 等粘贴换行可能执行命令的目标不属于普通文本框，必须失败关闭或转为用户主动交付。
+智能成稿和兜底选择必须在目标输入框外全部完成。普通可编辑文本目标接收的是一份完整、已校验的最终纯文本，系统应像用户日常粘贴大段内容一样一次性整体写入并保留段落，而不是边生成边输入、逐段注入或为换行模拟 Enter。已知终端、shell 等粘贴换行可能执行命令的目标不属于普通文本框，必须失败关闭或转为用户主动交付。自动交付不得因为保存或恢复剪贴板而终止主进程，也不得在无法安全保存原剪贴板数据时静默覆盖它；无法证明安全时必须在不可逆写入前降级或进入 Pending。
 
 MVP 面向线下分发的公司内部员工。员工不负责提供、输入、测试或轮换 DeepSeek API Key；内部部署流程预置一份由 HotwordAgent 与 TextProcessing 共同引用的凭据，两项用途仍分别授权和审计。智能润色使用一份独立、版本化、带哈希校验的统一语义 Prompt；三个 LLM 档的整理程度作为明确输入，不复制三份 Prompt。`Fast` 不加载或调用该 Prompt。TextProcessing 默认使用关闭思考模式的 `deepseek-v4-flash`。
 
@@ -87,13 +87,14 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 | `AC-SD-13` | 快捷键 A 固定请求 SmartDictation；非 `Fast` 处理冻结并传递完整 ASR 原文、目标 EXE、可选应用名称和三种 LLM 整理程度的快照，默认自然表达。请求不得包含窗口标题、页面、屏幕、聊天历史、文档正文、源代码或剪贴板内容；未覆盖部署配置时使用关闭思考模式的 `deepseek-v4-flash` | 请求数据边界/三种 LLM 程度配置迁移与快照/默认模型自动化 + 真实快捷键运行时 |
 | `AC-SD-14` | 首页设置栏的“输入效果”末尾显示唯一的智能润色入口；用户可选择 `Fast`、轻微整理、自然表达或理清重点，默认自然表达。`Fast` 显示“快速响应，仅识别原话”；其余文案说明允许的整理结果，不暴露 Prompt、模型、画像、路由或“介入强度”等专业术语。选择后自动保存并在重启后保持 | 前端自动化 + 目标用户可用性观察 + Windows WebView2 视觉/键盘可访问性 + 重启持久化 |
 | `AC-SD-15` | 用户选择 `Fast` 后，系统仍等待并冻结有序的完整 ASR final，但不创建 TextProcessing/Chatbot 请求，不等待 LLM、不加载语义 Prompt，也不把该路径记录为超时或失败兜底；确认原文经允许的本地转换后直接进入既有 Delivery。History 必须把它标记为用户主动选择的 ASR 直出来源，而不是 LLM 失败；因此该档响应时间不包含 LLM 往返 | 自动化旁路与 provenance 契约 + 真实快捷键运行时 + 真实输入框互操作 + 重启持久化 |
+| `AC-SD-16` | 自动交付保存和恢复剪贴板时不得让主进程崩溃；只有已经复制为应用自有数据且可以安全重建的原格式才能自动恢复。发现无法保存的格式时必须在覆盖剪贴板前失败关闭、改用不触碰剪贴板的安全交付或进入 Pending；粘贴辅助执行异常不得自动重试可能已经提交的文本，也不得把内容送往未经复验的当前窗口 | 自动化 + 原生辅助进程/剪贴板格式故障注入 + 真实 Windows 文本/HTML/RTF/图片/文件/自定义格式互操作 |
 
 ## 明确不规定的实现
 
 - 不规定文本池和智能成稿器的具体文件名、类名、线程模型或进程形态；MVP 不要求存在独立 Router 组件，拟议边界不得被当成当前实现事实。
 - 不要求把一次成稿拆成多次模型调用；逻辑上的纠错、去冗余、结构化和风格适配可以由一次受约束调用完成。
 - MVP 只把目标 EXE 与可用时的应用名称作为应用上下文；不提供逐应用画像配置，也不把应用映射成固定写作模式。未来增加显式用户意图或更丰富上下文时需扩展输入契约。
-- “使用目标场景”不授权把窗口标题、屏幕、文档正文、聊天历史、源代码或既有剪贴板内容作为 Prompt 上下文；若未来需要这些上下文，必须形成单独的知情授权和数据边界。AtomicPaste 为本地恢复而持有的不透明 OLE 快照不得进入 Prompt、History 或日志。
+- “使用目标场景”不授权把窗口标题、屏幕、文档正文、聊天历史、源代码或既有剪贴板内容作为 Prompt 上下文；若未来需要这些上下文，必须形成单独的知情授权和数据边界。交付为本地恢复而持有的剪贴板快照及格式元数据不得进入 Prompt、History 或普通日志。
 - 快捷键 A 的正常成功路径不增加原文确认步骤；冻结的 ASR 确认原文作为 Chatbot 失败后的自动兜底值存在。
 - MVP 不要求用户为普通可编辑目标预先理解或配置 `clipboard_compatibility`。实现可以演进具体剪贴板或目标控件技术，但必须保持“完整定稿后一次性交付、不模拟 Enter、终端失败关闭”的可观察结果。
 - MVP 不提供员工可见的 API Key 配置或 Prompt 编辑器；凭据预置、轮换和 Prompt 发布属于内部部署职责。
@@ -115,6 +116,7 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 - `ASM-SD-09`（Confirmed for internal MVP）：安装包只线下分发给公司内部员工，维护者负责同一 DeepSeek Key 的预置、监控、轮换和吊销，员工无需配置。该信任模型接受桌面端共享秘密可能被本机账户提取的剩余风险，不把流量监控表述为绝对防泄露保证；外部分发时必须重新评估。
 - `ASM-SD-10`（Resolved for MVP）：TextProcessing 默认模型为 `deepseek-v4-flash` 并显式关闭思考模式。模型名由内部部署配置拥有，不向员工暴露；一次处理使用冻结的配置快照。
 - `ASM-SD-11`（Resolved for MVP）：`Fast` 是明确的 ASR 直出模式，不是最低 LLM 润色强度。它保留 ASR provider 自身的确认文本、标点、热词和允许的本地简繁转换，因此“识别原话”不承诺逐音逐字转写。
+- `ASM-SD-12`（Confirmed）：系统不能把 `OleGetClipboard` 返回的活 `IDataObject` 代理视为应用自有的完整快照。自动恢复只覆盖已经按值复制并能安全重建的格式；遇到不支持或延迟渲染格式时，数据完整性优先于自动粘贴便利。
 
 ## 概念迭代记录
 
@@ -125,6 +127,7 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 | `CI-SD-03` | Rejected | “协议、构建和自动化通过即可说明智能润色有效”是错误判断。现有证据只证明工程链路和失败边界；聊天、办公和 coding 输出是否更有用必须通过 `human_quality_eval` 与真实应用互操作证明。 |
 | `CI-SD-04` | Open | 若引入 `0–100` 连续值，前端位置必须对应真实处理差异，不能在后端静默压回 1/2/3 造成虚假精细控制。候选方案是把一个用户滑块映射为保留原句、句式改写、结构重排、场景语气和分点门槛等内部策略曲线；确认前需要跨场景语料对照评测。 |
 | `CI-SD-05` | Confirmed | 用户已确认提供 `Fast` 正常模式：“快速响应，仅识别原话”。它主动跳过 LLM，但仍保留 ASR provider 与允许的本地转换；不再把最低 LLM 整理程度命名为“保留原话”。 |
+| `CI-SD-06` | Rejected | “保存活 OLE `IDataObject`、粘贴后再 `OleSetClipboard`/`OleFlushClipboard` 就等于完整原子恢复”已被真实 Windows 两次进程崩溃推翻。不得通过增加线程栈、延长等待或重试继续包装该方案；后续采用自有数据快照、完整事务串行化和原生故障隔离。 |
 
 ## 架构决策
 
@@ -138,9 +141,10 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 - [ADR-0015：内部分发共享 DeepSeek 凭据并隔离写作画像 Prompt（Superseded）](../architecture/adr/0015-internal-shared-deepseek-credential-and-isolated-prompts.md)
 - [ADR-0016：MVP 确定性路由与 DeepSeek Flash 默认模型（Superseded）](../architecture/adr/0016-deterministic-mvp-routing-and-deepseek-flash.md)
 - [ADR-0017：统一的应用感知智能润色与三档强度（Accepted）](../architecture/adr/0017-unified-app-aware-polishing-with-strength.md)
+- [ADR-0018：以自有剪贴板快照和隔离粘贴进程替代 OLE 活对象恢复（Proposed）](../architecture/adr/0018-owned-clipboard-transaction-and-isolated-paste.md)
 - [场景感知文本路由与智能成稿 Proposal](../architecture/proposals/context-aware-text-routing.md)
 
-固定画像 Router 与四份隔离 Prompt 已由 ADR-0017 替代。MVP 当前采用单一应用感知 Prompt 和全局三档强度；未来多快捷键、多意图路由仍未成为 Accepted 决策。源码仍是当前实现事实，Proposal 只描述未落地的后续演进。
+固定画像 Router 与四份隔离 Prompt 已由 ADR-0017 替代。MVP 当前采用单一应用感知 Prompt 和全局三档强度；未来多快捷键、多意图路由仍未成为 Accepted 决策。ADR-0018 记录拟替代 ADR-0014 中 OLE 活对象恢复的交付计划；在其被评审接受并实现前，源码中的现有 AtomicPaste 仍是失效但实际存在的实现，不能把 Proposed 决策写成 Current 事实。
 
 ## 当前实现入口
 
@@ -154,16 +158,16 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 - 首页智能润色为四档控件：`Fast`、轻微整理、自然表达和理清重点；相关入口与保存链路：`src/features/settings/PolishLevelSetting.tsx`、`src/features/settings/SettingsSidebar.tsx`、`src/app/AppShellV2.tsx`
 - 异常捕获：`src-tauri/src/incident/`
 
-当前 finalize 链路只在权威 ASR final 返回后创建不可变 `FrozenTranscript`。 `Fast` 在此后把 Processing 标记为策略跳过，不加载 Prompt、不创建 TextProcessing 请求、不记录 LLM 超时或失败，并以 `asr_direct` provenance 交给既有 Delivery；其余三档才创建 ProcessingPlan、调用 Processor，任何非取消处理失败选择冻结原文并标记 `asr_fallback`。所有路径共用一次 ReadyToInject、AtomicPaste、Pending 和 History 提交链路；模型结果标记为不可参与热词学习。
+当前 finalize 链路只在权威 ASR final 返回后创建不可变 `FrozenTranscript`。 `Fast` 在此后把 Processing 标记为策略跳过，不加载 Prompt、不创建 TextProcessing 请求、不记录 LLM 超时或失败，并以 `asr_direct` provenance 交给既有 Delivery；其余三档才创建 ProcessingPlan、调用 Processor，任何非取消处理失败选择冻结原文并标记 `asr_fallback`。所有路径共用一次 ReadyToInject、AtomicPaste、Pending 和 History 提交链路；模型结果标记为不可参与热词学习。当前生产 AtomicPaste 仍在进程内保存活 OLE `IDataObject`，写入文本、发送 Ctrl+V，并在 80ms 后重新发布和 Flush 原对象；该事实已被目标环境崩溃证据判定为不安全，ADR-0018 的自有快照与辅助进程尚未实现。
 
 ## 验证状态
 
-当前实现状态为 `in_progress`，验证状态为 `partial`。2026-08-31 的 dirty worktree 中，前端 55 个测试、Rust 193 个测试（另有 2 个依赖真实凭据与网络的用例按设计忽略）、production build 和架构文档检查通过。自动化覆盖四档滑块、Fast 用户文案、配置值 `0` 的持久化、仅 Fast 跳过 TextProcessing、冻结 ASR 文本原样交付与 `asr_direct` provenance；因此 `AC-SD-15` 的自动化部分已覆盖。仍未启动真实 Tauri/WebView2 与 Windows 全局快捷键，未验证聊天、Office、编码助手和终端输入框互操作，也未验证重启持久化；这些缺口意味着不得把 `AC-SD-15` 或整体功能升级为 `validated`。
+当前实现状态为 `in_progress`，验证状态为 `invalidated`。自动化曾覆盖四档滑块、Fast 旁路、配置持久化、冻结 ASR 文本原样交付、`asr_direct` provenance 和 Mock AtomicPaste 契约，但这些结果没有执行真实 Windows OLE 恢复路径。2026-08-31 的真实 Tauri 运行中，13 字文本从 provider final 到 delivery payload 的长度、bytes 和哈希完全一致，进入 `delivery_inject` 后仍发生 `tokio-rt-worker` 栈溢出并以 `0xc000041d` 终止进程；2026-08-28 的较长文本也在同一边界崩溃。因此 `AC-SD-10`、`AC-SD-15` 的真实交付部分和新增 `AC-SD-16` 均未通过，自动化通过不能支持整体完成声明。
 
 
 现有自动化证据不具备 `human_quality_eval` 或 `usability_observation` 能力，因此不能回答“用户是否感到明显润色”“三档是否可预测”或“结果是否比原文更可用”。这些问题属于未完成的产品验证，不应再用链路测试通过来代替。
 
-仍未完成：携带测试听写内容的真实 DeepSeek 成稿与人工质量评测；干净 Windows 目标机安装后的 WebView2/全局快捷键完整链路；聊天、Office、编码助手和终端输入框互操作；覆盖安装后的配置与历史持久化；完整 finalize 竞争和 IncidentVault 拥塞故障注入。缺少这些证据时不得升级为 `validated` 或发布完成。
+仍未完成：停用 OLE 活对象恢复；实现并验证自有剪贴板快照、事务标记、恢复竞争保护、完整串行化和隔离粘贴辅助进程；覆盖文本、HTML、RTF、图片、文件和自定义格式的真实 Windows 故障矩阵；携带测试听写内容的真实 DeepSeek 成稿与人工质量评测；干净 Windows 目标机安装后的 WebView2/全局快捷键完整链路；聊天、Office、编码助手和终端输入框互操作；覆盖安装后的配置与历史持久化；完整 finalize 竞争和 IncidentVault 拥塞故障注入。目标环境崩溃关闭前不得恢复为 `partial`，缺少完整证据时不得升级为 `validated` 或发布完成。
 
 ## 澄清历史
 
@@ -183,3 +187,4 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 - 2026-08-28：用户认为当前前端解释仍然过重，确认滑块表达的是“希望最终文字被整理到什么程度”，并挑战“保留原话”名称，因为一档仍会清理内容。
 - 2026-08-28：用户提出更丝滑的连续渐变滑轨与三个阶段的范围吸附，并明确本轮先讨论参数化润色量化，不立即把候选的 `0–100` 方案写成已确认验收；同时授权直接挑战和改进仍处于 MVP 阶段的文档系统。
 - 2026-08-31：用户确认智能润色改为四档，并将第一档命名为 `Fast`，面向用户说明“快速响应，仅识别原话”；该档主动跳过 LLM Chatbot，仅在完整 ASR final 冻结后进入本地转换和 Delivery。
+- 2026-08-31：用户提供第二次真实 Windows 短文本崩溃日志；13 字文本在 provider、relay、aggregate 和 delivery 阶段哈希一致，排除长文本、ASR 聚合和 LLM 润色后仍在 AtomicPaste 边界栈溢出。用户确认把“自有剪贴板快照、单一事务所有者、隔离粘贴辅助进程、无法安全保存时失败关闭”的替代计划写入文档系统。
