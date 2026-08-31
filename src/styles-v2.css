@@ -1104,46 +1104,230 @@
   background: linear-gradient(145deg, rgba(31, 113, 129, 0.075), rgba(255, 255, 252, 0.7));
 }
 
+/*
+ * Smart-polish level control: four real levels shown as a magnetic pixel
+ * energy track. `--polish-pos` (0..1) is the single coordinate; pointer
+ * handlers write it straight onto `.polish-track`, so dragging never goes
+ * through component state.
+ */
 .polish-setting-heading {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
 }
 
 .polish-setting-heading strong {
+  flex: 0 0 auto;
   color: var(--z-text);
-  font-size: 14px;
+  font-size: 13px;
 }
 
-.polish-setting-heading span,
 .polish-setting-intro,
-.polish-setting-result span {
+.polish-setting-sub {
   color: var(--z-text-muted);
   font-size: 12px;
   line-height: 1.5;
 }
 
 .polish-setting-intro {
-  margin: 8px 0 14px;
+  margin: 6px 0 0;
 }
 
-.polish-range {
+.polish-setting-sub {
+  margin: 2px 0 10px;
+}
+
+/* fixed-height clip windows: a level swap must never move the sidebar */
+.polish-level-window {
+  position: relative;
+  flex: 1 1 auto;
+  height: 18px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.polish-level-slot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  color: var(--z-accent);
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.polish-desc-window {
+  position: relative;
+  display: block;
+  height: 17px;
+  overflow: hidden;
+}
+
+.polish-desc-slot {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  color: var(--z-text-muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.polish-level-slot.is-entering,
+.polish-level-slot.is-leaving,
+.polish-desc-slot.is-entering,
+.polish-desc-slot.is-leaving {
+  animation-duration: 140ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  animation-fill-mode: both;
+}
+
+.polish-level-slot.is-entering.dir-up { animation-name: polish-in-up; }
+.polish-level-slot.is-entering.dir-down { animation-name: polish-in-down; }
+.polish-level-slot.is-leaving.dir-up { animation-name: polish-out-up; }
+.polish-level-slot.is-leaving.dir-down { animation-name: polish-out-down; }
+
+.polish-desc-slot.is-entering.dir-up { animation-name: polish-desc-in-up; }
+.polish-desc-slot.is-entering.dir-down { animation-name: polish-desc-in-down; }
+.polish-desc-slot.is-leaving.dir-up { animation-name: polish-desc-out-up; }
+.polish-desc-slot.is-leaving.dir-down { animation-name: polish-desc-out-down; }
+
+@keyframes polish-in-up { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes polish-in-down { from { transform: translateY(-100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes polish-out-up { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-100%); opacity: 0; } }
+@keyframes polish-out-down { from { transform: translateY(0); opacity: 1; } to { transform: translateY(100%); opacity: 0; } }
+
+/* description uses a shorter travel, so the two do not read as one block */
+@keyframes polish-desc-in-up { from { transform: translateY(45%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes polish-desc-in-down { from { transform: translateY(-45%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes polish-desc-out-up { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-45%); opacity: 0; } }
+@keyframes polish-desc-out-down { from { transform: translateY(0); opacity: 1; } to { transform: translateY(45%); opacity: 0; } }
+
+.polish-saving-halo {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--z-accent);
+  animation: polish-halo 1.1s ease-in-out infinite;
+}
+
+@keyframes polish-halo {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(31, 113, 129, 0.45); opacity: 0.9; }
+  50% { box-shadow: 0 0 0 5px rgba(31, 113, 129, 0); opacity: 0.5; }
+}
+
+.polish-track-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.polish-endpoint {
+  flex: 0 0 auto;
+  color: var(--z-text-muted);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+/* overflow stays visible so the handle can overhang the bed */
+.polish-track {
+  --polish-pos: 0.6667;
+  position: relative;
+  flex: 1 1 auto;
+  height: 26px;
+  min-width: 0;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.polish-track-bed {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  border: 1px solid var(--z-line);
+  background: rgba(31, 43, 53, 0.055);
+  overflow: hidden;
+}
+
+.polish-field {
+  position: absolute;
+  inset: 0;
+  display: block;
   width: 100%;
+  height: 100%;
+}
+
+.polish-notch {
+  position: absolute;
+  top: 50%;
+  width: 1px;
+  height: 8px;
+  margin-top: -4px;
+  background: rgba(31, 43, 53, 0.16);
+}
+
+.polish-thumb {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  width: 20px;
+  height: 32px;
+  margin-top: -16px;
+  /* travel inset by the handle width so it never overhangs the ends */
+  left: calc(var(--polish-pos) * (100% - 20px));
+  border-radius: 6px;
+  border: 1px solid rgba(31, 43, 53, 0.2);
+  background: #fffefb;
+  box-shadow: 0 1px 4px rgba(31, 43, 53, 0.2);
+  transition: left 200ms cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* while dragging the handle tracks the pointer with no easing */
+.polish-track.is-dragging .polish-thumb { transition: none; }
+
+/*
+ * The native range stays a real slider for semantics, keyboard and tests; it
+ * is only visually hidden. Never display:none / visibility:hidden — that would
+ * drop it out of the accessibility tree.
+ */
+.polish-range {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
   margin: 0;
-  accent-color: var(--z-accent);
+  opacity: 0;
   cursor: pointer;
 }
 
 .polish-range:disabled {
   cursor: wait;
-  opacity: 0.58;
+}
+
+.polish-track:focus-within .polish-track-bed {
+  border-color: var(--z-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--z-accent) 18%, transparent);
+}
+
+.polish-track.is-saving {
+  cursor: wait;
 }
 
 .polish-range-labels {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-top: 4px;
+  margin-top: 6px;
   color: var(--z-text-muted);
-  font-size: 11px;
+  font-size: 10.5px;
 }
 
 .polish-range-labels span:nth-child(2),
@@ -1161,17 +1345,7 @@
 }
 
 .polish-setting-result {
-  display: grid;
-  gap: 2px;
-  margin: 13px 0 0;
-  padding: 10px 12px;
-  border-radius: 9px;
-  background: rgba(255, 255, 252, 0.72);
-}
-
-.polish-setting-result strong {
-  color: var(--z-text);
-  font-size: 12px;
+  margin: 8px 0 0;
 }
 
 .profile-override-add {
