@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "GY Typing",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.gy.typing",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "GY Typing",
+        "title": "Zephyr",
         "width": 820,
         "height": 680,
         "resizable": true,
@@ -27,6 +27,7 @@
   },
   "bundle": {
     "active": true,
+    "useLocalToolsDir": true,
     "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",

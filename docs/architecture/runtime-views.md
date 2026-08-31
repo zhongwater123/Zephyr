@@ -1,5 +1,5 @@
 ---
-{"documentType":"runtime-view","viewStatus":"current","sourceRevision":"b62667deab18f740c83bab2f1bcebae2fd0a59e2","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller","src-tauri/src/voice_trigger.rs","src-tauri/src/voice_input_service.rs","src-tauri/src/streaming_pipeline.rs","src-tauri/src/lib.rs","docs/architecture/runtime-views.md"],"reviewStatus":"partial","reviewedAt":"2026-08-28","knownDeviations":["Starting 阶段的匹配 Release 只记录 finish_requested，不取消尚未完成的音频启动；慢设备或快速按放时，Recorder 可能在用户松开后才完成启动并随后 Stop。"]}
+{"documentType":"runtime-view","viewStatus":"current","sourceRevision":"b5929f21cee3329d80e732a3fa2ed86ff6035f5c","worktreeState":"dirty","changedPaths":["src-tauri/src/config.rs","src-tauri/src/commands/config.rs","src-tauri/src/shortcut_manager","src-tauri/src/voice_controller","src-tauri/src/voice_trigger.rs","src-tauri/src/state.rs","src-tauri/src/overlay.rs","src/app/AppShellV2.tsx","src/features/shortcut","src/features/settings","src/preinput","docs/architecture/runtime-views.md"],"reviewStatus":"reviewed","reviewedAt":"2026-08-28","knownDeviations":[]}
 ---
 
 # 运行时与部署视图
@@ -25,10 +25,15 @@ sequenceDiagram
     participant DB as History / Hotwords
 
     User->>HK: Pressed
-    HK->>HK: 创建并持有 ActivationId
+    HK->>HK: 读取权威模式并创建 ActivationId
+    alt Hold
+        HK->>HK: 固化 PushToTalk
+    else Toggle
+        HK->>HK: 固化 PressToToggle
+    end
     HK->>VC: VoiceTriggerPort.begin(activation)
     VC->>RT: reducer 接受 Activation / Starting / 固定 config revision
-    VC-->>HK: BeginReceipt -> Accepted/Rejected（快捷键不等待）
+    VC-->>HK: BeginReceipt -> Accepted(completion)/Rejected
     VC->>PRE: begin + Starting
     VC->>START: StartJob(sessionId, config snapshot)
     START->>WIN: 捕获 HWND/PID/创建时间/EXE
@@ -37,44 +42,55 @@ sequenceDiagram
     Note over AUD: AudioSessionActor mailbox 容量 4；独占 Recorder
     AUD-->>START: AudioStreamInfo / error
     START-->>VC: StartFinished(sessionId, PreparedSession)
-    VC->>RT: reducer -> Recording 或立即 Stopping
+    VC->>RT: reducer -> Recording
+    VC->>PRE: Recording + 模式化结束提示
     VC->>ASR: 启动 Provider task
     loop 录音期间
         AUD->>ASR: PCM chunk（有界背压）
         ASR-->>PRE: PresentationEvent（非权威字符进度）
     end
-    User->>HK: Released
+    alt Hold
+        User->>HK: Released
+    else Toggle
+        User->>HK: 第二次 Pressed
+    end
     HK->>VC: VoiceTriggerPort.finish(same ActivationId)
     alt 仍在 Starting
-        VC->>RT: finish_requested=true
-        Note over VC,RT: 当前实现等待 StartFinished 后再 Stop；Release 不丢失，但可能发生松开后才完成麦克风启动
+        VC->>RT: 清除当前会话并回到 Idle
+        VC->>START: cancel token
+        VC->>AUD: Cancel(sessionId)
+        Note over VC,AUD: 迟到 StartFinished 被丢弃并再次请求取消；不进入 ASR 或 Delivery
     else Recording
         VC->>RT: reducer -> Stopping
+        VC->>AUD: Stop(sessionId)
     end
-    VC->>AUD: Stop(sessionId)
-    AUD-->>VC: AudioStopped(sessionId, duration)
-    VC->>RT: reducer -> Transcribing
-    VC->>FIN: move FinalizationJob（不含 Runtime）
-    FIN->>ASR: 等待 final（有超时与取消）
-    ASR-->>FIN: final text
-    FIN->>DEL: validate(text, captured target)
-    DEL->>WIN: 复验身份 + 当前前台 HWND
-    alt 目标和文本有效
-        FIN->>VC: ReadyToInject(sessionId)
-        VC->>RT: 校验当前 session / enabled / cancellation
-        VC-->>FIN: authorize + Pasting
-        DEL->>APP: Unicode SendInput 或显式兼容模式
-        APP-->>DEL: 注入成功
-        DEL->>DB: 写历史；随后触发热词整理
-        FIN->>VC: FinalizationFinished(Delivered)
-        VC->>RT: metrics + complete
-    else 目标变化、文本无效或注入失败
-        DEL-->>FIN: delivery failure
-        FIN->>VC: FinalizationFinished(Pending/Failed)
-        VC->>RT: Pending（内存，5 条，TTL 10 分钟）+ complete/error
-        Note over APP,DB: 不写目标应用、不写历史、不学习热词
+    opt 已进入 Stopping
+        AUD-->>VC: AudioStopped(sessionId, duration)
+        VC->>RT: reducer -> Transcribing
+        VC->>FIN: move FinalizationJob（不含 Runtime）
+        FIN->>ASR: 等待 final（有超时与取消）
+        ASR-->>FIN: final text
+        FIN->>DEL: validate(text, captured target)
+        DEL->>WIN: 复验身份 + 当前前台 HWND
+        alt 目标和文本有效
+            FIN->>VC: ReadyToInject(sessionId)
+            VC->>RT: 校验当前 session / enabled / cancellation
+            VC-->>FIN: authorize + Pasting
+            DEL->>APP: Unicode SendInput 或显式兼容模式
+            APP-->>DEL: 注入成功
+            DEL->>DB: 写历史；随后触发热词整理
+            FIN->>VC: FinalizationFinished(Delivered)
+            VC->>RT: metrics + complete
+        else 目标变化、文本无效或注入失败
+            DEL-->>FIN: delivery failure
+            FIN->>VC: FinalizationFinished(Pending/Failed)
+            VC->>RT: Pending（内存，5 条，TTL 10 分钟）+ complete/error
+            Note over APP,DB: 不写目标应用、不写历史、不学习热词
+        end
     end
     VC->>PRE: hide current session
+    VC-->>HK: completion（所有正常结束、取消、超时、失败、禁用或关闭）
+    HK->>HK: 仅按匹配 ActivationId 复位
     Note over VC,FIN: reducer 是唯一控制状态迁移入口；过期结果无副作用
 ```
 
@@ -125,8 +141,8 @@ sequenceDiagram
 
 ### 并发与终止条件
 
-- 120 秒 deadline 和匹配当前 Activation 的真实 Released 进入相同的幂等 finalize 路径；迟到或其他 Activation 的 finish/cancel 被忽略。
-- Starting 阶段的匹配 Release 只设置 `finish_requested`，不会取消 Start Workflow 或启动取消令牌；StartFinished 后才向 AudioSessionActor 发 Stop。这是当前实现事实，不是已验证的目标语义：慢设备或快速按放时可能在用户松开后才完成麦克风启动。
+- 120 秒 deadline 和匹配当前 Activation 的模式化 finish（Hold 的真实 Released 或 Toggle 的第二次 Pressed）进入相同的幂等 finalize 路径；迟到或其他 Activation 的 finish/cancel 被忽略。
+- Starting 阶段收到匹配 finish 时立即从 runtime 移除会话，触发启动取消令牌和 AudioSessionActor cancel，并丢弃迟到的 StartFinished；该路径不进入 ASR、智能成稿或 Delivery。
 - 音频队列 Full、用户取消、provider 拒绝或控制通道失败都会取消当前会话并禁止交付。
 - 旧 session 的 provider 完成只能记录，不能修改当前状态或产生文本副作用。
 - provider final 最长等待路径由 preview 是否存在决定；取消令牌可提前终止等待。

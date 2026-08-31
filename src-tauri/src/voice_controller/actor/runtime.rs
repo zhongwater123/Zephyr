@@ -19,7 +19,6 @@ pub(super) struct CurrentSession {
     pub(super) session_id: u64,
     pub(super) activation: VoiceActivation,
     pub(super) config_revision: u64,
-    pub(super) finish_requested: bool,
 }
 
 pub(super) struct VoiceRuntime {
@@ -110,7 +109,6 @@ impl VoiceRuntime {
             session_id,
             activation,
             config_revision,
-            finish_requested: false,
         });
         self.phase = VoicePhase::Starting;
         let mut payload = payload;
@@ -118,47 +116,18 @@ impl VoiceRuntime {
         Some(self.set_payload(payload))
     }
 
-    pub(super) fn request_finish(&mut self, activation_id: &ActivationId) -> Option<VoicePhase> {
-        if !self.owns_activation(activation_id) {
-            return None;
-        }
-        match self.phase {
-            VoicePhase::Starting => {
-                if let Some(current) = &mut self.current {
-                    current.finish_requested = true;
-                }
-                Some(VoicePhase::Starting)
-            }
-            VoicePhase::Recording => {
-                self.phase = VoicePhase::Stopping;
-                Some(VoicePhase::Stopping)
-            }
-            _ => None,
-        }
-    }
-
-    pub(super) fn mark_recording(&mut self, session_id: u64) -> Option<bool> {
+    pub(super) fn mark_recording(&mut self, session_id: u64) -> Option<()> {
         if self.current_id() != Some(session_id) || self.phase != VoicePhase::Starting {
             return None;
         }
-        let finish_requested = self
-            .current
-            .as_ref()
-            .is_some_and(|current| current.finish_requested);
-        self.phase = if finish_requested {
-            VoicePhase::Stopping
-        } else {
-            VoicePhase::Recording
+        let message = match self.current.as_ref()?.activation.behavior {
+            crate::voice_trigger::TriggerBehavior::PushToTalk => "正在聆听，松开结束",
+            crate::voice_trigger::TriggerBehavior::PressToToggle => "正在聆听，再按一次结束",
         };
-        let mut payload = self.payload.clone();
-        payload.state = VoiceState::Recording;
-        payload.message = if finish_requested {
-            "正在结束录音".to_string()
-        } else {
-            "正在听".to_string()
-        };
+        self.phase = VoicePhase::Recording;
+        let payload = self.machine.activation_ready(message)?;
         self.set_payload(payload);
-        Some(finish_requested)
+        Some(())
     }
 
     pub(super) fn set_desired(&mut self, enabled: bool, revision: u64) -> VoiceStatePayload {

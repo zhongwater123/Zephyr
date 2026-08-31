@@ -116,6 +116,7 @@ pub fn run() {
             commands::config::save_config,
             commands::config::set_enabled,
             commands::config::set_history_enabled,
+            commands::config::set_shortcut_trigger_mode,
             commands::config::set_incident_recovery_enabled,
             commands::provider::test_provider
         ])

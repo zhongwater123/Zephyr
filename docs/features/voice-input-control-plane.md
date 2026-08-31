@@ -13,12 +13,12 @@
   "validationStatus": "partial",
   "implementationReview": {
     "status": "partial",
-    "sourceRevision": "b62667deab18f740c83bab2f1bcebae2fd0a59e2",
+    "sourceRevision": "b5929f21cee3329d80e732a3fa2ed86ff6035f5c",
     "worktreeState": "dirty",
-    "changedPaths": ["src-tauri/src/voice_controller/", "src-tauri/src/voice_trigger.rs", "src-tauri/src/voice_input_service.rs", "src-tauri/src/streaming_pipeline.rs", "src-tauri/src/commands/config.rs", "src-tauri/src/platform/tray.rs", "src-tauri/src/lib.rs", "src/security-model.ts", "src/app/AppShellV2.tsx"],
+    "changedPaths": ["src-tauri/src/voice_controller/", "src-tauri/src/voice_trigger.rs", "src-tauri/src/voice_input_service.rs", "src-tauri/src/shortcut_manager/", "src-tauri/src/state.rs", "src-tauri/src/overlay.rs", "src-tauri/src/lib.rs", "src/app/AppShellV2.tsx", "src/preinput/"],
     "reviewedAt": "2026-08-28",
-    "summary": "Runtime 单写入者和分层迁移已基本落地，但 Starting 阶段的 Push-to-Talk Release 仍采用延迟结束：只记录 finish_requested，允许尚未完成的音频启动继续，待 StartFinished 后再 Stop。该行为尚未完成产品语义确认和目标环境验证，因此严格分层闭环不能视为完成。",
-    "knownDeviations": ["Starting 阶段收到匹配 ActivationId 的 Finish 时不会取消 Start Workflow 或触发启动取消令牌；若音频设备尚未就绪，Recorder 可能在用户松开后才完成启动并随后被停止。常规长按路径仍可用，但快速按放、慢设备和隐私授权边界尚未验证，最终应采用“Release 立即取消启动”还是更精确的 AudioReady 仲裁仍待确认。"]
+    "summary": "Runtime 单写入者和分层迁移继续成立；Starting 阶段的匹配 Finish 现会立即清除当前会话、取消 Start Workflow 与 AudioSessionActor，并将迟到启动结果作为 stale 资源丢弃。真实 Hook、麦克风和目标应用验证仍未完成。",
+    "knownDeviations": []
   },
   "components": ["backend.bootstrap", "backend.commands", "backend.services", "backend.voice-controller", "backend.delivery", "backend.shortcut", "platform.windows"],
   "decisions": ["ADR-0002", "ADR-0003", "ADR-0005", "ADR-0012", "ADR-0013"],
@@ -147,7 +147,7 @@
 
 - 首个生产触发适配器仍为全局快捷键；其他触发方式接入前不得把快捷键健康状态重新合并为语音会话可用状态。
 - 当前只支持一个活动语音会话；若未来需要并行会议录音，应重新评估 ADR-0002 和 ADR-0012。
-- Push-to-Talk 在设备尚未就绪时收到 Release 的目标语义尚未确认。当前实现会等待音频启动完成后立即 Stop；这能保留迟到 Start 的配对，但可能在用户松开后才取得麦克风。该行为是已知实现风险，不是已验证的产品契约。
+- Starting 阶段收到匹配 Finish 时立即取消启动是当前已确认契约；实现通过取消令牌、AudioSessionActor cancel 和 stale StartFinished 丢弃共同收束，但真实慢设备与麦克风权限边界仍需目标环境验证。
 
 ## 架构决策
 
@@ -169,11 +169,12 @@
 
 ## 验证状态
 
-当前实现状态为 `in_progress`，验证状态仍为 `partial`。Runtime 单写入者及主要分层骨架已有自动化证据：Rust 全量 153 项、前端 46 项、前端 production build、架构工具测试、106/106 源码映射、15 条代码不变量和 ASR 边界检查均已通过。这些结果证明当前测试定义下的 Activation 配对、Starting 延迟释放、BeginReceipt、控制邮箱故障关闭、Runtime/Worker 边界和显式生命周期可以工作，但不证明 Starting 阶段 Release 后不会再启动麦克风，也不证明该行为满足 Push-to-Talk 的产品与隐私语义。配置双 revision Provider 集成、Pending 与真实 Actor Begin 的调度级竞争仍缺专项证据。
+当前实现状态为 `in_progress`，验证状态仍为 `partial`。最新自动化为 Rust 191 项、前端 54 项、production build、架构工具测试、安全扫描和 ASR 边界检查通过。新增证据证明当前测试定义下的 Starting 即时取消、迟到启动丢弃、Activation completion、Hold/Toggle 配对、浮层 session 隔离、控制邮箱故障关闭和 Runtime/Worker 单写入者边界可以工作。配置双 revision Provider 集成、Pending 与真实 Actor Begin 的调度级竞争仍缺专项证据。
 
-当前已登记 Starting/Release 未关闭偏差。配置提交与运行态协调采用 reconciliation 语义：配置先提交，Actor 必须确认 committed revision；确认失败返回 `committedRevision` 且不回滚，前端保留已提交意图，后续配置操作重试。Hook 故障只降低 shortcut health，不禁用 Actor。由于真实 Windows Hook、快速按放、WebView2、目标窗口捕获/注入、设备错误和 Pending 重投递尚未形成目标环境证据，本功能不得宣称严格分层闭环完成或完整验证。
+Starting/Release 偏差已在源码和 Current Runtime View 中关闭。配置提交与运行态协调继续采用 reconciliation 语义；Hook 故障只降低 shortcut health，不禁用 Actor。由于真实 Windows Hook、快速按放、WebView2、目标窗口捕获/注入、设备错误和 Pending 重投递尚未形成目标环境证据，本功能不得宣称完整验证。
 
 ## 澄清历史
 
 - 2026-08-27：用户确认先解决语音输入链路的所有权分裂，并批准以单一控制面、统一触发端口和渐进迁移方式实施。
 - 2026-08-28：复核确认当前 Starting 阶段的 Release 只记录 `finish_requested`，可能在用户松开后才完成麦克风启动并随后 Stop。用户要求先登记该问题；最终采用立即取消还是 AudioReady 精确仲裁尚未决定。
+- 2026-08-28：用户随后明确选择 Starting 中的 Finish 立即取消且不产生文本；实现删除 `finish_requested` 延迟路径，并以取消令牌、AudioSessionActor cancel、stale StartFinished 丢弃和 activation completion 收束。

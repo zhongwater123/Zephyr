@@ -11,7 +11,7 @@ pub fn setup(app: &AppHandle, voice_control: VoiceControlService) -> tauri::Resu
     let menu = Menu::with_items(app, &[&open_settings, &toggle_enabled, &quit])?;
 
     let mut tray = TrayIconBuilder::with_id("main")
-        .tooltip("GY Typing")
+        .tooltip("Zephyr")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_tray_icon_event(|tray, event| {

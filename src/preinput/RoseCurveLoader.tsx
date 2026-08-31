@@ -3,7 +3,13 @@ import { useEffect, useRef } from "preact/hooks";
 const PARTICLE_COUNT = 54;
 const ACTIVE_GLOW_PARTICLE_COUNT = 8;
 
-export function RoseCurveLoader({ compact = false }: { compact?: boolean }) {
+export function RoseCurveLoader({
+  compact = false,
+  label = "正在聆听",
+}: {
+  compact?: boolean;
+  label?: string;
+}) {
   const groupRef = useRef<SVGGElement | null>(null);
   const pathRef = useRef<SVGPathElement | null>(null);
   const particleRefs = useRef<Array<SVGCircleElement | null>>([]);
@@ -37,7 +43,10 @@ export function RoseCurveLoader({ compact = false }: { compact?: boolean }) {
   }, []);
 
   return (
-    <span className={`preinput-loader${compact ? " preinput-loader--compact" : ""}`} aria-label="正在聆听">
+    <span
+      className={"preinput-loader" + (compact ? " preinput-loader--compact" : "")}
+      aria-label={label}
+    >
       <svg className="preinput-loader__curve" viewBox="0 0 100 100" aria-hidden="true">
         <g ref={groupRef}>
           <path ref={pathRef} className="preinput-loader__track" />
@@ -54,7 +63,7 @@ export function RoseCurveLoader({ compact = false }: { compact?: boolean }) {
           ))}
         </g>
       </svg>
-      {compact ? null : <span className="preinput-loader__label">正在聆听</span>}
+      {compact ? null : <span className="preinput-loader__label">{label}</span>}
     </span>
   );
 }

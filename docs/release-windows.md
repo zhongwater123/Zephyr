@@ -5,7 +5,7 @@
 当前 Windows 测试版使用 Tauri 2 的 NSIS 安装器：
 
 - 安装范围为当前用户，不要求管理员权限；
-- 应用标识固定为 `com.gy.typing`，产品名固定为 `GY Typing`；
+- 应用标识固定为 `com.gy.typing`，NSIS 内部产品名暂时固定为 `GY Typing`，以继续覆盖已经发出的首个测试版本；对外分发文件名和应用内用户界面统一使用 `Zephyr`；
 - 相同标识的新版本通过安装器覆盖安装；
 - 配置、历史和事故恢复数据位于用户配置/本地数据目录，不放在安装目录内，覆盖安装不会主动删除这些数据；
 - 打包脚本生成 `release-manifest.json`，保存版本、Git revision、脏工作树标记、文件大小和 SHA-256。
@@ -15,6 +15,16 @@
 ## 构建
 
 准备 Windows 10/11、Node.js、Rust MSVC 工具链、Visual Studio C++ 桌面构建工具和 WebView2。安装依赖后运行：
+
+先在仓库根目录创建不会被 Git 跟踪的 `.env.local`：
+
+```dotenv
+GY_TYPING_ASR_AUTH_MODE=api_key
+GY_TYPING_ASR_API_KEY=<豆包语音新版控制台的 APP Key>
+GY_TYPING_DEEPSEEK_API_KEY=<内部共享 DeepSeek API Key>
+```
+
+Node 启动脚本和 Rust `build.rs` 都会读取该文件，因此 `npm run tauri dev`、直接 Cargo/Tauri 构建和 Windows 打包入口会使用同一组凭据，并在编译时把内部测试 ASR 与 DeepSeek 共享凭据注入应用。安装后的测试用户无需配置 ASR 或 LLM 密钥。若任一密钥缺失或 ASR 鉴权模式不是 `api_key`，Windows 打包门禁会终止。`.env.local` 不得加入版本控制；编译后的客户端仍可被逆向提取这些共享凭据，因此此方式只用于当前受控的小范围内部测试。
 
 ```powershell
 npm ci
@@ -28,12 +38,13 @@ npm run package:windows:check
 ```
 
 完整打包会依次执行架构结构检查、ASR 边界检查、凭据扫描、前端测试、Rust 测试和 NSIS 构建。输出位于：
+打包脚本会把 `TEMP/TMP` 设置到 Cargo target 内的临时目录，同时 `bundle.useLocalToolsDir` 把 Tauri 的 NSIS 工具缓存固定到 `target/.tauri`。临时解压目录、工具缓存和构建输出因此位于同一磁盘，避免 Windows 跨盘原子移动导致 NSIS 失败；发布门禁会拒绝缺少该配置的构建。
 
 ```text
 src-tauri/target/release/bundle/nsis/
 ```
 
-分发时同时提供 `*-setup.exe` 和 `release-manifest.json`。接收方应比对安装包 SHA-256；脏工作树产物只用于可追踪的内部测试。
+分发时同时提供 `Zephyr_<version>_x64-setup.exe` 和 `release-manifest.json`。打包脚本还会读取 release EXE 的 PE Header，只有 Windows GUI subsystem 才允许产出安装包，避免安装后伴随常驻终端窗口。接收方应比对安装包 SHA-256；脏工作树产物只用于可追踪的内部测试。
 
 ## 版本规则
 

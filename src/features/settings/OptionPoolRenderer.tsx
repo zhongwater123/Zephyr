@@ -1,3 +1,4 @@
+import type { ComponentChildren } from "preact";
 import type { AsrOptionPool, ConfigValue, OptionSpec } from "../../domain";
 import { BehaviorSwitch } from "./BehaviorSwitch";
 
@@ -40,17 +41,15 @@ export function OptionPoolRenderer({
   savingOptions,
   errors,
   onChange,
+  children,
 }: {
   pool: AsrOptionPool | null;
   saving: boolean;
   onChange: (optionId: string, value: ConfigValue) => void;
   savingOptions?: Record<string, boolean>;
   errors?: Record<string, string>;
+  children?: ComponentChildren;
 }) {
-  if (!pool) {
-    return <p className="config-message">正在加载识别选项…</p>;
-  }
-
   return (
     <section className="console-block">
       <div className="console-title">输入效果</div>
@@ -58,25 +57,30 @@ export function OptionPoolRenderer({
         className="behavior-switch-list"
         aria-label="输入效果"
       >
-        {[...pool.options]
-          .sort((left, right) => left.order - right.order)
-          .map((option) =>
-            option.controlKind === "toggle" ? (
-              <ToggleOption
-                key={option.id}
-                option={option}
-                pool={pool}
-                disabled={savingOptions ? Boolean(savingOptions[option.id]) : saving}
-                error={errors?.[option.id]}
-                onChange={onChange}
-              />
-            ) : (
-              <p className="config-message" role="status" key={option.id}>
-                “{option.label}”使用了当前版本不支持的控件，已安全禁用。
-              </p>
-            ),
-          )}
+        {pool ? (
+          [...pool.options]
+            .sort((left, right) => left.order - right.order)
+            .map((option) =>
+              option.controlKind === "toggle" ? (
+                <ToggleOption
+                  key={option.id}
+                  option={option}
+                  pool={pool}
+                  disabled={savingOptions ? Boolean(savingOptions[option.id]) : saving}
+                  error={errors?.[option.id]}
+                  onChange={onChange}
+                />
+              ) : (
+                <p className="config-message" role="status" key={option.id}>
+                  “{option.label}”使用了当前版本不支持的控件，已安全禁用。
+                </p>
+              ),
+            )
+        ) : (
+          <p className="config-message">正在加载识别选项…</p>
+        )}
       </div>
+      {children}
     </section>
   );
 }

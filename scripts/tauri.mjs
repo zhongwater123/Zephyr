@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { loadDeploymentEnvironment } from "./deployment-env.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
@@ -85,7 +86,7 @@ function acquireDevLock() {
       const existing = readLock();
       if (processIsAlive(existing?.pid)) {
         throw new Error(
-          `已有 GY Typing 开发会话正在运行（PID ${existing.pid}）。请先在原终端按 Ctrl+C 停止它。`,
+          `已有 Zephyr 开发会话正在运行（PID ${existing.pid}）。请先在原终端按 Ctrl+C 停止它。`,
         );
       }
 
@@ -99,7 +100,7 @@ function acquireDevLock() {
     }
   }
 
-  throw new Error("无法取得 GY Typing 开发会话锁，请删除陈旧的 .tauri-dev.lock 后重试。");
+  throw new Error("无法取得 Zephyr 开发会话锁，请删除陈旧的 .tauri-dev.lock 后重试。");
 }
 
 if (isDev) {
@@ -116,6 +117,7 @@ process.on("exit", removeOwnedLock);
 const targetDirectory = resolve(
   process.env.GY_TYPING_CARGO_TARGET_DIR || resolve(projectRoot, "src-tauri", "target"),
 );
+const deploymentEnvironment = loadDeploymentEnvironment(projectRoot);
 const tauriCli = resolve(projectRoot, "node_modules", "@tauri-apps", "cli", "tauri.js");
 
 if (!existsSync(tauriCli)) {
@@ -145,7 +147,7 @@ process.once("SIGTERM", () => handleShutdown("SIGTERM"));
 child = spawn(process.execPath, [tauriCli, ...args], {
   cwd: projectRoot,
   env: {
-    ...process.env,
+    ...deploymentEnvironment,
     CARGO_TARGET_DIR: targetDirectory,
   },
   stdio: "inherit",

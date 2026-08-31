@@ -619,4 +619,25 @@ mod tests {
         );
         assert_eq!(credentials.reads.load(Ordering::SeqCst), 0);
     }
+
+    #[tokio::test]
+    #[ignore = "requires live DeepSeek credentials and network access"]
+    async fn live_deployment_credential_completes_text_processing_request() {
+        let credentials: Arc<dyn CredentialStore> =
+            Arc::new(crate::repositories::WindowsCredentialStore);
+        let config = Arc::new(ConfigService::new(
+            LoadedConfig {
+                config: AppConfig::default(),
+                recovery: ConfigRecovery::None,
+            },
+            Arc::new(MemoryConfigRepository),
+            credentials.clone(),
+        ));
+        let processor = DeepSeekTextProcessor::production(config, credentials).unwrap();
+
+        let result = processor.process(request(8_000)).await.unwrap();
+
+        assert!(!result.text.trim().is_empty());
+        assert_eq!(result.model, DEFAULT_TEXT_PROCESSING_MODEL);
+    }
 }

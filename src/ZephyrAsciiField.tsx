@@ -1,11 +1,13 @@
 import type { JSX } from "preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import * as THREE from "three";
+import type { ShortcutTriggerMode } from "./domain";
 
 type ZephyrAsciiFieldProps = {
   state: string;
   muted: boolean;
   shortcut: string;
+  triggerMode: ShortcutTriggerMode;
 };
 
 type Glyph = {
@@ -97,7 +99,7 @@ void main() {
 }
 `;
 
-export function ZephyrAsciiField({ state, muted, shortcut }: ZephyrAsciiFieldProps) {
+export function ZephyrAsciiField({ state, muted, shortcut, triggerMode }: ZephyrAsciiFieldProps) {
   const fieldRef = useRef<HTMLDivElement>(null);
   const logoRef = useRef<HTMLDivElement>(null);
   const rafRef = useRef<number | undefined>(undefined);
@@ -176,7 +178,11 @@ export function ZephyrAsciiField({ state, muted, shortcut }: ZephyrAsciiFieldPro
       <div ref={logoRef} className="zephyr-ascii-logo" aria-label="Zephyr" />
       <div className="zephyr-caption" aria-hidden="true">
         <span>Zephyr</span>
-        <span>按下 {shortcut} 语音输入</span>
+        <span>
+          {triggerMode === "toggle"
+            ? "按一下 " + shortcut + " 开始，再按一下结束"
+            : "按住 " + shortcut + " 说话，松开结束"}
+        </span>
       </div>
     </div>
   );

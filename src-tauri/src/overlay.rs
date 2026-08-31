@@ -39,6 +39,7 @@ struct PreInputStore {
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PreInputState {
+    Starting,
     Recording,
     Transcribing,
     Finalizing,
@@ -100,7 +101,9 @@ pub fn current_preinput_session_id() -> u64 {
 }
 
 pub fn hide_preinput_for_session(app: &AppHandle, session_id: u64) {
-    let payload = clear_current_preinput_payload(session_id);
+    let Some(payload) = clear_current_preinput_payload(session_id) else {
+        return;
+    };
     if let Some(window) = app.get_webview_window(PREINPUT_LABEL) {
         emit_to_preinput(app, PREINPUT_HIDE_EVENT, &payload);
         if let Err(error) = window.hide() {
@@ -138,33 +141,24 @@ fn store_preinput_payload(mut payload: PreInputPayload) -> Option<PreInputPayloa
     None
 }
 
-fn clear_current_preinput_payload(session_id: u64) -> PreInputPayload {
+fn clear_current_preinput_payload(session_id: u64) -> Option<PreInputPayload> {
     if let Ok(mut store) = preinput_store().lock() {
-        if session_id >= store.current_session_id {
-            store.current_session_id = session_id;
+        if session_id == store.current_session_id {
             store.closed_session_id = store.closed_session_id.max(session_id);
             store.current = None;
             store.delayed_emit_scheduled = false;
             store.next_seq = store.next_seq.saturating_add(1);
-            return PreInputPayload {
+            return Some(PreInputPayload {
                 session_id,
                 seq: store.next_seq,
                 text: String::new(),
                 state: PreInputState::Dismissing,
                 confirmed_chars: Some(0),
                 message: None,
-            };
+            });
         }
     }
-
-    PreInputPayload {
-        session_id,
-        seq: 0,
-        text: String::new(),
-        state: PreInputState::Dismissing,
-        confirmed_chars: Some(0),
-        message: None,
-    }
+    None
 }
 
 fn emit_update_coalesced(app: &AppHandle, payload: PreInputPayload) {
@@ -333,4 +327,18 @@ fn monitor_rect(monitor: windows::Win32::Graphics::Gdi::HMONITOR) -> Option<(i32
 #[cfg(not(target_os = "windows"))]
 fn target_screen_rect(_app: &AppHandle) -> Option<(i32, i32, u32, u32)> {
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stale_hide_cannot_close_a_newer_preinput_session() {
+        let stale_session = begin_preinput_session();
+        let current_session = begin_preinput_session();
+
+        assert!(clear_current_preinput_payload(stale_session).is_none());
+        assert!(clear_current_preinput_payload(current_session).is_some());
+    }
 }

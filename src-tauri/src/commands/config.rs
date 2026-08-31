@@ -1,11 +1,14 @@
 use crate::command_error::{self, CommandError, CommandResult};
 use crate::config::{
     self, AppConfig, ConfigRecovery, EndpointPurpose, InjectionOverride, InjectionStrategy,
-    TrustedEndpoint,
+    ShortcutTriggerMode, TrustedEndpoint,
 };
 use crate::services::{AppServices, ConfigServiceError};
+use crate::shortcut_manager::ShortcutManager;
+use crate::voice_controller::VoiceSessionHandle;
 use crate::voice_input_service::{VoiceControlService, VoiceControlServiceError};
 use serde::Serialize;
+use std::sync::Arc;
 use tauri::{State, WebviewWindow};
 
 #[derive(Debug, Clone, Serialize)]
@@ -32,6 +35,13 @@ pub(crate) fn require_revision(config: &AppConfig, expected_revision: u64) -> Co
 
 fn history_enabled_config(mut current: AppConfig, enabled: bool) -> AppConfig {
     current.history_enabled = enabled;
+    current.revision = current.revision.saturating_add(1);
+    current
+}
+
+fn shortcut_trigger_mode_config(mut current: AppConfig, mode: ShortcutTriggerMode) -> AppConfig {
+    current.shortcut_trigger_mode = mode;
+    current.schema_version = config::CURRENT_SCHEMA_VERSION;
     current.revision = current.revision.saturating_add(1);
     current
 }
@@ -122,6 +132,23 @@ mod tests {
         assert_eq!(next.revision, 9);
         assert_eq!(next.shortcut, current.shortcut);
         assert_eq!(next.asr, current.asr);
+    }
+
+    #[test]
+    fn trigger_mode_change_preserves_disabled_state_and_advances_revision() {
+        let current = AppConfig {
+            revision: 8,
+            enabled: false,
+            shortcut_trigger_mode: ShortcutTriggerMode::Hold,
+            ..AppConfig::default()
+        };
+
+        let next = shortcut_trigger_mode_config(current, ShortcutTriggerMode::Toggle);
+
+        assert_eq!(next.revision, 9);
+        assert!(!next.enabled);
+        assert_eq!(next.shortcut_trigger_mode, ShortcutTriggerMode::Toggle);
+        assert_eq!(next.schema_version, config::CURRENT_SCHEMA_VERSION);
     }
 }
 
@@ -314,6 +341,35 @@ pub fn set_history_enabled(
         .commit_config(expected_revision, next)
         .map_err(map_config_error)
 }
+
+#[tauri::command]
+pub fn set_shortcut_trigger_mode(
+    mode: ShortcutTriggerMode,
+    expected_revision: u64,
+    window: WebviewWindow,
+    services: State<'_, AppServices>,
+    voice: State<'_, VoiceSessionHandle>,
+    shortcut: State<'_, Arc<ShortcutManager>>,
+) -> CommandResult<AppConfig> {
+    command_error::require_window(&window, "main")?;
+    if voice.status_snapshot().session_active || shortcut.is_trigger_active() {
+        return Err(CommandError::new(
+            "voice_session_active",
+            "本次语音结束后才可以切换快捷键触发方式",
+        ));
+    }
+    let mut next = services.config.snapshot();
+    require_revision(&next, expected_revision)?;
+    if next.shortcut_trigger_mode == mode {
+        return Ok(next);
+    }
+    next = shortcut_trigger_mode_config(next, mode);
+    services
+        .config
+        .commit_config(expected_revision, next)
+        .map_err(map_config_error)
+}
+
 #[tauri::command]
 pub fn set_incident_recovery_enabled(
     enabled: bool,

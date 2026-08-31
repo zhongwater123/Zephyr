@@ -24,6 +24,23 @@ const payload: PreInputPayload = {
 };
 
 describe("PreInputOverlay", () => {
+  it("announces Starting separately from listening", () => {
+    vi.mocked(usePreInputPayload).mockReturnValue({
+      payload: {
+        ...payload,
+        text: "",
+        state: "starting",
+        message: "正在启动麦克风",
+      },
+      visible: true,
+    });
+    render(<PreInputOverlay />);
+
+    expect(screen.getByLabelText("正在启动麦克风")).toBeTruthy();
+    expect(screen.getByText("正在启动麦克风")).toBeTruthy();
+    expect(screen.queryByText("正在聆听")).toBeNull();
+  });
+
   it("renders the current payload and follows controller visibility", () => {
     vi.mocked(usePreInputPayload).mockReturnValue({ payload, visible: true });
     const { container, rerender } = render(<PreInputOverlay />);

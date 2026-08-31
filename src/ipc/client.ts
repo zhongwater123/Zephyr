@@ -15,6 +15,7 @@ import type {
   ShortcutEditOutcome,
   ShortcutEditSession,
   ShortcutEditTraceInput,
+  ShortcutTriggerMode,
   VoiceStatePayload,
 } from "../domain";
 
@@ -44,6 +45,10 @@ export const configApi = {
     invoke<number>("set_enabled", args),
   setHistoryEnabled: (args: { enabled: boolean; expectedRevision: number }) =>
     invoke<AppConfig>("set_history_enabled", args),
+  setShortcutTriggerMode: (args: {
+    mode: ShortcutTriggerMode;
+    expectedRevision: number;
+  }) => invoke<AppConfig>("set_shortcut_trigger_mode", args),
   setIncidentRecoveryEnabled: (args: { enabled: boolean; expectedRevision: number }) =>
     invoke<AppConfig>("set_incident_recovery_enabled", args),
 };

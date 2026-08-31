@@ -36,6 +36,7 @@ export type AppConfig = {
   enabled: boolean;
   shortcut: string;
   shortcut_binding?: ShortcutBinding | null;
+  shortcut_trigger_mode: ShortcutTriggerMode;
   asr: ProviderConfigEnvelope;
   history_enabled: boolean;
   incident_recovery_enabled: boolean;
@@ -53,6 +54,8 @@ export type AppConfig = {
   trusted_endpoints: TrustedEndpoint[];
   injection_overrides: InjectionOverride[];
 };
+
+export type ShortcutTriggerMode = "hold" | "toggle";
 
 export type EndpointPurpose = "hotword_agent" | "text_processing";
 
@@ -185,8 +188,17 @@ export type ShortcutEditTraceInput = {
   candidateBinding?: ShortcutBinding | null;
   reasonCode?: string | null;
 };
+export type VoiceState =
+  | "Idle"
+  | "Starting"
+  | "Recording"
+  | "Transcribing"
+  | "Pasting"
+  | "Disabled"
+  | "Error";
+
 export type VoiceStatePayload = {
-  state: string;
+  state: VoiceState;
   message: string;
   elapsed_ms?: number;
 };
@@ -195,7 +207,7 @@ export type PreInputPayload = {
   sessionId: number;
   seq: number;
   text: string;
-  state: "recording" | "transcribing" | "finalizing" | "dismissing" | "error";
+  state: "starting" | "recording" | "transcribing" | "finalizing" | "dismissing" | "error";
   confirmedChars?: number;
   message?: string;
 };
@@ -254,7 +266,7 @@ export type HotwordState = {
 };
 
 export const defaultConfig: AppConfig = {
-  schema_version: 8,
+  schema_version: 9,
   revision: 0,
   enabled: true,
   shortcut: "左 Ctrl+左 Shift+Space",
@@ -265,6 +277,7 @@ export const defaultConfig: AppConfig = {
     ],
     trigger: { scanCode: 57, extended: false },
   },
+  shortcut_trigger_mode: "hold",
   history_enabled: true,
   incident_recovery_enabled: false,
   incident_consent_version: 0,

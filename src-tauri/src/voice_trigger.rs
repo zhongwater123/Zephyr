@@ -32,6 +32,7 @@ pub enum TriggerSource {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TriggerBehavior {
     PushToTalk,
+    PressToToggle,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -44,10 +45,14 @@ pub struct VoiceActivation {
 
 impl VoiceActivation {
     pub fn shortcut() -> Self {
+        Self::shortcut_for(TriggerBehavior::PushToTalk)
+    }
+
+    pub fn shortcut_for(behavior: TriggerBehavior) -> Self {
         Self {
             id: ActivationId::new(),
             source: TriggerSource::Shortcut,
-            behavior: TriggerBehavior::PushToTalk,
+            behavior,
             intent: ActivationIntent::SmartDictation,
         }
     }
@@ -74,15 +79,32 @@ pub enum BeginRejection {
     ShuttingDown,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Debug)]
+pub struct ActivationCompletionReceipt {
+    response: tokio::sync::oneshot::Receiver<()>,
+}
+
+impl ActivationCompletionReceipt {
+    pub(crate) fn new(response: tokio::sync::oneshot::Receiver<()>) -> Self {
+        Self { response }
+    }
+
+    pub async fn wait(self) {
+        let _ = self.response.await;
+    }
+}
+
+#[derive(Debug)]
+pub struct AcceptedActivation {
+    pub session_id: u64,
+    pub config_revision: u64,
+    pub completion: ActivationCompletionReceipt,
+}
+
+#[derive(Debug)]
 pub enum BeginDecision {
-    Accepted {
-        session_id: u64,
-        config_revision: u64,
-    },
-    Rejected {
-        reason: BeginRejection,
-    },
+    Accepted(AcceptedActivation),
+    Rejected { reason: BeginRejection },
 }
 
 pub struct BeginReceipt {
@@ -128,23 +150,32 @@ mod tests {
         assert_eq!(activation.intent, ActivationIntent::SmartDictation);
     }
 
+    #[test]
+    fn shortcut_activation_can_record_toggle_provenance() {
+        let activation = VoiceActivation::shortcut_for(TriggerBehavior::PressToToggle);
+        assert_eq!(activation.source, TriggerSource::Shortcut);
+        assert_eq!(activation.behavior, TriggerBehavior::PressToToggle);
+    }
+
     #[tokio::test]
     async fn begin_receipt_reports_actor_decision_without_blocking_submission() {
         let (response, result) = tokio::sync::oneshot::channel();
+        let (completion, completion_result) = tokio::sync::oneshot::channel();
         let receipt = BeginReceipt::new(result);
         response
-            .send(BeginDecision::Accepted {
+            .send(BeginDecision::Accepted(AcceptedActivation {
                 session_id: 4,
                 config_revision: 9,
-            })
+                completion: ActivationCompletionReceipt::new(completion_result),
+            }))
             .unwrap();
-        assert_eq!(
-            receipt.wait().await.unwrap(),
-            BeginDecision::Accepted {
-                session_id: 4,
-                config_revision: 9,
-            }
-        );
+        let BeginDecision::Accepted(accepted) = receipt.wait().await.unwrap() else {
+            panic!("expected accepted begin");
+        };
+        assert_eq!(accepted.session_id, 4);
+        assert_eq!(accepted.config_revision, 9);
+        completion.send(()).unwrap();
+        accepted.completion.wait().await;
     }
 
     #[tokio::test]

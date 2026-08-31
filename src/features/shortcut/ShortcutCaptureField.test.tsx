@@ -99,4 +99,26 @@ describe("ShortcutCaptureField", () => {
     expect(screen.getByText("左 Ctrl")).toBeTruthy();
     expect(screen.getByRole("alert").textContent).toContain("仅支持右 Ctrl");
   });
+
+  it("shows the active-session reason and prevents editing", () => {
+    const onStart = vi.fn<StartHandler>();
+    render(
+      <ShortcutCaptureField
+        view={view("idle")}
+        mode="toggle"
+        disabled
+        disabledReason="本次语音结束后可修改快捷键。"
+        onStart={onStart}
+        onCancel={vi.fn()}
+        onKeyDown={vi.fn()}
+        onKeyUp={vi.fn()}
+      />,
+    );
+
+    const field = screen.getByRole("button", { name: /本次语音结束后/ });
+    expect(field).toHaveProperty("disabled", true);
+    expect(screen.getByText("本次语音结束后可修改快捷键。")).toBeTruthy();
+    fireEvent.click(field);
+    expect(onStart).not.toHaveBeenCalled();
+  });
 });

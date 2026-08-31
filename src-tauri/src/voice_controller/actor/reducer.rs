@@ -12,13 +12,10 @@ pub(super) enum Effect {
     Publish,
 }
 
-pub(super) fn begin(
-    runtime: &mut VoiceRuntime,
-    session_id: u64,
-    activation: VoiceActivation,
-    config_revision: u64,
+pub(super) fn validate_begin(
+    runtime: &VoiceRuntime,
     pending_full: bool,
-) -> Result<Vec<Effect>, BeginRejection> {
+) -> Result<(), BeginRejection> {
     if runtime.phase == VoicePhase::ShuttingDown {
         return Err(BeginRejection::ShuttingDown);
     }
@@ -33,6 +30,17 @@ pub(super) fn begin(
     if pending_full {
         return Err(BeginRejection::PendingFull);
     }
+    Ok(())
+}
+
+pub(super) fn begin(
+    runtime: &mut VoiceRuntime,
+    session_id: u64,
+    activation: VoiceActivation,
+    config_revision: u64,
+    pending_full: bool,
+) -> Result<Vec<Effect>, BeginRejection> {
+    validate_begin(runtime, pending_full)?;
     runtime
         .begin(session_id, activation, config_revision)
         .ok_or(BeginRejection::Busy)?;
@@ -40,22 +48,28 @@ pub(super) fn begin(
 }
 
 pub(super) fn finish(runtime: &mut VoiceRuntime, activation_id: &ActivationId) -> Vec<Effect> {
-    match runtime.request_finish(activation_id) {
-        Some(VoicePhase::Stopping) => vec![
-            Effect::StopAudio {
-                session_id: runtime.current_id().expect("current session"),
-            },
-            Effect::Publish,
-        ],
-        Some(VoicePhase::Starting) => vec![Effect::Publish],
+    if !runtime.owns_activation(activation_id) {
+        return Vec::new();
+    }
+    let session_id = runtime.current_id().expect("owned activation");
+    match runtime.phase {
+        VoicePhase::Starting => {
+            runtime.clear_current(session_id);
+            let payload = runtime.machine.complete();
+            runtime.set_payload(payload);
+            vec![Effect::CancelSession { session_id }, Effect::Publish]
+        }
+        VoicePhase::Recording => {
+            runtime.phase = VoicePhase::Stopping;
+            vec![Effect::StopAudio { session_id }, Effect::Publish]
+        }
         _ => Vec::new(),
     }
 }
 
 pub(super) fn start_succeeded(runtime: &mut VoiceRuntime, session_id: u64) -> Vec<Effect> {
     match runtime.mark_recording(session_id) {
-        Some(true) => vec![Effect::StopAudio { session_id }, Effect::Publish],
-        Some(false) => vec![Effect::Publish],
+        Some(()) => vec![Effect::Publish],
         None => vec![Effect::CancelSession { session_id }],
     }
 }
@@ -256,20 +270,24 @@ mod tests {
     use crate::voice_trigger::VoiceActivation;
 
     #[test]
-    fn quick_finish_during_starting_is_deferred_until_start_succeeds() {
+    fn quick_finish_during_starting_cancels_immediately() {
         let mut runtime = VoiceRuntime::new(true, 7);
         let activation = VoiceActivation::shortcut();
         begin(&mut runtime, 11, activation.clone(), 7, false).unwrap();
 
         let finish_effects = finish(&mut runtime, &activation.id);
-        assert_eq!(runtime.phase, VoicePhase::Starting);
-        assert_eq!(finish_effects, vec![Effect::Publish]);
+        assert_eq!(runtime.phase, VoicePhase::Idle);
+        assert_eq!(runtime.current_id(), None);
+        assert_eq!(
+            finish_effects,
+            vec![Effect::CancelSession { session_id: 11 }, Effect::Publish,]
+        );
 
         let started_effects = start_succeeded(&mut runtime, 11);
-        assert_eq!(runtime.phase, VoicePhase::Stopping);
+        assert_eq!(runtime.phase, VoicePhase::Idle);
         assert_eq!(
             started_effects,
-            vec![Effect::StopAudio { session_id: 11 }, Effect::Publish]
+            vec![Effect::CancelSession { session_id: 11 }]
         );
     }
 

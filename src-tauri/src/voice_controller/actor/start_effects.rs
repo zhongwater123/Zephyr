@@ -92,7 +92,17 @@ impl VoiceSessionActor {
                     session_id,
                 );
                 self.schedule_deadline(session_id, deadline);
+                let behavior = self
+                    .runtime
+                    .current
+                    .as_ref()
+                    .map(|current| current.activation.behavior);
                 let effects = reducer::start_succeeded(&mut self.runtime, session_id);
+                if self.runtime.phase == VoicePhase::Recording {
+                    if let Some(behavior) = behavior {
+                        presenter.show_recording(session_id, behavior);
+                    }
+                }
                 self.execute_effects(effects, presenter);
             }
             StartOutcome::Cancelled { .. } => {

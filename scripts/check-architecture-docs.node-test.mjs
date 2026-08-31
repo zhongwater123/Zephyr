@@ -202,6 +202,40 @@ test("automated evidence cannot impersonate required target-environment evidence
   assert.ok(errors.some((error) => error.includes("缺少证据能力 windows_webview2")));
 });
 
+test("quality and usability evidence capabilities are independently traceable", () => {
+  const errors = [];
+  validateFeatureDossiers(
+    [dossier({
+      validationStatus: "validated",
+      validationSlices: [{
+        id: "AC-TEST-01",
+        components: ["frontend.features"],
+        requiredEvidence: ["human_quality_eval", "usability_observation"],
+      }],
+      evidence: [{
+        id: "EV-TEST-QUALITY-01",
+        acceptanceIds: ["AC-TEST-01"],
+        acceptanceCoverage: [{ acceptanceId: "AC-TEST-01", coverage: "full" }],
+        method: "manual",
+        result: "pass",
+        freshness: "current",
+        capabilities: ["human_quality_eval", "usability_observation"],
+        scope: "Paired output review and representative user task",
+        limitations: ["Test fixture only"],
+        sourceRevision: "7026768",
+        worktreeState: "clean",
+        environment: "Node test fixture",
+        validatedAt: "2026-08-26",
+      }],
+    })],
+    validator(),
+    new Set(["frontend.features"]),
+    new Set(["ADR-0010"]),
+    errors,
+  );
+  assert.deepEqual(errors, []);
+});
+
 
 test("proposal references and postmortem normativity are checked", () => {
   const referenceErrors = [];

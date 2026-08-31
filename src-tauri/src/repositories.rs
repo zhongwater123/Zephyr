@@ -54,9 +54,34 @@ pub trait CredentialStore: Send + Sync {
 #[derive(Debug, Default)]
 pub struct WindowsCredentialStore;
 
+fn deployment_asr_api_key() -> Option<String> {
+    option_env!("GY_TYPING_ASR_API_KEY")
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("GY_TYPING_ASR_API_KEY")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
+fn deployment_deepseek_api_key() -> Option<String> {
+    option_env!("GY_TYPING_DEEPSEEK_API_KEY")
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("GY_TYPING_DEEPSEEK_API_KEY")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+}
+
 impl CredentialStore for WindowsCredentialStore {
     fn load_api_key(&self) -> Result<Option<String>, ConfigError> {
-        config::load_api_key()
+        match deployment_asr_api_key() {
+            Some(api_key) => Ok(Some(api_key)),
+            None => config::load_api_key(),
+        }
     }
 
     fn load_app_key(&self) -> Result<Option<String>, ConfigError> {
@@ -68,7 +93,10 @@ impl CredentialStore for WindowsCredentialStore {
     }
 
     fn load_deepseek_api_key(&self) -> Result<Option<String>, ConfigError> {
-        config::load_deepseek_api_key()
+        match deployment_deepseek_api_key() {
+            Some(api_key) => Ok(Some(api_key)),
+            None => config::load_deepseek_api_key(),
+        }
     }
 
     fn update_transactionally(

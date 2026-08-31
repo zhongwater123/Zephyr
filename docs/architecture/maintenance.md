@@ -44,6 +44,7 @@ npm run architecture:impact -- --base origin/main
 - 拟议 C4 或 Runtime View 进入 `docs/architecture/proposals/`，不得进入当前代码地图。
 - 跨边界、长期或难以撤销的决定先创建 Proposed ADR。
 - Open Assumption 可以支持决策，但必须写明风险与可观察的重新评估条件。
+- 快速变化且尚未确认的产品判断记录在 Dossier 可选的`概念迭代记录`，不要塞进验收场景，也不要为了保存每次讨论而创建 ADR。
 - 技术探针和薄实现验证后，方案才能转为 Accepted；Accepted 只表示决策已接受，不表示已经实现。实现与源码核对、登记已知偏差后才更新 Current C4。
 
 ### 3. 实现中：按变更类型复核
@@ -85,6 +86,7 @@ npm run architecture:check
 - `validated` 要求所有关键验收的 requiredEvidence 都有成功、带版本/环境且有效新鲜的证据能力。
 - 普通开发证据记录 revision、worktree、变更路径、环境、日期、scope 和 limitations；发布级证据再记录 build ID 与 artifact SHA-256。
 - 自动化证据必须提供 `testRefs`，并用 `acceptanceCoverage` 逐验收声明完整或部分覆盖；不得用一条笼统的全量测试记录替代不同验收语义。
+- 生成式功能的工程正确性和产品质量分开验证：协议与兜底使用 `automated`，结果质量使用 `human_quality_eval`，用户是否理解和能否预测交互使用 `usability_observation`。
 - 相关源码变化产生 `potentially_stale` 的有效状态；可以重新验证，或提交绑定 revision、切片和理由的 `impactAssessment`。
 
 ## Current 与 Proposed

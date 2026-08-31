@@ -1,9 +1,11 @@
 import type { JSX, RefObject } from "preact";
-import type { AppConfig, AsrOptionPool, ConfigStatus, ConfigValue, VoiceStatePayload } from "../../domain";
+import type { AppConfig, AsrOptionPool, ConfigStatus, ConfigValue, PolishLevel, ShortcutTriggerMode, VoiceStatePayload } from "../../domain";
 import { ShortcutCaptureField } from "../shortcut/ShortcutCaptureField";
+import { ShortcutTriggerModeField } from "../shortcut/ShortcutTriggerModeField";
 import type { ShortcutBindingViewModel } from "../shortcut/useShortcutBindingController";
 import { BehaviorSwitch } from "./BehaviorSwitch";
 import { OptionPoolRenderer } from "./OptionPoolRenderer";
+import { PolishLevelSetting } from "./PolishLevelSetting";
 
 function runtimePresentation(
   config: AppConfig,
@@ -16,10 +18,21 @@ function runtimePresentation(
   if (!config.enabled || status.state === "Disabled") {
     return { label: "已暂停", detail: "开启后即可通过快捷键输入", tone: "paused" };
   }
-  if (status.state === "Recording") return { label: "正在聆听", detail: "松开快捷键后开始识别", tone: "active" };
+  if (status.state === "Starting") return { label: "正在启动", detail: "正在取得麦克风输入", tone: "active" };
+  if (status.state === "Recording") {
+    return {
+      label: "正在聆听",
+      detail: config.shortcut_trigger_mode === "toggle" ? "再次按下快捷键后开始识别" : "松开快捷键后开始识别",
+      tone: "active",
+    };
+  }
   if (status.state === "Transcribing") return { label: "识别中", detail: "正在把语音转换为文字", tone: "active" };
   if (status.state === "Pasting") return { label: "正在输入", detail: "文字即将出现在当前应用", tone: "active" };
-  return { label: "已就绪", detail: "按住快捷键开始说话", tone: "ready" };
+  return {
+    label: "已就绪",
+    detail: config.shortcut_trigger_mode === "toggle" ? "按一下快捷键开始说话" : "按住快捷键开始说话",
+    tone: "ready",
+  };
 }
 
 export function SettingsSidebar({
@@ -33,6 +46,10 @@ export function SettingsSidebar({
   optionSaving,
   optionSavingMap,
   optionErrors,
+  polishSaving,
+  polishError,
+  triggerModeSaving,
+  triggerModeError,
   enabledSaving,
   enabledError,
   menuRef,
@@ -45,6 +62,8 @@ export function SettingsSidebar({
   onShortcutKeyDown,
   onShortcutKeyUp,
   onOption,
+  onPolishLevel,
+  onTriggerMode,
   onLaunch,
 }: {
   open: boolean;
@@ -57,6 +76,10 @@ export function SettingsSidebar({
   optionSaving: boolean;
   optionSavingMap: Record<string, boolean>;
   optionErrors: Record<string, string>;
+  polishSaving: boolean;
+  polishError: string;
+  triggerModeSaving: boolean;
+  triggerModeError: string;
   enabledSaving: boolean;
   enabledError: string;
   menuRef: RefObject<HTMLButtonElement>;
@@ -69,9 +92,14 @@ export function SettingsSidebar({
   onShortcutKeyDown: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
   onShortcutKeyUp: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
   onOption: (optionId: string, value: ConfigValue) => void;
+  onPolishLevel: (level: PolishLevel) => void;
+  onTriggerMode: (mode: ShortcutTriggerMode) => void;
   onLaunch: (panel: "personalization" | "more_settings") => void;
 }) {
   const runtime = runtimePresentation(config, configStatus, voiceStatus);
+  const voiceControlsLocked = ["Starting", "Recording", "Transcribing", "Pasting"].includes(
+    voiceStatus.state,
+  );
 
   return (
     <aside id="config-drawer" className={"settings-sidebar " + (open ? "is-open" : "")} aria-hidden={!open}>
@@ -104,12 +132,23 @@ export function SettingsSidebar({
           {enabledError ? <p className="field-error" role="alert">{enabledError}</p> : null}
         </section>
 
+        <ShortcutTriggerModeField
+          value={config.shortcut_trigger_mode}
+          saving={triggerModeSaving}
+          disabled={voiceControlsLocked}
+          error={triggerModeError}
+          onChange={onTriggerMode}
+        />
+
         <ShortcutCaptureField
           view={shortcutView}
           onStart={onShortcutCapture}
           onCancel={onShortcutCancel}
           onKeyDown={onShortcutKeyDown}
           onKeyUp={onShortcutKeyUp}
+          mode={config.shortcut_trigger_mode}
+          disabled={voiceControlsLocked}
+          disabledReason={voiceControlsLocked ? "本次语音结束后可修改快捷键。" : ""}
         />
 
         <OptionPoolRenderer
@@ -118,7 +157,14 @@ export function SettingsSidebar({
           savingOptions={optionSavingMap}
           errors={optionErrors}
           onChange={onOption}
-        />
+        >
+          <PolishLevelSetting
+            value={config.polish_level}
+            saving={polishSaving}
+            error={polishError}
+            onChange={onPolishLevel}
+          />
+        </OptionPoolRenderer>
 
         <section className="launch-section" aria-labelledby="launch-title">
           <div className="section-heading">

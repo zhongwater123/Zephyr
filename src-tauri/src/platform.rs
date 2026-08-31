@@ -71,7 +71,7 @@ impl NativeConfirmation for WindowsNativeConfirmation {
                 window,
                 "授权新的凭据接收主机",
                 &format!(
-                    "GY Typing 即将向以下新主机发送 {purpose_label} 凭据：\n\n{origin}\n\n该主机可能读取并使用你的密钥。是否授权？"
+                    "Zephyr 即将向以下新主机发送 {purpose_label} 凭据：\n\n{origin}\n\n该主机可能读取并使用你的密钥。是否授权？"
                 ),
             )
         }
@@ -96,7 +96,7 @@ impl NativeConfirmation for WindowsNativeConfirmation {
                 window,
                 "剪贴板兼容模式风险确认",
                 &format!(
-                    "是否为 {executable_name} 启用剪贴板兼容模式？\n\n该模式会临时替换系统剪贴板并发送 Ctrl+V。GY Typing 只会在取得完整 OLE IDataObject 快照、目标身份仍有效且剪贴板 sequence 未变化时执行和恢复；否则结果进入待处理区。"
+                    "是否为 {executable_name} 启用剪贴板兼容模式？\n\n该模式会临时替换系统剪贴板并发送 Ctrl+V。Zephyr 只会在取得完整 OLE IDataObject 快照、目标身份仍有效且剪贴板 sequence 未变化时执行和恢复；否则结果进入待处理区。"
                 ),
             )
         }

@@ -25,7 +25,9 @@ use crate::inject::{InjectionMethod, TextInjector, UnicodeTextInjector};
 use crate::pending_output_service::{PendingOutputService, PendingOutputServiceError};
 use crate::services::AppServices;
 use crate::state::{ReleaseDecision, VoiceState};
-use crate::voice_trigger::{BeginDecision, VoiceActivation};
+use crate::voice_trigger::{
+    AcceptedActivation, ActivationCompletionReceipt, ActivationId, BeginDecision, VoiceActivation,
+};
 use reducer::Effect;
 use runtime::{VoicePhase, VoiceRuntime};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,6 +67,7 @@ pub(super) struct VoiceSessionActor {
     resources: Option<SessionResources>,
     finalizing_cancellation: Option<(u64, Arc<SessionCancellation>)>,
     pending_operation: Option<PendingOperation>,
+    active_completion: Option<(ActivationId, oneshot::Sender<()>)>,
 }
 
 pub(super) fn build_actor(
@@ -97,6 +100,7 @@ pub(super) fn build_actor(
             resources: None,
             finalizing_cancellation: None,
             pending_operation: None,
+            active_completion: None,
         },
         status_rx,
     )
@@ -134,6 +138,7 @@ impl VoiceSessionActor {
                     }
                 }
             };
+            self.reconcile_activation_completion();
             self.status_tx.send_replace(self.runtime.snapshot());
             if !keep_running {
                 break;
@@ -262,13 +267,22 @@ impl VoiceSessionActor {
         presenter: &VoicePresenter,
     ) {
         if self.pending_operation.is_some() {
+            presenter.show_begin_rejection(crate::voice_trigger::BeginRejection::Busy);
             let _ = response.send(BeginDecision::Rejected {
                 reason: crate::voice_trigger::BeginRejection::Busy,
             });
             return;
         }
         let config = self.services.config.snapshot();
+        if let Err(reason) = reducer::validate_begin(&self.runtime, self.pending.is_full()) {
+            if self.runtime.current.is_none() {
+                presenter.show_begin_rejection(reason.clone());
+            }
+            let _ = response.send(BeginDecision::Rejected { reason });
+            return;
+        }
         let session_id = presenter.begin_session();
+        let activation_id = activation.id.clone();
         let intent = activation.intent;
         let effects = match reducer::begin(
             &mut self.runtime,
@@ -279,6 +293,7 @@ impl VoiceSessionActor {
         ) {
             Ok(effects) => effects,
             Err(reason) => {
+                presenter.show_begin_rejection(reason.clone());
                 let _ = response.send(BeginDecision::Rejected { reason });
                 return;
             }
@@ -296,12 +311,33 @@ impl VoiceSessionActor {
             .as_ref()
             .map(|current| current.config_revision)
             .unwrap_or(self.runtime.desired_revision);
-        let _ = response.send(BeginDecision::Accepted {
+        let (completion, completion_result) = oneshot::channel();
+        self.active_completion = Some((activation_id, completion));
+        let _ = response.send(BeginDecision::Accepted(AcceptedActivation {
             session_id,
             config_revision,
-        });
-        presenter.show_recording(session_id);
+            completion: ActivationCompletionReceipt::new(completion_result),
+        }));
+        presenter.show_starting(session_id);
         self.execute_effects(effects, presenter);
+    }
+
+    fn reconcile_activation_completion(&mut self) {
+        reconcile_activation_completion(&mut self.active_completion, &self.runtime);
+    }
+}
+
+fn reconcile_activation_completion(
+    active_completion: &mut Option<(ActivationId, oneshot::Sender<()>)>,
+    runtime: &VoiceRuntime,
+) {
+    let completed = active_completion
+        .as_ref()
+        .is_some_and(|(activation_id, _)| !runtime.owns_activation(activation_id));
+    if completed {
+        if let Some((_, completion)) = active_completion.take() {
+            let _ = completion.send(());
+        }
     }
 }
 
@@ -344,5 +380,30 @@ mod tests {
             super::super::contract::VoiceAvailability::Available
         );
         assert_eq!(snapshot.shortcut_error.as_deref(), Some("hook failed"));
+    }
+
+    #[test]
+    fn activation_completion_fires_only_after_runtime_releases_the_activation() {
+        let mut runtime = VoiceRuntime::new(true, 3);
+        let activation = VoiceActivation::shortcut();
+        let activation_id = activation.id.clone();
+        runtime.begin(5, activation, 3).unwrap();
+        let (completion, mut result) = oneshot::channel();
+        let mut active_completion = Some((activation_id.clone(), completion));
+
+        reconcile_activation_completion(&mut active_completion, &runtime);
+        assert!(matches!(
+            result.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ));
+
+        let effects = reducer::cancel(&mut runtime, &activation_id);
+        assert_eq!(
+            effects,
+            vec![Effect::CancelSession { session_id: 5 }, Effect::Publish,]
+        );
+        reconcile_activation_completion(&mut active_completion, &runtime);
+        assert_eq!(result.try_recv(), Ok(()));
+        assert!(active_completion.is_none());
     }
 }

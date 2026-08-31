@@ -1,10 +1,10 @@
 import type { JSX } from "preact";
 import { useEffect, useRef } from "preact/hooks";
 import type { ShortcutBindingViewModel } from "./useShortcutBindingController";
+import type { ShortcutTriggerMode } from "../../domain";
 
 const TEXT = {
   title: "语音输入快捷键",
-  idleHelp: "按住快捷键开始语音输入，松开后结束。",
   captureHelp: "直接按下新的组合键，主键按下后自动保存。",
 
   currentLabel: "当前快捷键",
@@ -18,12 +18,18 @@ export function ShortcutCaptureField({
   onCancel,
   onKeyDown,
   onKeyUp,
+  mode = "hold",
+  disabled = false,
+  disabledReason = "",
 }: {
   view: ShortcutBindingViewModel;
   onStart: () => void;
   onCancel: (source?: string) => void;
   onKeyDown: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
   onKeyUp: (event: JSX.TargetedKeyboardEvent<HTMLButtonElement>) => void;
+  mode?: ShortcutTriggerMode;
+  disabled?: boolean;
+  disabledReason?: string;
 }) {
   const fieldRef = useRef<HTMLButtonElement>(null);
   const onCancelRef = useRef(onCancel);
@@ -36,15 +42,20 @@ export function ShortcutCaptureField({
     .split("+")
     .map((key) => key.trim())
     .filter(Boolean);
-  const help = view.isCapturing ? TEXT.captureHelp : TEXT.idleHelp;
+  const idleHelp =
+    mode === "toggle"
+      ? "按一下快捷键开始语音输入，再按一下结束。"
+      : "按住快捷键开始语音输入，松开后结束。";
+  const help = view.isCapturing ? TEXT.captureHelp : disabledReason || idleHelp;
 
   function startAndFocus() {
+    if (disabled) return;
     onStart();
     window.requestAnimationFrame(() => fieldRef.current?.focus());
   }
 
   function handlePointerDown(event: JSX.TargetedPointerEvent<HTMLButtonElement>) {
-    if (view.committing) {
+    if (view.committing || disabled) {
       event.preventDefault();
       event.stopPropagation();
       return;
@@ -66,13 +77,13 @@ export function ShortcutCaptureField({
       event.stopPropagation();
       return;
     }
-    if (view.committing) return;
+    if (view.committing || disabled) return;
     if (view.isCapturing) onCancel();
     else startAndFocus();
   }
 
   function handleFocus() {
-    if (view.phase === "idle" || view.phase === "error") onStart();
+    if (!disabled && (view.phase === "idle" || view.phase === "error")) onStart();
   }
 
   function handleBlur() {
@@ -89,6 +100,10 @@ export function ShortcutCaptureField({
     document.addEventListener("pointerdown", cancelOnOutsidePointer, true);
     return () => document.removeEventListener("pointerdown", cancelOnOutsidePointer, true);
   }, [view.isCapturing]);
+
+  useEffect(() => {
+    if (disabled && view.isCapturing) onCancelRef.current("voice_active");
+  }, [disabled, view.isCapturing]);
 
   return (
     <section
@@ -116,6 +131,8 @@ export function ShortcutCaptureField({
         aria-label={
           view.isCapturing
             ? "正在录入快捷键，再次点击或按 Escape 取消"
+            : disabled
+              ? "本次语音结束后才可以修改快捷键"
             : view.committing
               ? "正在应用快捷键"
               : TEXT.currentLabel + " " + view.activeLabel + "，" + TEXT.resetLabel
@@ -123,7 +140,7 @@ export function ShortcutCaptureField({
         aria-pressed={view.isCapturing}
         aria-busy={view.committing}
         aria-invalid={issue}
-        disabled={view.committing}
+        disabled={view.committing || disabled}
         onPointerDown={handlePointerDown}
         onClick={handleClick}
         onFocus={handleFocus}

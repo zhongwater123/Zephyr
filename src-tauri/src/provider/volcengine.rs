@@ -76,7 +76,7 @@ impl VolcengineRuntimeProfile {
             auth_mode: match deployment_value(
                 "GY_TYPING_ASR_AUTH_MODE",
                 option_env!("GY_TYPING_ASR_AUTH_MODE"),
-                "app_access",
+                "api_key",
             )
             .as_str()
             {
@@ -1519,6 +1519,26 @@ mod tests {
             Err(ProviderError::InvalidConfiguration(message))
                 if message.contains("access credential")
         ));
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live Volcengine credentials and network access"]
+    async fn live_deployment_api_key_completes_raw_websocket_handshake() {
+        let api_key = option_env!("GY_TYPING_ASR_API_KEY")
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| std::env::var("GY_TYPING_ASR_API_KEY").ok())
+            .expect("GY_TYPING_ASR_API_KEY must be available");
+        let adapter = VolcengineAdapter::new(
+            VolcengineRuntimeProfile::from_deployment(),
+            behavior_config(),
+            VolcengineAuth {
+                api_key: Some(api_key),
+                ..VolcengineAuth::default()
+            },
+        );
+
+        adapter.probe_connection().await.unwrap();
     }
 
     #[test]

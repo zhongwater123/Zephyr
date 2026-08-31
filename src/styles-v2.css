@@ -381,6 +381,82 @@
   padding: 10px 4px 12px;
 }
 
+.shortcut-mode-setting {
+  min-width: 0;
+  margin: 0 0 4px;
+  border: 0;
+  border-bottom: 1px solid var(--z-line);
+  padding: 10px 4px 14px;
+}
+
+.shortcut-mode-setting legend {
+  padding: 0;
+  color: var(--z-text);
+  font-size: 13px;
+  font-weight: 680;
+}
+
+.shortcut-mode-setting > p {
+  margin: 4px 0 10px;
+  color: var(--z-muted);
+  font-size: 12px;
+}
+
+.shortcut-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.shortcut-mode-option {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border: 1px solid var(--z-line);
+  border-radius: 10px;
+  background: rgba(255, 255, 252, 0.54);
+  padding: 9px;
+  cursor: pointer;
+}
+
+.shortcut-mode-option.is-selected {
+  border-color: color-mix(in srgb, var(--z-accent) 62%, var(--z-line));
+  background: color-mix(in srgb, var(--z-accent) 8%, rgba(255, 255, 252, 0.8));
+}
+
+.shortcut-mode-option input {
+  margin: 2px 0 0;
+  accent-color: var(--z-accent);
+}
+
+.shortcut-mode-option strong,
+.shortcut-mode-option small,
+.shortcut-mode-lock,
+.shortcut-mode-saving {
+  display: block;
+}
+
+.shortcut-mode-option strong {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.shortcut-mode-option small,
+.shortcut-mode-lock,
+.shortcut-mode-saving {
+  margin-top: 3px;
+  color: var(--z-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.shortcut-mode-setting:disabled .shortcut-mode-option {
+  cursor: default;
+  opacity: 0.65;
+}
+
 .shortcut-setting-copy {
   min-width: 0;
 }
@@ -506,6 +582,10 @@
 }
 
 @media (max-width: 420px) {
+  .shortcut-mode-options {
+    grid-template-columns: 1fr;
+  }
+
   .shortcut-setting {
     grid-template-columns: 1fr;
   }
@@ -799,51 +879,81 @@
   margin-bottom: 20px;
 }
 
-.polish-level-selector {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 18px;
+.polish-setting {
+  margin-top: 6px;
+  padding: 18px 14px 14px;
+  border-top: 1px solid rgba(31, 43, 53, 0.085);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(31, 113, 129, 0.075), rgba(255, 255, 252, 0.7));
 }
 
-.polish-level-selector button {
+.polish-setting-heading {
   display: grid;
-  gap: 7px;
-  min-height: 118px;
-  padding: 16px;
-  text-align: left;
+  gap: 3px;
+}
+
+.polish-setting-heading strong {
   color: var(--z-text);
-  background: var(--z-surface);
-  border: 1px solid var(--z-line);
-  border-radius: var(--z-control-radius);
+  font-size: 14px;
+}
+
+.polish-setting-heading span,
+.polish-setting-intro,
+.polish-setting-result span {
+  color: var(--z-text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.polish-setting-intro {
+  margin: 8px 0 14px;
+}
+
+.polish-range {
+  width: 100%;
+  margin: 0;
+  accent-color: var(--z-accent);
   cursor: pointer;
-  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
 
-.polish-level-selector button:hover:not(:disabled) {
-  transform: translateY(-1px);
-  border-color: var(--z-line-strong);
-}
-
-.polish-level-selector button.is-active {
-  border-color: var(--z-accent);
-  background: rgba(31, 113, 129, 0.09);
-  box-shadow: 0 0 0 1px rgba(31, 113, 129, 0.12);
-}
-
-.polish-level-selector button:disabled {
+.polish-range:disabled {
   cursor: wait;
   opacity: 0.58;
 }
 
-.polish-level-selector strong {
-  font-size: 15px;
+.polish-range-labels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 4px;
+  color: var(--z-text-muted);
+  font-size: 11px;
 }
 
-.polish-level-selector span {
-  color: var(--z-text-muted);
-  font-size: 13px;
-  line-height: 1.55;
+.polish-range-labels span:nth-child(2) {
+  text-align: center;
+}
+
+.polish-range-labels span:last-child {
+  text-align: right;
+}
+
+.polish-range-labels span.is-active {
+  color: var(--z-accent);
+  font-weight: 680;
+}
+
+.polish-setting-result {
+  display: grid;
+  gap: 2px;
+  margin: 13px 0 0;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: rgba(255, 255, 252, 0.72);
+}
+
+.polish-setting-result strong {
+  color: var(--z-text);
+  font-size: 12px;
 }
 
 .profile-override-add {
@@ -1306,10 +1416,6 @@
   .app-context-create {
     grid-template-columns: 1fr;
   }
-  .polish-level-selector {
-    grid-template-columns: 1fr;
-  }
-
 
   .profile-override-add {
     grid-template-columns: 1fr;

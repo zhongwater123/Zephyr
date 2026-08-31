@@ -9,6 +9,7 @@ import {
   type AppConfig,
   type ConfigStatus,
   type PolishLevel,
+  type ShortcutTriggerMode,
   type EndpointPurpose,
   type VoiceStatePayload,
 } from "../domain";
@@ -48,7 +49,7 @@ function normalizePolishLevel(value: number | undefined): PolishLevel {
 function normalizeConfig(next: AppConfig): AppConfig {
   return {
     ...next,
-    schema_version: next.schema_version ?? 8,
+    schema_version: next.schema_version ?? 9,
     revision: next.revision ?? 0,
     trusted_endpoints: next.trusted_endpoints ?? [],
     injection_overrides: next.injection_overrides ?? [],
@@ -65,6 +66,7 @@ function normalizeConfig(next: AppConfig): AppConfig {
     hotword_agent_base_url: next.hotword_agent_base_url || "https://api.deepseek.com",
     hotword_agent_model: next.hotword_agent_model || "deepseek-v4-flash",
     polish_level: normalizePolishLevel(next.polish_level),
+    shortcut_trigger_mode: next.shortcut_trigger_mode === "toggle" ? "toggle" : "hold",
     asr: next.asr ?? defaultConfig.asr,
   };
 }
@@ -93,6 +95,8 @@ export function AppShell() {
   const [providerTestState, setProviderTestState] = useState("");
   const [polishSaving, setPolishSaving] = useState(false);
   const [polishError, setPolishError] = useState("");
+  const [triggerModeSaving, setTriggerModeSaving] = useState(false);
+  const [triggerModeError, setTriggerModeError] = useState("");
   const [organizerTestState, setOrganizerTestState] = useState("");
 
   const menuRef = useRef<HTMLButtonElement>(null);
@@ -404,6 +408,35 @@ export function AppShell() {
     }
   }
 
+  async function saveShortcutTriggerMode(mode: ShortcutTriggerMode) {
+    if (triggerModeSaving || mode === config.shortcut_trigger_mode) return;
+    const previous = config;
+    setTriggerModeError("");
+    setTriggerModeSaving(true);
+    setConfig((current) => ({ ...current, shortcut_trigger_mode: mode }));
+    try {
+      const saved = normalizeConfig(await configApi.setShortcutTriggerMode({
+        mode,
+        expectedRevision: previous.revision,
+      }));
+      setConfig(saved);
+    } catch (error) {
+      const conflict = conflictConfig(error);
+      if (conflict) {
+        setConfig(normalizeConfig(conflict));
+      } else {
+        try {
+          setConfig(normalizeConfig(await configApi.get()));
+        } catch {
+          setConfig(previous);
+        }
+      }
+      setTriggerModeError(configMutation.describeError(error));
+    } finally {
+      setTriggerModeSaving(false);
+    }
+  }
+
   async function revokeTrustedEndpoint(origin: string, purpose: EndpointPurpose) {
     try {
       setConfig(normalizeConfig(await configApi.revokeEndpoint({
@@ -466,7 +499,7 @@ export function AppShell() {
 
   async function copyDiagnostics() {
     const details = [
-      "Zephyr v0.1.0",
+      "Zephyr v0.1.1",
       "语音服务：" + configStatus.provider_message,
       "运行状态：" + voiceStatus.state + " / " + voiceStatus.message,
       "智能整理：" + (hotwordState?.last_error || "无最近错误"),
@@ -502,7 +535,12 @@ export function AppShell() {
 
       <section className="zephyr-stage" onClick={() => drawerOpen && closeDrawer()}>
         <Suspense fallback={null}>
-          <ZephyrAsciiField state={voiceStatus.state} muted={overlayOpen} shortcut={config.shortcut} />
+          <ZephyrAsciiField
+            state={voiceStatus.state}
+            muted={overlayOpen}
+            shortcut={config.shortcut}
+            triggerMode={config.shortcut_trigger_mode}
+          />
         </Suspense>
         <button
           ref={menuRef}
@@ -531,6 +569,10 @@ export function AppShell() {
         optionSaving={asrOptionSaving}
         optionSavingMap={asrSavingOptions}
         optionErrors={asrOptionErrors}
+        polishSaving={polishSaving}
+        polishError={polishError}
+        triggerModeSaving={triggerModeSaving}
+        triggerModeError={triggerModeError}
         enabledSaving={enabledSaving}
         enabledError={enabledError}
         menuRef={menuRef}
@@ -545,6 +587,8 @@ export function AppShell() {
         onOption={(optionId, value) => {
           void setAsrOption(optionId, value).then(() => configApi.get().then((next) => setConfig(normalizeConfig(next))));
         }}
+        onPolishLevel={(level) => void savePolishLevel(level)}
+        onTriggerMode={(mode) => void saveShortcutTriggerMode(mode)}
         onLaunch={openPanel}
       />
 
@@ -632,8 +676,6 @@ export function AppShell() {
             historyError={historyError}
             incidentRecoverySaving={incidentRecoverySaving}
             incidentRecoveryError={incidentRecoveryError}
-            polishSaving={polishSaving}
-            polishError={polishError}
             diagnosticMessage={notice}
             providerTestState={providerTestState}
             organizerTestState={organizerTestState}
@@ -652,7 +694,6 @@ export function AppShell() {
             onIncidentRecoveryEnabled={(enabled) => void setIncidentRecoveryEnabled(enabled)}
             onRevokeEndpoint={(origin) => void revokeTrustedEndpoint(origin, "hotword_agent")}
             onCopyDiagnostics={() => void copyDiagnostics()}
-            onPolishLevel={(level) => void savePolishLevel(level)}
           />
         </ModalShell>
       ) : null}

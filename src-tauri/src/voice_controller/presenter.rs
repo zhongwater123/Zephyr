@@ -1,8 +1,10 @@
 use crate::overlay::{self, PreInputPayload, PreInputState};
 use crate::state::{VoiceState, VoiceStatePayload};
+use crate::voice_trigger::{BeginRejection, TriggerBehavior};
 use tauri::{AppHandle, Emitter, Manager};
 
 const VOICE_STATE_EVENT: &str = "voice_state_changed";
+const TRANSIENT_REJECTION_MS: u64 = 1200;
 
 #[derive(Clone)]
 pub(super) struct VoicePresenter {
@@ -24,8 +26,26 @@ impl VoicePresenter {
         overlay::begin_preinput_session()
     }
 
-    pub(super) fn show_recording(&self, session_id: u64) {
+    pub(super) fn show_starting(&self, session_id: u64) {
         overlay::show_preinput(
+            &self.app,
+            PreInputPayload {
+                session_id,
+                seq: 0,
+                text: String::new(),
+                state: PreInputState::Starting,
+                confirmed_chars: Some(0),
+                message: Some("正在启动麦克风".to_string()),
+            },
+        );
+    }
+
+    pub(super) fn show_recording(&self, session_id: u64, behavior: TriggerBehavior) {
+        let message = match behavior {
+            TriggerBehavior::PushToTalk => "正在聆听，松开结束",
+            TriggerBehavior::PressToToggle => "正在聆听，再按一次结束",
+        };
+        overlay::update_preinput(
             &self.app,
             PreInputPayload {
                 session_id,
@@ -33,9 +53,36 @@ impl VoicePresenter {
                 text: String::new(),
                 state: PreInputState::Recording,
                 confirmed_chars: Some(0),
-                message: Some("正在聆听".to_string()),
+                message: Some(message.to_string()),
             },
         );
+    }
+
+    pub(super) fn show_begin_rejection(&self, reason: BeginRejection) {
+        let message = match reason {
+            BeginRejection::Disabled => "语音输入已暂停",
+            BeginRejection::Busy => "上一轮语音仍在处理中",
+            BeginRejection::PendingFull => "待处理结果已满，请先处理",
+            BeginRejection::ShuttingDown => "语音输入正在关闭",
+        }
+        .to_string();
+        let session_id = self.begin_session();
+        overlay::show_preinput(
+            &self.app,
+            PreInputPayload {
+                session_id,
+                seq: 0,
+                text: String::new(),
+                state: PreInputState::Error,
+                confirmed_chars: Some(0),
+                message: Some(message),
+            },
+        );
+        let app = self.app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(TRANSIENT_REJECTION_MS)).await;
+            overlay::hide_preinput_for_session(&app, session_id);
+        });
     }
 
     pub(super) fn show_finalizing(&self, session_id: u64, text: String, message: &str) {

@@ -6,6 +6,7 @@ pub const MIN_RECORDING_MS: u128 = 300;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub enum VoiceState {
     Idle,
+    Starting,
     Recording,
     Transcribing,
     Pasting,
@@ -71,14 +72,22 @@ impl AppStateMachine {
     }
 
     pub fn activation_started(&mut self) -> Option<VoiceStatePayload> {
-        if !self.enabled || self.state == VoiceState::Recording {
+        if !self.enabled || matches!(self.state, VoiceState::Starting | VoiceState::Recording) {
             return None;
         }
         if self.state != VoiceState::Idle {
             return None;
         }
+        self.state = VoiceState::Starting;
+        Some(self.payload("正在启动麦克风", None))
+    }
+
+    pub fn activation_ready(&mut self, message: impl Into<String>) -> Option<VoiceStatePayload> {
+        if !self.enabled || self.state != VoiceState::Starting {
+            return None;
+        }
         self.state = VoiceState::Recording;
-        Some(self.payload("正在听", None))
+        Some(self.payload(message, None))
     }
 
     pub fn activation_finished(&mut self, duration: Duration) -> ReleaseDecision {
@@ -147,15 +156,16 @@ mod tests {
         let first = machine.activation_started();
         let second = machine.activation_started();
 
-        assert_eq!(first.unwrap().state, VoiceState::Recording);
+        assert_eq!(first.unwrap().state, VoiceState::Starting);
         assert!(second.is_none());
-        assert_eq!(machine.state(), &VoiceState::Recording);
+        assert_eq!(machine.state(), &VoiceState::Starting);
     }
 
     #[test]
     fn release_after_minimum_duration_enters_transcribing() {
         let mut machine = AppStateMachine::new();
         machine.activation_started();
+        machine.activation_ready("正在聆听").unwrap();
 
         let decision = machine.activation_finished(Duration::from_millis(450));
 
@@ -176,6 +186,7 @@ mod tests {
     fn short_recording_is_cancelled_without_error() {
         let mut machine = AppStateMachine::new();
         machine.activation_started();
+        machine.activation_ready("正在聆听").unwrap();
 
         let decision = machine.activation_finished(Duration::from_millis(120));
 

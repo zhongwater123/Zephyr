@@ -16,7 +16,7 @@ const KEYRING_ACCESS_KEY_USER: &str = "transcription-access-key";
 const KEYRING_DEEPSEEK_SHARED_API_KEY_USER: &str = "hotword-agent-api-key";
 const DEFAULT_HOTWORD_AGENT_BASE_URL: &str = "https://api.deepseek.com";
 const DEFAULT_HOTWORD_AGENT_MODEL: &str = "deepseek-v4-flash";
-pub const CURRENT_SCHEMA_VERSION: u32 = 8;
+pub const CURRENT_SCHEMA_VERSION: u32 = 9;
 pub const DEFAULT_POLISH_LEVEL: u8 = 2;
 const OFFICIAL_HOTWORD_ORIGIN: &str = "https://api.deepseek.com:443";
 
@@ -57,6 +57,14 @@ pub struct TrustedEndpoint {
 pub enum InjectionStrategy {
     Unicode,
     ClipboardCompatibility,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShortcutTriggerMode {
+    #[default]
+    Hold,
+    Toggle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,6 +115,8 @@ pub struct AppConfig {
     pub shortcut: String,
     #[serde(default)]
     pub shortcut_binding: Option<ShortcutBinding>,
+    #[serde(default)]
+    pub shortcut_trigger_mode: ShortcutTriggerMode,
     #[serde(default = "default_asr_config")]
     pub asr: ProviderConfigEnvelope,
     #[serde(default = "default_history_enabled")]
@@ -149,6 +159,7 @@ impl Default for AppConfig {
             enabled: true,
             shortcut: default_shortcut(),
             shortcut_binding: Some(ShortcutBinding::default_physical()),
+            shortcut_trigger_mode: ShortcutTriggerMode::Hold,
             asr: default_asr_config(),
             history_enabled: true,
             incident_recovery_enabled: false,
@@ -755,6 +766,39 @@ mod tests {
         legacy["polish_level"] = 9.into();
         fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         assert_eq!(read_and_migrate_config(&path).unwrap().polish_level, 2);
+    }
+
+    #[test]
+    fn legacy_config_without_shortcut_trigger_mode_defaults_to_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let mut legacy = serde_json::to_value(AppConfig::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("shortcut_trigger_mode");
+        legacy["schema_version"] = 8.into();
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+
+        let config = read_and_migrate_config(&path).unwrap();
+
+        assert_eq!(config.schema_version, CURRENT_SCHEMA_VERSION);
+        assert_eq!(config.shortcut_trigger_mode, ShortcutTriggerMode::Hold);
+    }
+
+    #[test]
+    fn toggle_shortcut_trigger_mode_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let config = AppConfig {
+            shortcut_trigger_mode: ShortcutTriggerMode::Toggle,
+            ..AppConfig::default()
+        };
+
+        save_config_to_path(&path, &config).unwrap();
+        let loaded = load_config_from_path(&path).unwrap();
+
+        assert_eq!(loaded.shortcut_trigger_mode, ShortcutTriggerMode::Toggle);
     }
 
     #[test]

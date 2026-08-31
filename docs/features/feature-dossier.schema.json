@@ -90,7 +90,7 @@
             "minItems": 1,
             "uniqueItems": true,
             "items": {
-              "enum": ["static_review", "automated", "windows_webview2", "runtime_hook", "fault_injection", "restart_persistence", "external_app_interop", "release_artifact"]
+              "enum": ["static_review", "automated", "windows_webview2", "runtime_hook", "fault_injection", "restart_persistence", "external_app_interop", "human_quality_eval", "usability_observation", "release_artifact"]
             }
           }
         }
@@ -146,7 +146,7 @@
             "minItems": 1,
             "uniqueItems": true,
             "items": {
-              "enum": ["static_review", "automated", "windows_webview2", "runtime_hook", "fault_injection", "restart_persistence", "external_app_interop", "release_artifact"]
+              "enum": ["static_review", "automated", "windows_webview2", "runtime_hook", "fault_injection", "restart_persistence", "external_app_interop", "human_quality_eval", "usability_observation", "release_artifact"]
             }
           },
           "scope": { "type": "string", "minLength": 1 },

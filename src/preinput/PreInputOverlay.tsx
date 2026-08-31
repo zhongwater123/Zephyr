@@ -44,6 +44,15 @@ export function PreInputOverlay() {
   const previousRevealSessionRef = useRef<number | null>(null);
   const previousRevealTextRef = useRef("");
   const text = payload.text || "";
+  const statusLabel =
+    payload.message
+    ?? (payload.state === "starting"
+      ? "正在启动麦克风"
+      : payload.state === "recording"
+        ? "正在聆听"
+        : payload.state === "error"
+          ? "语音输入失败"
+          : "正在识别");
   const segments = getPreInputTextSegments(text, payload.confirmedChars);
   const previousText =
     previousRevealSessionRef.current === payload.sessionId ? previousRevealTextRef.current : "";
@@ -143,7 +152,7 @@ export function PreInputOverlay() {
       aria-label="语音预输入"
     >
       <div className="preinput-text" role="status" aria-live="polite">
-        <RoseCurveLoader compact={Boolean(text)} />
+        <RoseCurveLoader compact={Boolean(text)} label={statusLabel} />
         {text ? (
           <span ref={textViewportRef} className="preinput-text__copy">
             <span className="preinput-text__content">

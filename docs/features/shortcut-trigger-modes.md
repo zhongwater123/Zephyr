@@ -9,20 +9,16 @@
     "sourceRef": "Codex task: user requested selectable hold-to-talk and press-to-toggle shortcut modes, then explicitly asked to record the refined user-side acceptance contract in the documentation system on 2026-08-28"
   },
   "specStatus": "confirmed",
-  "implementationStatus": "not_started",
-  "validationStatus": "unverified",
+  "implementationStatus": "implemented",
+  "validationStatus": "partial",
   "implementationReview": {
-    "status": "unreviewed",
-    "sourceRevision": "c4c3cac5a6680084c607b360eb794987a1e4c831",
+    "status": "conformant",
+    "sourceRevision": "b5929f21cee3329d80e732a3fa2ed86ff6035f5c",
     "worktreeState": "dirty",
-    "changedPaths": ["src-tauri/src/config.rs", "src-tauri/src/voice_controller", "src-tauri/src/voice_trigger.rs", "src-tauri/src/streaming_pipeline.rs", "src/app/AppShellV2.tsx", "src/domain.ts"],
+    "changedPaths": ["src-tauri/src/config.rs", "src-tauri/src/commands/config.rs", "src-tauri/src/shortcut_manager", "src-tauri/src/voice_controller", "src-tauri/src/voice_trigger.rs", "src-tauri/src/state.rs", "src-tauri/src/overlay.rs", "src/app/AppShellV2.tsx", "src/features/shortcut", "src/features/settings", "src/preinput", "src/domain.ts", "src/ipc/client.ts"],
     "reviewedAt": "2026-08-28",
-    "summary": "现有生产路径只实现按住说话；可选择的点击切换模式、配置持久化、模式化提示与目标环境验收尚未实现。现有统一 begin/finish/cancel 控制面可以复用，但不能据此声称触发模式功能已经存在。",
-    "knownDeviations": [
-      "VoiceActivation.TriggerBehavior 当前只有 PushToTalk，且除构造和测试外没有运行时策略消费者；真正的 Pressed/Released 映射仍硬编码在 ShortcutManager。",
-      "ShortcutManager 当前只确认 Begin 已成功入队，不消费 BeginReceipt 的 Accepted/Rejected 决策；若直接增加 Toggle，本地状态可能在 Begin 被拒绝后错误锁存。",
-      "Starting 阶段收到匹配 Finish 时当前只记录 finish_requested，可能在用户已要求停止后才完成麦克风启动；该行为不满足本功能的停止后不得迟到启麦验收。"
-    ]
+    "summary": "源码符合性复核确认 Hold/Toggle 配置、专用 CAS 命令、模式快照、适配器状态机、Begin 拒绝与 completion 复位、Starting 即时取消、模式化 UI 和活动期设置保护均已落地；真实 Windows Hook、麦克风、WebView2、重启和目标应用证据仍待补充。",
+    "knownDeviations": []
   },
   "components": ["frontend.features", "frontend.ipc", "backend.commands", "backend.services", "backend.repositories", "backend.voice-controller", "backend.streaming", "backend.delivery", "backend.shortcut", "platform.windows"],
   "decisions": ["ADR-0002", "ADR-0005", "ADR-0010", "ADR-0011", "ADR-0012", "ADR-0013"],
@@ -41,7 +37,38 @@
     { "id": "AC-STM-12", "components": ["backend.voice-controller", "backend.streaming", "backend.delivery"], "requiredEvidence": ["automated", "fault_injection", "external_app_interop"] },
     { "id": "AC-STM-13", "components": ["frontend.features", "backend.shortcut", "platform.windows"], "requiredEvidence": ["windows_webview2", "runtime_hook", "external_app_interop"] }
   ],
-  "evidence": [],
+  "evidence": [
+    {
+      "id": "EV-STM-AUTOMATED-20260828",
+      "acceptanceIds": ["AC-STM-01", "AC-STM-02", "AC-STM-03", "AC-STM-04", "AC-STM-05", "AC-STM-06", "AC-STM-07", "AC-STM-08", "AC-STM-09", "AC-STM-10", "AC-STM-11", "AC-STM-12"],
+      "acceptanceCoverage": [
+        { "acceptanceId": "AC-STM-01", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-02", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-03", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-04", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-05", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-06", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-07", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-08", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-09", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-10", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-11", "coverage": "partial" },
+        { "acceptanceId": "AC-STM-12", "coverage": "partial" }
+      ],
+      "method": "automated",
+      "result": "pass",
+      "freshness": "current",
+      "capabilities": ["automated"],
+      "scope": "Rust 191 项覆盖配置迁移与持久化、模式 provenance、Hold/Toggle 适配器序列、ActivationId 安全复位、Starting 即时取消、迟到启动丢弃、completion 收束、浮层 session 隔离和单写入者边界；前端 54 项覆盖互斥 radio、活动期锁定、模式化文案和 Starting 可访问反馈；production build、安全扫描、架构工具测试与 ASR 边界检查通过。",
+      "testRefs": ["config::tests::legacy_config_without_shortcut_trigger_mode_defaults_to_hold", "config::tests::toggle_shortcut_trigger_mode_round_trips", "commands::config::tests::trigger_mode_change_preserves_disabled_state_and_advances_revision", "shortcut_manager::trigger_mode_tests::hold_finishes_on_release_and_ignores_repeated_press", "shortcut_manager::trigger_mode_tests::toggle_ignores_release_and_finishes_on_second_press", "shortcut_manager::trigger_mode_tests::active_activation_keeps_its_original_mode", "shortcut_manager::trigger_mode_tests::interruption_cancels_and_stale_completion_cannot_clear_new_activation", "voice_controller::actor::reducer::tests::quick_finish_during_starting_cancels_immediately", "voice_controller::actor::reducer::tests::stale_start_result_is_cancelled_after_disable", "voice_controller::actor::tests::activation_completion_fires_only_after_runtime_releases_the_activation", "overlay::tests::stale_hide_cannot_close_a_newer_preinput_session", "src/features/settings/SettingsSidebar.test.tsx", "src/features/shortcut/ShortcutCaptureField.test.tsx", "src/preinput/PreInputOverlay.test.tsx"],
+      "limitations": ["未启动 Tauri 或 Windows WebView2", "未使用真实 Windows Hook 和真实麦克风", "未验证打包程序重启持久化", "未验证 120 秒真实等待、外部目标应用注入或第三方 Hook 冲突", "脏工作树包含并行 agent 的设置页与智能成稿改动，没有不可变 build identity"],
+      "sourceRevision": "b5929f21cee3329d80e732a3fa2ed86ff6035f5c",
+      "worktreeState": "dirty",
+      "changedPaths": ["src-tauri/src/config.rs", "src-tauri/src/commands/config.rs", "src-tauri/src/shortcut_manager", "src-tauri/src/voice_controller", "src-tauri/src/voice_trigger.rs", "src-tauri/src/state.rs", "src-tauri/src/overlay.rs", "src/app/AppShellV2.tsx", "src/features/shortcut", "src/features/settings", "src/preinput", "src/domain.ts", "src/ipc/client.ts", "docs/features/shortcut-trigger-modes.md", "docs/architecture/runtime-views.md"],
+      "environment": "Windows development workspace; cargo test --lib; Vitest happy-dom; TypeScript + Vite production build; architecture and security scripts",
+      "validatedAt": "2026-08-28"
+    }
+  ],
   "impactAssessments": []
 }
 ---
@@ -88,11 +115,11 @@
 
 除已确认的用户目标、验收场景和明确不规定的实现外，下面内容是可被实现探针或用户反馈挑战的当前 MVP 假设：
 
-- `ASM-STM-01`（Open）：点击切换在第一次 `Pressed` 开始、第二次 `Pressed` 结束，以减少开始和结束延迟；若真实 Hook/用户研究证明以完整 click 或 Release 为边界更可靠，可以调整内部边界，但不得破坏一次点击一次含义和停止后的隐私结果。
-- `ASM-STM-02`（Open）：录音或处理中最简单的设置体验是暂时禁止模式切换和换绑；也可以采用“仅影响下一会话”，但必须显示生效时机并保证当前会话仍能按启动时模式结束。
-- `ASM-STM-03`（Challenged）：`VoiceActivation.TriggerBehavior` 的存在不证明多模式策略已经实现。当前源码只有 `PushToTalk`，且运行时不消费该字段；模式语义应由真实调用链和目标环境证据证明。
+- `ASM-STM-01`（Confirmed）：点击切换在第一次 `Pressed` 开始、第二次 `Pressed` 结束；真实 Hook 验证仍需确认物理去重边界。
+- `ASM-STM-02`（Confirmed）：Starting、Recording、Transcribing 和 Pasting 期间暂时禁止模式切换和换绑。
+- `ASM-STM-03`（Resolved）：`TriggerBehavior` 现在记录 PushToTalk 或 PressToToggle provenance；模式语义由 ShortcutManager 状态机、回执恢复和自动化共同证明，枚举本身仍不构成目标环境证据。
 - `ASM-STM-04`（Challenged）：统一 `begin/finish/cancel` 端口证明下游可以复用，不证明只改一个中间层文件即可交付用户选择；配置、UI、持久化、回执恢复、状态反馈和目标环境验证均属于功能范围。
-- `ASM-STM-05`（Open）：Starting 阶段的 Finish 应优先满足“停止后不迟到启麦”的结果；采用立即取消启动还是更精确的 AudioReady 仲裁属于实现选择，但现有延迟 Stop 行为不能作为验收依据。
+- `ASM-STM-05`（Confirmed）：Starting 阶段的匹配 Finish 立即清除会话并取消启动；迟到启动结果只能执行资源丢弃和再次取消。
 - `ASM-STM-06`（Open）：运行时匹配快捷键后是否必须吞掉原按键行为继续沿用 `FEAT-SHORTCUT-BINDING` 的开放假设，不因增加 Toggle 模式而被默认为已确认。
 
 ## 架构决策
@@ -117,13 +144,13 @@
 - 音频与 ASR：`src-tauri/src/streaming_pipeline.rs`
 - 现有主链路：[语音输入主链路](../architecture/runtime-views.md#语音输入主链路)
 
-源码与运行配置是当前实现事实。现有实现只有按住说话；旧 `.orig` 文件中的 `shortcut_mode` 残留不是当前配置能力或实现证据。
+源码与运行配置是当前实现事实。当前实现由持久化模式、专用配置命令、ShortcutManager 映射层和统一 Voice Actor 共同完成；旧 `.orig` 文件中的 `shortcut_mode` 残留仍不是实现证据。
 
 ## 验证状态
 
-当前为 `unverified`，实现状态为 `not_started`。现有按住说话、ActivationId、统一控制面和 Actor 边界证据只能作为可复用基础，不能覆盖本功能的模式选择、持久化、Toggle 序列、BeginReceipt 拒绝恢复、模式化 UI、Starting 后停止隐私结果或真实 Hook/麦克风验收。
+当前实现状态为 `implemented`，验证状态为 `partial`。源码复核与自动化证明当前测试定义下的模式持久化、CAS、Hold/Toggle 序列、模式快照、Begin 回执恢复、activation completion、Starting 即时取消、模式化 UI、活动期设置保护和统一 ASR 边界可以工作。
 
-不得仅因为 `VoiceTriggerPort` 已存在、`TriggerBehavior` 类型已存在、单元测试能构造 Toggle 序列，或原按住模式曾在开发机工作，就把本功能升级状态。实际源码实现开始后应及时改为 `in_progress` 并做源码符合性复核；实现复核确认契约已经落地且没有已知偏差后才可标记 `implemented`。只有对应证据存在时才能把验证状态升级为 `partial`，达到全部目标环境要求前不得标记 `validated`。
+这些证据没有启动 Tauri/WebView2，也没有真实 Hook、麦克风、打包程序重启、120 秒真实超时、第三方 Hook 或外部目标应用能力。因此 AC-STM-13 尚无证据，其他涉及目标环境的切片也只覆盖部分要求；达到全部目标环境要求前不得标记为 `validated`。
 
 ## 澄清历史
 

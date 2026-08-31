@@ -4,15 +4,32 @@ import {
   existsSync,
   readFileSync,
   readdirSync,
+  mkdirSync,
+  renameSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  assertBundledCredentials,
+  loadDeploymentEnvironment,
+} from "./deployment-env.mjs";
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(scriptDirectory, "..");
 const checkOnly = process.argv.slice(2).includes("--check-only");
+const distributionName = "Zephyr";
+const deploymentEnvironment = loadDeploymentEnvironment(projectRoot);
+const targetRoot = resolve(
+  deploymentEnvironment.GY_TYPING_CARGO_TARGET_DIR ||
+    resolve(projectRoot, "src-tauri", "target"),
+);
+const packagingTempDirectory = resolve(targetRoot, ".tauri-packaging-tmp");
+mkdirSync(packagingTempDirectory, { recursive: true });
+deploymentEnvironment.TEMP = packagingTempDirectory;
+deploymentEnvironment.TMP = packagingTempDirectory;
 
 function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
@@ -22,7 +39,7 @@ function run(command, args, label) {
   console.log(`\n==> ${label}`);
   const result = spawnSync(command, args, {
     cwd: projectRoot,
-    env: process.env,
+    env: deploymentEnvironment,
     stdio: "inherit",
     windowsHide: true,
   });
@@ -79,11 +96,15 @@ function assertReleaseContract() {
   if (!Array.isArray(targets) || !targets.includes("nsis")) {
     throw new Error("src-tauri/tauri.conf.json 必须启用 NSIS bundle target");
   }
+  if (tauriConfig.bundle?.useLocalToolsDir !== true) {
+    throw new Error("Windows 打包必须启用 bundle.useLocalToolsDir，避免 NSIS 工具缓存跨磁盘移动失败");
+  }
   if (tauriConfig.bundle?.windows?.nsis?.installMode !== "currentUser") {
     throw new Error("测试安装包必须使用 NSIS currentUser 安装模式");
   }
 
   return {
+    mainBinaryName: packageJson.name,
     productName: tauriConfig.productName,
     identifier: tauriConfig.identifier,
     version: tauriConfig.version,
@@ -94,13 +115,24 @@ function sha256(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
-function findInstaller(bundleDirectory, version) {
+function findInstaller(bundleDirectory, productName, version) {
   if (!existsSync(bundleDirectory)) {
     throw new Error(`未找到 NSIS 输出目录：${bundleDirectory}`);
   }
 
+  const expectedName = `${productName}_${version}_x64-setup.exe`;
+  const expectedPath = resolve(bundleDirectory, expectedName);
+  if (existsSync(expectedPath)) {
+    return expectedPath;
+  }
+
   const candidates = readdirSync(bundleDirectory)
-    .filter((name) => name.endsWith("-setup.exe") && name.includes(version))
+    .filter(
+      (name) =>
+        name.endsWith("-setup.exe") &&
+        name.includes(version) &&
+        !name.startsWith(`${distributionName}_`),
+    )
     .map((name) => resolve(bundleDirectory, name));
   if (candidates.length !== 1) {
     throw new Error(
@@ -110,16 +142,62 @@ function findInstaller(bundleDirectory, version) {
   return candidates[0];
 }
 
+function renameInstaller(installerPath, version) {
+  const destination = resolve(
+    dirname(installerPath),
+    `${distributionName}_${version}_x64-setup.exe`,
+  );
+  if (installerPath === destination) {
+    return destination;
+  }
+  if (existsSync(destination)) {
+    unlinkSync(destination);
+  }
+  renameSync(installerPath, destination);
+  return destination;
+}
+
+function assertWindowsGuiSubsystem(binaryPath) {
+  const binary = readFileSync(binaryPath);
+  if (binary.length < 0x40 || binary.toString("ascii", 0, 2) !== "MZ") {
+    throw new Error(`release 主程序不是有效的 Windows PE 文件：${binaryPath}`);
+  }
+
+  const peOffset = binary.readUInt32LE(0x3c);
+  const optionalHeaderOffset = peOffset + 24;
+  if (
+    peOffset + 4 > binary.length ||
+    binary.toString("binary", peOffset, peOffset + 4) !== "PE\0\0" ||
+    optionalHeaderOffset + 70 > binary.length
+  ) {
+    throw new Error(`release 主程序的 PE 头不完整：${binaryPath}`);
+  }
+
+  const optionalHeaderMagic = binary.readUInt16LE(optionalHeaderOffset);
+  if (optionalHeaderMagic !== 0x10b && optionalHeaderMagic !== 0x20b) {
+    throw new Error(`release 主程序使用未知的 PE Optional Header：${binaryPath}`);
+  }
+
+  const subsystem = binary.readUInt16LE(optionalHeaderOffset + 68);
+  if (subsystem !== 2) {
+    throw new Error(
+      `release 主程序必须使用 Windows GUI 子系统，当前 PE subsystem=${subsystem}`,
+    );
+  }
+}
+
 function buildManifest(contract, installerPath) {
   const gitRevision = capture("git", ["rev-parse", "HEAD"]);
   const gitStatus = capture("git", ["status", "--porcelain"]);
   const manifest = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     productName: contract.productName,
+    distributionName,
     identifier: contract.identifier,
     version: contract.version,
     target: "windows-x86_64",
     bundleType: "nsis",
+    windowsSubsystem: "windows-gui",
     installer: {
       fileName: installerPath.split(/[\\/]/).at(-1),
       bytes: statSync(installerPath).size,
@@ -138,6 +216,7 @@ function buildManifest(contract, installerPath) {
 
 try {
   const contract = assertReleaseContract();
+  assertBundledCredentials(deploymentEnvironment);
   console.log(
     `发布契约检查通过：${contract.productName} ${contract.version} (${contract.identifier})`,
   );
@@ -167,11 +246,12 @@ try {
     "Tauri NSIS 构建",
   );
 
-  const targetRoot = resolve(
-    process.env.GY_TYPING_CARGO_TARGET_DIR || resolve(projectRoot, "src-tauri", "target"),
+  assertWindowsGuiSubsystem(
+    resolve(targetRoot, "release", `${contract.mainBinaryName}.exe`),
   );
-  const installerPath = findInstaller(
-    resolve(targetRoot, "release", "bundle", "nsis"),
+  const bundleDirectory = resolve(targetRoot, "release", "bundle", "nsis");
+  const installerPath = renameInstaller(
+    findInstaller(bundleDirectory, contract.productName, contract.version),
     contract.version,
   );
   const { manifest, manifestPath } = buildManifest(contract, installerPath);

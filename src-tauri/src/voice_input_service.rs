@@ -57,6 +57,7 @@ impl VoiceControlService {
         next.asr = current.asr.clone();
         next.shortcut = current.shortcut.clone();
         next.shortcut_binding = current.shortcut_binding.clone();
+        next.shortcut_trigger_mode = current.shortcut_trigger_mode;
         next.revision = current.revision.saturating_add(1);
         let committed = self.config.commit_config(expected_revision, next)?;
 
