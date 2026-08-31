@@ -145,8 +145,25 @@ describe("SettingsSidebar", () => {
     renderSidebar({ onTriggerMode });
 
     expect(screen.getByRole("radio", { name: /按住说话/ })).toHaveProperty("checked", true);
-    fireEvent.click(screen.getByRole("radio", { name: /按一下开始/ }));
+    fireEvent.click(screen.getByRole("radio", { name: /点击切换/ }));
     expect(onTriggerMode).toHaveBeenCalledWith("toggle");
+  });
+
+  it("merges voice status and the enable switch into one compact overview module", () => {
+    renderSidebar();
+
+    const overview = screen.getByText("已就绪").closest(".voice-overview-card");
+    expect(overview).toBeTruthy();
+    expect(overview?.querySelector('input[type="checkbox"]')).toBeTruthy();
+  });
+
+  it("merges shortcut binding and trigger mode into one compact module", () => {
+    renderSidebar();
+
+    const modeGroup = screen.getByRole("radiogroup", { name: "快捷键触发方式" });
+    const card = modeGroup.closest(".shortcut-config-card");
+    expect(card).toBeTruthy();
+    expect(card?.textContent).toContain("语音输入快捷键");
   });
 
   it("locks trigger mode and shortcut editing throughout an active voice session", () => {

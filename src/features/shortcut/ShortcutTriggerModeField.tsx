@@ -3,18 +3,9 @@ import type { ShortcutTriggerMode } from "../../domain";
 const OPTIONS: Array<{
   value: ShortcutTriggerMode;
   label: string;
-  description: string;
 }> = [
-  {
-    value: "hold",
-    label: "按住说话",
-    description: "按下开始，松开结束",
-  },
-  {
-    value: "toggle",
-    label: "按一下开始，再按一下结束",
-    description: "松开后继续聆听",
-  },
+  { value: "hold", label: "按住说话" },
+  { value: "toggle", label: "点击切换" },
 ];
 
 export function ShortcutTriggerModeField({
@@ -32,14 +23,16 @@ export function ShortcutTriggerModeField({
 }) {
   const locked = disabled || saving;
   return (
-    <fieldset className="shortcut-mode-setting" disabled={locked}>
-      <legend>快捷键触发方式</legend>
-      <p>选择每次语音输入如何开始和结束。</p>
-      <div className="shortcut-mode-options">
+    <div className={"shortcut-mode-setting " + (locked ? "is-locked" : "")}>
+      <div
+        className="shortcut-mode-segmented"
+        role="radiogroup"
+        aria-label="快捷键触发方式"
+      >
         {OPTIONS.map((option) => (
           <label
             key={option.value}
-            className={"shortcut-mode-option " + (value === option.value ? "is-selected" : "")}
+            className={"shortcut-mode-segment " + (value === option.value ? "is-selected" : "")}
           >
             <input
               type="radio"
@@ -49,16 +42,13 @@ export function ShortcutTriggerModeField({
               disabled={locked}
               onChange={() => onChange(option.value)}
             />
-            <span>
-              <strong>{option.label}</strong>
-              <small>{option.description}</small>
-            </span>
+            <span>{option.label}</span>
           </label>
         ))}
       </div>
       {disabled ? <small className="shortcut-mode-lock">本次语音结束后可修改。</small> : null}
       {saving ? <small className="shortcut-mode-saving" role="status">正在保存触发方式…</small> : null}
       {error ? <small className="field-error" role="alert">{error}</small> : null}
-    </fieldset>
+    </div>
   );
 }
