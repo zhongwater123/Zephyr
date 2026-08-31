@@ -217,12 +217,114 @@
   line-height: 1;
 }
 
-.settings-sidebar-scroll {
+.settings-sidebar-scroll-wrap {
+  position: relative;
   min-height: 0;
+  timeline-scope: --sidebar-scroll-progress;
+}
+
+.settings-sidebar-scroll {
+  position: absolute;
+  inset: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 16px 20px 24px;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
+  scroll-timeline: --sidebar-scroll-progress block;
+}
+
+.settings-sidebar-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/*
+ * Decorative-only scroll indicator: a fixed, vertically centered stack of
+ * short ticks. Each tick owns a slice of the sidebar's scroll range (via
+ * animation-range on a shared scroll-timeline, no JS) and sweeps linearly
+ * from dim/short to bright/long as scroll passes through that slice, then
+ * linearly back down as it leaves. Neighboring slices overlap so the
+ * highlight hands off smoothly from one tick to the next instead of one
+ * block translating — this does not read as a draggable slider. The native
+ * scrollbar chrome above is hidden; wheel/trackpad/keyboard scrolling is
+ * untouched.
+ */
+.settings-sidebar-ruler {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  transform: translateY(-50%);
+  opacity: 0.75;
+  transition: opacity 150ms ease;
+  pointer-events: none;
+}
+
+.settings-sidebar-scroll-wrap:hover .settings-sidebar-ruler,
+.settings-sidebar-scroll-wrap:focus-within .settings-sidebar-ruler {
+  opacity: 1;
+}
+
+.settings-sidebar-ruler-tick {
+  height: 2px;
+  border-radius: 1px;
+  animation-name: sidebar-ruler-tick-sweep;
+  animation-timing-function: linear;
+  animation-timeline: --sidebar-scroll-progress;
+  animation-fill-mode: both;
+  animation-range: var(--tick-range);
+}
+
+/*
+ * The first/last ticks own a clipped half-window at the very start/end of
+ * the scroll range (0%/100%), so their peak must sit at that window's own
+ * boundary rather than at its midpoint — otherwise scrolling to the very
+ * top or bottom would show the edge tick still dim instead of highlighted.
+ */
+.settings-sidebar-ruler-tick.is-first {
+  animation-name: sidebar-ruler-tick-sweep-in;
+}
+
+.settings-sidebar-ruler-tick.is-last {
+  animation-name: sidebar-ruler-tick-sweep-out;
+}
+
+@keyframes sidebar-ruler-tick-sweep {
+  0%,
+  100% {
+    width: 4px;
+    background-color: color-mix(in srgb, var(--z-muted) 35%, transparent);
+  }
+  50% {
+    width: 13px;
+    background-color: var(--z-accent);
+  }
+}
+
+@keyframes sidebar-ruler-tick-sweep-in {
+  from {
+    width: 13px;
+    background-color: var(--z-accent);
+  }
+  to {
+    width: 4px;
+    background-color: color-mix(in srgb, var(--z-muted) 35%, transparent);
+  }
+}
+
+@keyframes sidebar-ruler-tick-sweep-out {
+  from {
+    width: 4px;
+    background-color: color-mix(in srgb, var(--z-muted) 35%, transparent);
+  }
+  to {
+    width: 13px;
+    background-color: var(--z-accent);
+  }
 }
 
 .voice-overview-card {
@@ -490,6 +592,11 @@
   overflow: hidden;
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
+}
+
+.shortcut-mode-segment:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--z-accent) 68%, transparent);
+  outline-offset: -2px;
 }
 
 .shortcut-mode-segment.is-selected {
