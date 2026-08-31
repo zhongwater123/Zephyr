@@ -39,6 +39,7 @@ pub enum ActivationIntent {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "u8", into = "u8")]
 pub enum PolishLevel {
+    Fast = 0,
     Light = 1,
     Standard = 2,
     Deep = 3,
@@ -47,6 +48,10 @@ pub enum PolishLevel {
 impl PolishLevel {
     pub const fn as_u8(self) -> u8 {
         self as u8
+    }
+
+    pub const fn is_fast(self) -> bool {
+        matches!(self, Self::Fast)
     }
 }
 
@@ -62,9 +67,10 @@ impl TryFrom<u8> for PolishLevel {
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
             1 => Ok(Self::Light),
+            0 => Ok(Self::Fast),
             2 => Ok(Self::Standard),
             3 => Ok(Self::Deep),
-            _ => Err("polish level must be 1, 2, or 3"),
+            _ => Err("polish level must be 0, 1, 2, or 3"),
         }
     }
 }
@@ -135,12 +141,13 @@ mod tests {
         for (raw, level) in [
             (1, PolishLevel::Light),
             (2, PolishLevel::Standard),
+            (0, PolishLevel::Fast),
             (3, PolishLevel::Deep),
         ] {
             assert_eq!(PolishLevel::try_from(raw), Ok(level));
             assert_eq!(level.as_u8(), raw);
         }
-        assert!(PolishLevel::try_from(0).is_err());
+        assert!(PolishLevel::Fast.is_fast());
         assert!(PolishLevel::try_from(4).is_err());
         assert_eq!(PolishLevel::default(), PolishLevel::Standard);
     }

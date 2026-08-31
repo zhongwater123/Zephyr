@@ -40,6 +40,12 @@ pub struct HistoryProvenance {
 
 impl Default for HistoryProvenance {
     fn default() -> Self {
+        Self::asr_direct()
+    }
+}
+
+impl HistoryProvenance {
+    pub fn asr_direct() -> Self {
         Self {
             text_origin: HISTORY_ORIGIN_ASR_DIRECT.to_string(),
             processor_profile: None,
@@ -47,9 +53,7 @@ impl Default for HistoryProvenance {
             learning_eligible: true,
         }
     }
-}
 
-impl HistoryProvenance {
     pub fn asr_fallback() -> Self {
         Self {
             text_origin: HISTORY_ORIGIN_ASR_FALLBACK.to_string(),

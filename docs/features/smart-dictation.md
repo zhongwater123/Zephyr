@@ -15,9 +15,9 @@
     "sourceRevision": "c4c3cac5a6680084c607b360eb794987a1e4c831",
     "worktreeState": "dirty",
     "changedPaths": ["src-tauri/src/text_processing/", "src-tauri/resources/prompts/smart_dictation/", "src-tauri/src/voice_controller/", "src-tauri/src/delivery.rs", "src-tauri/src/inject.rs", "src-tauri/src/history.rs", "src-tauri/src/hotwords.rs", "src-tauri/src/config.rs", "src/features/settings/", "src/app/AppShellV2.tsx"],
-    "reviewedAt": "2026-08-28",
-    "summary": "核心 MVP 源码已切换为统一的应用感知 Prompt 与全局三档强度：首页‘输入效果’末尾提供面向用户结果的三段滑块；ASR final 冻结、应用上下文数据边界、DeepSeek JSON Processing、取消/失败兜底、AtomicPaste、History provenance、热词学习栅栏和强度设置已有源码与自动化复核。内部安装凭据预置、真实模型联调和目标环境仍未闭环。",
-    "knownDeviations": ["用户已确认四档中的 Fast 为仅 ASR 的主动旁路；当前源码和首页控件仍只有三档，且所有正常成功路径都会尝试 TextProcessing，Fast 尚未实现。"]
+    "reviewedAt": "2026-08-31",
+    "summary": "核心 MVP 源码已切换为统一的应用感知 Prompt 与四档输出方式：首页‘输入效果’末尾提供 Fast、轻微整理、自然表达和理清重点；Fast 在 ASR final 冻结后直接进入 Delivery，其余三档使用 DeepSeek JSON Processing。ASR final 冻结、取消/失败兜底、AtomicPaste、History provenance、热词学习栅栏和强度设置已有源码与自动化复核。内部安装凭据预置、真实模型联调和目标环境仍未闭环。",
+    "knownDeviations": []
   },
   "validationStatus": "partial",
   "components": ["system.zephyr", "frontend.features", "backend.services", "backend.repositories", "backend.voice-controller", "backend.streaming", "backend.delivery", "backend.shortcut", "backend.incident-vault", "platform.windows"],
@@ -151,15 +151,14 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 - 统一智能润色 Prompt：`src-tauri/resources/prompts/smart_dictation/v2/`
 - 文本交付与 Pending：`src-tauri/src/delivery.rs`、`src-tauri/src/inject.rs`、`src-tauri/src/pending_output_service.rs`
 - History provenance 与热词学习栅栏：`src-tauri/src/history.rs`、`src-tauri/src/hotwords.rs`
-- 当前首页智能润色仍为三档控件，`Fast` 尚未实现；相关入口与保存链路：`src/features/settings/PolishLevelSetting.tsx`、`src/features/settings/SettingsSidebar.tsx`、`src/app/AppShellV2.tsx`
+- 首页智能润色为四档控件：`Fast`、轻微整理、自然表达和理清重点；相关入口与保存链路：`src/features/settings/PolishLevelSetting.tsx`、`src/features/settings/SettingsSidebar.tsx`、`src/app/AppShellV2.tsx`
 - 异常捕获：`src-tauri/src/incident/`
 
-当前 finalize 链路只在权威 ASR final 返回后创建不可变 `FrozenTranscript`；ProcessingPlan 冻结目标应用身份、配置 revision 和润色强度，Processor 成功返回已校验最终文本，任何非取消处理失败选择冻结原文。两条路径随后共用一次 ReadyToInject、AtomicPaste、Pending 和 History 提交链路；模型结果标记为不可参与热词学习。
+当前 finalize 链路只在权威 ASR final 返回后创建不可变 `FrozenTranscript`。 `Fast` 在此后把 Processing 标记为策略跳过，不加载 Prompt、不创建 TextProcessing 请求、不记录 LLM 超时或失败，并以 `asr_direct` provenance 交给既有 Delivery；其余三档才创建 ProcessingPlan、调用 Processor，任何非取消处理失败选择冻结原文并标记 `asr_fallback`。所有路径共用一次 ReadyToInject、AtomicPaste、Pending 和 History 提交链路；模型结果标记为不可参与热词学习。
 
 ## 验证状态
 
-当前实现状态为 `in_progress`，验证状态为 `partial`。2026-08-28 的 dirty worktree 中，Rust 191 个测试、前端 54 个测试、production build、秘密扫描、架构文档检查、ASR 边界检查和 Windows NSIS 产物生成通过；前端自动化覆盖首页“输入效果”末尾的唯一三段滑块、默认“自然整理”、C 端结果文案、保存回调，以及 ASR 选项加载中不隐藏润色设置。DeepSeek 使用构建机私密环境中的共享凭据完成了不携带用户内容的认证和默认模型可用性检查，安装包内 release 程序也确认包含该凭据；未向外部服务发送测试听写内容。Playwright 在当前 Windows 执行环境启动 Chrome 时返回 `spawn UNKNOWN`，因此尚无真实 WebView2 视觉与键盘验收；其余证据覆盖统一 Prompt、应用上下文请求边界、三档强度、配置迁移、JSON 响应校验、文本边界、AtomicPaste receipt、History provenance、热词栅栏和员工零 Key UI，但不能替代真实模型质量与目标环境验收。
-`Fast` 是 2026-08-31 新确认的 MVP 契约，当前源码、配置迁移、History provenance 和前端尚未实现或验证；因此实现状态继续为 `in_progress`，现有三档自动化证据不能覆盖 `AC-SD-15`。
+当前实现状态为 `in_progress`，验证状态为 `partial`。2026-08-31 的 dirty worktree 中，前端 55 个测试、Rust 193 个测试（另有 2 个依赖真实凭据与网络的用例按设计忽略）、production build 和架构文档检查通过。自动化覆盖四档滑块、Fast 用户文案、配置值 `0` 的持久化、仅 Fast 跳过 TextProcessing、冻结 ASR 文本原样交付与 `asr_direct` provenance；因此 `AC-SD-15` 的自动化部分已覆盖。仍未启动真实 Tauri/WebView2 与 Windows 全局快捷键，未验证聊天、Office、编码助手和终端输入框互操作，也未验证重启持久化；这些缺口意味着不得把 `AC-SD-15` 或整体功能升级为 `validated`。
 
 
 现有自动化证据不具备 `human_quality_eval` 或 `usability_observation` 能力，因此不能回答“用户是否感到明显润色”“三档是否可预测”或“结果是否比原文更可用”。这些问题属于未完成的产品验证，不应再用链路测试通过来代替。

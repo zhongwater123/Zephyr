@@ -42,14 +42,14 @@ const ZephyrAsciiField = lazy(() =>
 
 const currentWindow = getCurrentWindow();
 function normalizePolishLevel(value: number | undefined): PolishLevel {
-  return value === 1 || value === 3 ? value : 2;
+  return value === 0 || value === 1 || value === 3 ? value : 2;
 }
 
 
 function normalizeConfig(next: AppConfig): AppConfig {
   return {
     ...next,
-    schema_version: next.schema_version ?? 9,
+    schema_version: next.schema_version ?? 10,
     revision: next.revision ?? 0,
     trusted_endpoints: next.trusted_endpoints ?? [],
     injection_overrides: next.injection_overrides ?? [],

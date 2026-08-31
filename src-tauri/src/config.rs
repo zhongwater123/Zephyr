@@ -16,7 +16,7 @@ const KEYRING_ACCESS_KEY_USER: &str = "transcription-access-key";
 const KEYRING_DEEPSEEK_SHARED_API_KEY_USER: &str = "hotword-agent-api-key";
 const DEFAULT_HOTWORD_AGENT_BASE_URL: &str = "https://api.deepseek.com";
 const DEFAULT_HOTWORD_AGENT_MODEL: &str = "deepseek-v4-flash";
-pub const CURRENT_SCHEMA_VERSION: u32 = 9;
+pub const CURRENT_SCHEMA_VERSION: u32 = 10;
 pub const DEFAULT_POLISH_LEVEL: u8 = 2;
 const OFFICIAL_HOTWORD_ORIGIN: &str = "https://api.deepseek.com:443";
 
@@ -452,7 +452,7 @@ fn is_official_origin(origin: &str, purpose: &EndpointPurpose) -> bool {
 }
 
 fn normalize_polish_level(config: &mut AppConfig) {
-    if !(1..=3).contains(&config.polish_level) {
+    if !(0..=3).contains(&config.polish_level) {
         config.polish_level = DEFAULT_POLISH_LEVEL;
     }
 }
@@ -754,7 +754,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_and_invalid_polish_levels_migrate_to_standard() {
+    fn legacy_invalid_and_fast_polish_levels_migrate_or_persist() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         let mut legacy = serde_json::to_value(AppConfig::default()).unwrap();
@@ -766,6 +766,10 @@ mod tests {
         legacy["polish_level"] = 9.into();
         fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
         assert_eq!(read_and_migrate_config(&path).unwrap().polish_level, 2);
+
+        legacy["polish_level"] = 0.into();
+        fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+        assert_eq!(read_and_migrate_config(&path).unwrap().polish_level, 0);
     }
 
     #[test]

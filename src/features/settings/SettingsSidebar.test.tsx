@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   defaultConfig,
   type AsrOptionPool,
+  type PolishLevel,
   type ShortcutTriggerMode,
   type VoiceState,
 } from "../../domain";
@@ -45,13 +46,14 @@ afterEach(cleanup);
 
 type LaunchHandler = (panel: "personalization" | "more_settings") => void;
 type ShortcutCaptureHandler = () => void;
-type PolishLevelHandler = (level: 1 | 2 | 3) => void;
+type PolishLevelHandler = (level: 0 | 1 | 2 | 3) => void;
 type TriggerModeHandler = (mode: ShortcutTriggerMode) => void;
 
 function renderSidebar(overrides: {
   providerReady?: boolean;
   voiceState?: VoiceState;
   triggerMode?: ShortcutTriggerMode;
+  polishLevel?: PolishLevel;
   optionPool?: AsrOptionPool | null;
   onLaunch?: LaunchHandler;
   onShortcutCapture?: ShortcutCaptureHandler;
@@ -65,7 +67,11 @@ function renderSidebar(overrides: {
   render(
     <SettingsSidebar
       open
-      config={{ ...defaultConfig, shortcut_trigger_mode: overrides.triggerMode ?? "hold" }}
+      config={{
+        ...defaultConfig,
+        shortcut_trigger_mode: overrides.triggerMode ?? "hold",
+        polish_level: overrides.polishLevel ?? defaultConfig.polish_level,
+      }}
       configStatus={{
         provider_ready: overrides.providerReady ?? true,
         provider_message: overrides.providerReady === false ? "offline" : "ok",
@@ -160,30 +166,41 @@ describe("SettingsSidebar", () => {
     expect(screen.getByText(/按一下快捷键开始语音输入/)).toBeTruthy();
   });
 
-  it("puts a plain-language polishing slider at the bottom of input effects", () => {
+  it("puts four plain-language output modes at the bottom of input effects", () => {
     const onPolishLevel = vi.fn<PolishLevelHandler>();
     renderSidebar({ onPolishLevel });
 
     const inputEffects = screen.getByText("输入效果").closest("section");
-    const slider = screen.getByRole("slider", { name: "文字整理程度" });
+    const slider = screen.getByRole("slider", { name: "智能润色输出方式" });
 
     expect(inputEffects?.contains(slider)).toBe(true);
     expect(inputEffects?.textContent?.indexOf("智能润色")).toBeGreaterThan(
       inputEffects?.textContent?.indexOf("自动标点") ?? -1,
     );
-    expect(slider.getAttribute("aria-valuetext")).toBe("自然整理");
-    expect(screen.getByText("说完后，希望文字整理到什么程度？")).toBeTruthy();
-    expect(screen.getByText(/可以直接发送或使用/)).toBeTruthy();
+    expect(slider).toHaveProperty("min", "0");
+    expect(slider).toHaveProperty("max", "3");
+    expect(slider.getAttribute("aria-valuetext")).toBe("自然表达");
+    expect(screen.getByText("Fast")).toBeTruthy();
+    expect(screen.getByText("说完后，希望得到怎样的文字？")).toBeTruthy();
+    expect(screen.getByText(/选择更快直出/)).toBeTruthy();
     expect(screen.queryByText(/Prompt|模型|介入程度/)).toBeNull();
 
-    fireEvent.change(slider, { target: { value: "3" } });
-    expect(onPolishLevel).toHaveBeenCalledWith(3);
+    fireEvent.change(slider, { target: { value: "0" } });
+    expect(onPolishLevel).toHaveBeenCalledWith(0);
+  });
+
+  it("explains Fast as the ASR-only output mode", () => {
+    renderSidebar({ polishLevel: 0 });
+
+    const slider = screen.getByRole("slider", { name: "智能润色输出方式" });
+    expect(slider.getAttribute("aria-valuetext")).toBe("Fast");
+    expect(screen.getByText("快速响应，仅识别原话。")).toBeTruthy();
   });
 
   it("keeps polishing available while ASR options are still loading", () => {
     renderSidebar({ optionPool: null });
 
     expect(screen.getByText("正在加载识别选项…")).toBeTruthy();
-    expect(screen.getByRole("slider", { name: "文字整理程度" })).toBeTruthy();
+    expect(screen.getByRole("slider", { name: "智能润色输出方式" })).toBeTruthy();
   });
 });

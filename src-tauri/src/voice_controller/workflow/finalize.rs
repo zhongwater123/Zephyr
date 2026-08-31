@@ -19,6 +19,17 @@ use tokio::time::{timeout, Duration};
 const FINAL_TRANSCRIPT_TIMEOUT_SECS: u64 = 25;
 const EMPTY_TRANSCRIPT_TIMEOUT_MS: u64 = 800;
 
+fn should_start_text_processing(polish_level: PolishLevel) -> bool {
+    !polish_level.is_fast()
+}
+
+fn asr_direct_delivery(transcript: &FrozenTranscript) -> (String, HistoryProvenance) {
+    (
+        transcript.as_str().to_string(),
+        HistoryProvenance::asr_direct(),
+    )
+}
+
 pub(crate) fn spawn_finalization(job: FinalizationJob, events: VoiceInternalEventSink) {
     tauri::async_runtime::spawn(async move {
         let outcome = finalize(job, &events).await;
@@ -200,52 +211,64 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
     match activation_intent {
         ActivationIntent::SmartDictation => {}
     }
+    let polish_level = PolishLevel::try_from(config.polish_level).unwrap_or_default();
     let plan = ProcessingPlan::new(
         config.revision,
-        PolishLevel::try_from(config.polish_level).unwrap_or_default(),
+        polish_level,
         target.executable_name.clone(),
         app_context.app_name.clone(),
     );
-    incident.stage(
-        IncidentStage::Processing,
-        IncidentStageOutcome::Running,
-        None,
-    );
-    let processing_started = std::time::Instant::now();
-    let processing_result = match services.prompt_repository.load() {
-        Ok(prompt) => {
-            let request = ProcessingRequest {
-                plan: plan.clone(),
-                prompt,
-                transcript: frozen_transcript.clone(),
-            };
-            tokio::select! {
-                biased;
-                _ = cancellation.cancelled() => {
-                    incident.cancel(IncidentStage::Processing, "session_cancelled");
-                    return FinalizeOutcome::Cancelled {
-                        session_id,
-                        reason: "session_cancelled".to_string(),
-                    };
-                }
-                result = services.text_processor.process(request) => {
-                    result.map_err(|error| (error.reason_code().to_string(), error.to_string()))
+    let processing_attempt = if !should_start_text_processing(polish_level) {
+        incident.stage(
+            IncidentStage::Processing,
+            IncidentStageOutcome::SkippedByPolicy,
+            None,
+        );
+        None
+    } else {
+        incident.stage(
+            IncidentStage::Processing,
+            IncidentStageOutcome::Running,
+            None,
+        );
+        let processing_started = std::time::Instant::now();
+        let processing_result = match services.prompt_repository.load() {
+            Ok(prompt) => {
+                let request = ProcessingRequest {
+                    plan: plan.clone(),
+                    prompt,
+                    transcript: frozen_transcript.clone(),
+                };
+                tokio::select! {
+                    biased;
+                    _ = cancellation.cancelled() => {
+                        incident.cancel(IncidentStage::Processing, "session_cancelled");
+                        return FinalizeOutcome::Cancelled {
+                            session_id,
+                            reason: "session_cancelled".to_string(),
+                        };
+                    }
+                    result = services.text_processor.process(request) => {
+                        result.map_err(|error| (error.reason_code().to_string(), error.to_string()))
+                    }
                 }
             }
-        }
-        Err(error) => Err((
-            "processing_prompt_unavailable".to_string(),
-            error.to_string(),
-        )),
+            Err(error) => Err((
+                "processing_prompt_unavailable".to_string(),
+                error.to_string(),
+            )),
+        };
+        let processing_elapsed = processing_started.elapsed();
+        incident.metric(
+            "text_processing_latency_ms",
+            processing_elapsed.as_secs_f64() * 1_000.0,
+            "milliseconds",
+        );
+        Some((processing_result, processing_elapsed))
     };
-    let processing_elapsed = processing_started.elapsed();
-    incident.metric(
-        "text_processing_latency_ms",
-        processing_elapsed.as_secs_f64() * 1_000.0,
-        "milliseconds",
-    );
-    let (delivery_text, provenance) = match processing_result {
-        Ok(output) => {
+    let (delivery_text, provenance) = match processing_attempt {
+        None => asr_direct_delivery(&frozen_transcript),
+        Some((Ok(output), _)) => {
             incident.stage(
                 IncidentStage::Processing,
                 IncidentStageOutcome::Succeeded,
@@ -257,7 +280,7 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
             );
             (output.text, provenance)
         }
-        Err((reason_code, message)) => {
+        Some((Err((reason_code, message)), processing_elapsed)) => {
             let diagnostic = format!(
                 "{message}; polish_level={}; target_executable={}; elapsed_ms={}; deadline_ms={}",
                 plan.polish_level.as_u8(),
@@ -495,5 +518,31 @@ fn final_timeout(
         session_id,
         reason_code: "asr_final_timeout".to_string(),
         message,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fast_is_the_only_mode_that_bypasses_text_processing() {
+        assert!(!should_start_text_processing(PolishLevel::Fast));
+        assert!(should_start_text_processing(PolishLevel::Light));
+        assert!(should_start_text_processing(PolishLevel::Standard));
+        assert!(should_start_text_processing(PolishLevel::Deep));
+    }
+
+    #[test]
+    fn fast_direct_delivery_preserves_frozen_asr_text_and_origin() {
+        let transcript = FrozenTranscript::new("  原话\r\n第二行  ".to_string()).unwrap();
+        let (text, provenance) = asr_direct_delivery(&transcript);
+        assert_eq!(text, "  原话\r\n第二行  ");
+        assert_eq!(
+            provenance.text_origin,
+            crate::history::HISTORY_ORIGIN_ASR_DIRECT
+        );
+        assert!(provenance.processor_profile.is_none());
+        assert!(provenance.processor_version.is_none());
     }
 }

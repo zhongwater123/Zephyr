@@ -59,7 +59,7 @@ export type ShortcutTriggerMode = "hold" | "toggle";
 
 export type EndpointPurpose = "hotword_agent" | "text_processing";
 
-export type PolishLevel = 1 | 2 | 3;
+export type PolishLevel = 0 | 1 | 2 | 3;
 
 export type TrustedEndpoint = {
   origin: string;
@@ -266,7 +266,7 @@ export type HotwordState = {
 };
 
 export const defaultConfig: AppConfig = {
-  schema_version: 9,
+  schema_version: 10,
   revision: 0,
   enabled: true,
   shortcut: "左 Ctrl+左 Shift+Space",

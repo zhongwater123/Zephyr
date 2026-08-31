@@ -2,6 +2,11 @@
 
 本目录只保存尚未成为当前实现事实的架构设计。Proposal 不得进入 `code-map.json` 的 `docs` 或 `adrs`，也不得被 Current C4、Runtime View 或 arc42 描述成已经实现。
 
+## 当前提案
+
+- [macOS 单仓并行开发与安全交付边界](macos-parallel-development.md)：记录单仓平台适配、交付提交三态、权限、浮层、直接分发、文档拆分和分阶段门禁的候选方案。
+- [场景感知文本路由与智能成稿](context-aware-text-routing.md)：记录尚未成为当前实现事实的文本路由与成稿设计历史；其中部分判断已被后续 ADR 和 Feature 契约替代，阅读时以当前 Dossier 与 ADR 状态为准。
+
 每个 Proposal 必须以 JSON front matter 开头：
 
 ```json
