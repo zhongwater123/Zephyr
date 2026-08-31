@@ -66,6 +66,8 @@ npm run architecture:impact -- --base origin/main
 
 脚本合并已暂存、未暂存、未跟踪文件和可选 Git base diff。源码命中组件后沿 `dependsOn` 反向传播，并计算相关 Dossier 验收切片的 `effectiveFreshness`。输出分为主 Dossier 候选、条件阅读的 View/ADR 和仅审计的证据新鲜度；开发者按任务实际边界选择，不递归阅读全部候选。脚本不修改 Dossier；`partial` / `unverified` 只告警，只有已声明 `validated` 且缺少重新验证或有效 `impactAssessment` 时阻断门禁。
 
+默认输出只显示路由和按 Feature 聚合的审计摘要；需要调查传播原因时才使用 `npm run architecture:impact -- --verbose`（可与 `--base origin/main` 组合）展开逐组件和逐验收切片明细。
+
 ### 2. 设计中：隔离 Proposed
 
 - 拟议 C4 或 Runtime View 进入 `docs/architecture/proposals/`，不得进入当前代码地图。

@@ -8,7 +8,7 @@ Codex may run Windows PowerShell without the user profile. Terminal mojibake doe
 
 1. Before changing a cross-component or high-risk user feature, read its dossier under `docs/features/`.
 2. A user's latest explicit requirement may directly revise a Feature Dossier's MVP contract. Stop the conflicting implementation and report the impact only when the change is unclear, crosses a safety/data-integrity/external-commitment boundary, or overturns a costly-to-reverse Accepted ADR decision. In that case, update the affected specification and decision record before continuing.
-3. Architecture proposals are not current implementation facts. Only documents marked `current` may be used as current C4 or Runtime View evidence.
+3. Architecture proposals are not current implementation facts. Only documents marked `current` are eligible as Current C4 or Runtime Views; a Current View with `reviewStatus=stale|partial` is navigation context, not proof of the current implementation.
 4. If the same user-visible problem remains unchanged after two attempted fixes, stop adding retries, polling, states, or compensation. Rebuild the end-to-end causal chain from the real input boundary.
 5. A target-environment failure invalidates a completion claim even when unit or integration tests pass. It does not, by itself, prove a root cause.
 6. Do not claim a feature is fully validated when its dossier is `unverified`, `partial`, or `invalidated`.

@@ -44,6 +44,8 @@ Agent 执行任务的默认路径是：
 npm run architecture:impact
 ```
 
+默认输出保持紧凑；只有审计传播链时才追加 `-- --verbose` 查看逐组件和逐验收切片明细。
+
 完成改动后运行：
 
 ```powershell

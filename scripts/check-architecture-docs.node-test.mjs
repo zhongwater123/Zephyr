@@ -310,10 +310,12 @@ test("impact report does not rewrite dossiers and partial features remain non-bl
   assert.match(result.stdout, /最小上下文路由/);
   assert.match(result.stdout, /主 Dossier 候选/);
   assert.match(result.stdout, /条件阅读 Current View/);
-  assert.match(result.stdout, /仅审计：Potentially Stale/);
+  assert.match(result.stdout, /受影响组件：/);
+  assert.match(result.stdout, /仅审计：Potentially Stale 验收摘要/);
   assert.match(result.stdout, /Potentially Stale/);
+  assert.doesNotMatch(result.stdout, /Owner：/);
   assert.equal(digestFeatureFiles(), before);
-  assert.match(result.stdout, /declaredStatus=partial; effectiveFreshness=potentially_stale/);
+  assert.match(result.stdout, /declaredStatus=partial；受影响切片 \d+ 个/);
 });
 
 test("effective freshness detects source changes after otherwise current evidence", () => {

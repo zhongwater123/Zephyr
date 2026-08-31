@@ -7,6 +7,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const configPath = path.join(root, "docs", "architecture", "architecture.config.json");
 const impactMode = process.argv.includes("--impact");
+const verboseImpact = process.argv.includes("--verbose");
 const baseArgumentIndex = process.argv.indexOf("--base");
 const baseRef = baseArgumentIndex >= 0 ? process.argv[baseArgumentIndex + 1] : undefined;
 
@@ -291,13 +292,20 @@ function runImpact(architecture) {
     );
   }
 
-  for (const component of affected) {
-    console.log(`\n- ${component.id} — ${component.name} [${component.status}]`);
-    console.log(`  Owner：${component.owner}`);
-    console.log(`  命中原因：${[...reasons.get(component.id)].join("；")}`);
-    console.log(`  触发条件：${component.changeTriggers.join("；")}`);
-    console.log(`  条件阅读的视图：${component.docs.join(", ")}`);
-    if (component.adrs.length > 0) console.log(`  条件阅读的 ADR：${component.adrs.join(", ")}`);
+  console.log(
+    `- 受影响组件：${affected.length} 个（直接源码 ${directSource.size}、直接文档 ${directDocs.size}、其余为依赖传播）。需要逐组件原因时使用 --verbose。`,
+  );
+
+  if (verboseImpact) {
+    console.log("\n逐组件明细：");
+    for (const component of affected) {
+      console.log(`\n- ${component.id} — ${component.name} [${component.status}]`);
+      console.log(`  Owner：${component.owner}`);
+      console.log(`  命中原因：${[...reasons.get(component.id)].join("；")}`);
+      console.log(`  触发条件：${component.changeTriggers.join("；")}`);
+      console.log(`  条件阅读的视图：${component.docs.join(", ")}`);
+      if (component.adrs.length > 0) console.log(`  条件阅读的 ADR：${component.adrs.join(", ")}`);
+    }
   }
 
   const affectedIds = new Set(affected.map((component) => component.id));
@@ -307,14 +315,31 @@ function runImpact(architecture) {
       .map((slice) => ({ dossier, slice })),
   );
   if (impacted.length > 0) {
-    console.log("\n仅审计：Potentially Stale 验收切片（不要求开发任务逐项读写，不自动修改证据状态）：");
     const cache = new Map();
     const blocking = [];
+    const auditSummary = new Map();
+    const auditDetails = [];
     for (const { dossier, slice } of impacted) {
       const effectiveFreshness = effectiveSliceFreshness(dossier, slice, map, cache);
-      console.log(`- ${dossier.metadata.featureId} / ${slice.id} — declaredStatus=${dossier.metadata.validationStatus}; effectiveFreshness=${effectiveFreshness}`);
+      if (effectiveFreshness === "potentially_stale") {
+        const key = `${dossier.metadata.featureId} — declaredStatus=${dossier.metadata.validationStatus}`;
+        auditSummary.set(key, (auditSummary.get(key) ?? 0) + 1);
+        auditDetails.push(
+          `${dossier.metadata.featureId} / ${slice.id} — declaredStatus=${dossier.metadata.validationStatus}; effectiveFreshness=${effectiveFreshness}`,
+        );
+      }
       if (dossier.metadata.validationStatus === "validated" && effectiveFreshness === "potentially_stale") {
         blocking.push(`${dossier.metadata.featureId}/${slice.id}`);
+      }
+    }
+    if (auditSummary.size > 0) {
+      console.log("\n仅审计：Potentially Stale 验收摘要（不要求开发任务逐项读写，不自动修改证据状态）：");
+      for (const [label, count] of auditSummary) console.log(`- ${label}；受影响切片 ${count} 个`);
+      if (verboseImpact) {
+        console.log("\n逐验收切片明细：");
+        for (const detail of auditDetails) console.log(`- ${detail}`);
+      } else {
+        console.log("  使用 --verbose 查看逐切片明细。");
       }
     }
     if (blocking.length > 0) {
