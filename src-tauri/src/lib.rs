@@ -1,4 +1,5 @@
 mod audio;
+mod clipboard_transaction;
 mod command_error;
 mod commands;
 mod config;
@@ -53,6 +54,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_shell::init())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Info)
@@ -122,6 +124,9 @@ pub fn run() {
         ])
         .setup(move |app| {
             let pending = Arc::new(pending_output_service::PendingOutputService::default());
+            let delivery_executor: Arc<dyn inject::DeliveryExecutor> = Arc::new(
+                clipboard_transaction::ClipboardTransactionService::new(app.handle().clone()),
+            );
             let initial_config = voice_services.config.snapshot();
             let voice = voice_controller::VoiceSessionHandle::spawn(
                 app.handle().clone(),
@@ -129,6 +134,7 @@ pub fn run() {
                 initial_config.revision,
                 voice_services.clone(),
                 pending.clone(),
+                delivery_executor,
             );
             let shortcut_manager = shortcut_manager::ShortcutManager::initialize(
                 app,
@@ -228,7 +234,7 @@ mod tests {
     }
 
     #[test]
-    fn automatic_delivery_cannot_restore_live_ole_clipboard_objects() {
+    fn automatic_delivery_native_calls_are_isolated_to_the_helper_crate() {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let mut files = vec![
             manifest.join("src/delivery.rs"),
@@ -242,6 +248,11 @@ mod tests {
                 "OleSetClipboard",
                 "OleFlushClipboard",
                 "IDataObject",
+                "SendInput",
+                "OpenClipboard",
+                "EmptyClipboard",
+                "SetClipboardData",
+                "GetClipboardData",
             ] {
                 assert!(
                     !source.contains(forbidden),

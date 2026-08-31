@@ -21,7 +21,7 @@ use crate::config::{AppConfig, InjectionStrategy};
 use crate::incident::model::{
     IncidentEvent, Recoverability, Stage as IncidentStage, StageOutcome, TerminalOutcome,
 };
-use crate::inject::{DeliveryExecutor, DeliveryMode, SafeModeDeliveryExecutor};
+use crate::inject::{DeliveryExecutor, DeliveryMode};
 use crate::pending_output_service::{PendingOutputService, PendingOutputServiceError};
 use crate::services::AppServices;
 use crate::state::{ReleaseDecision, VoiceState};
@@ -77,6 +77,7 @@ pub(super) fn build_actor(
     revision: u64,
     services: AppServices,
     pending: Arc<PendingOutputService>,
+    executor: Arc<dyn DeliveryExecutor>,
     rx: mpsc::Receiver<ActorMessage>,
     events: VoiceInternalEventSink,
     fail_closed: Arc<AtomicBool>,
@@ -96,7 +97,7 @@ pub(super) fn build_actor(
             fail_closed,
             fail_closed_notify,
             audio: AudioSessionHandle::spawn(),
-            executor: Arc::new(SafeModeDeliveryExecutor),
+            executor,
             starting: None,
             resources: None,
             finalizing_cancellation: None,

@@ -308,7 +308,11 @@ fn executable_path(process_id: u32) -> Result<String, String> {
         let _ = CloseHandle(process);
     }
     result.map_err(|error| format!("无法读取目标程序路径: {error}"))?;
-    Ok(String::from_utf16_lossy(&buffer[..length as usize]))
+    let queried = String::from_utf16_lossy(&buffer[..length as usize]);
+    Ok(std::fs::canonicalize(&queried)
+        .unwrap_or_else(|_| std::path::PathBuf::from(&queried))
+        .to_string_lossy()
+        .into_owned())
 }
 
 fn executable_name_from_path(path: &str) -> String {

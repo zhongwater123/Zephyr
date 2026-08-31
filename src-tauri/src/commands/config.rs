@@ -270,12 +270,6 @@ pub fn set_clipboard_compatibility(
             "请输入不含路径的 Windows 可执行文件名，例如 legacy.exe",
         ));
     }
-    if enabled {
-        return Err(CommandError::new(
-            "clipboard_compatibility_temporarily_unavailable",
-            "剪贴板兼容模式正在安全升级，暂时不能新增兼容应用",
-        ));
-    }
     if enabled
         && !services
             .confirmations

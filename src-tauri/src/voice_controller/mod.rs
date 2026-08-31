@@ -11,6 +11,7 @@ pub use contract::{VoiceAvailability, VoiceStatusSnapshot};
 pub(crate) use contract::{VoiceInternalEventSink, VoiceSessionObserver};
 pub use resources::SessionMetrics;
 
+use crate::inject::DeliveryExecutor;
 use crate::pending_output_service::PendingOutputService;
 use crate::services::AppServices;
 use crate::voice_trigger::{
@@ -41,6 +42,7 @@ impl VoiceSessionHandle {
         revision: u64,
         services: AppServices,
         pending: Arc<PendingOutputService>,
+        executor: Arc<dyn DeliveryExecutor>,
     ) -> Self {
         let (tx, rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
         let fail_closed = Arc::new(AtomicBool::new(false));
@@ -51,6 +53,7 @@ impl VoiceSessionHandle {
             revision,
             services,
             pending,
+            executor,
             rx,
             VoiceInternalEventSink::new(tx.clone()),
             fail_closed.clone(),

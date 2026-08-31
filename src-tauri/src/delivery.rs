@@ -37,10 +37,13 @@ pub fn prepare_delivery_text(
         }
     };
 
-    if intent == DeliveryIntent::SmartDictation && prepared.contains('\n') {
+    if intent == DeliveryIntent::SmartDictation
+        && prepared.contains('\n')
+        && target::is_multiline_unsafe_target(&_target_window.executable_name)
+    {
         return Err(DeliveryFailure {
-            code: "atomic_paste_temporarily_unavailable",
-            message: "多行整体粘贴正在安全升级，结果已进入待处理区".to_string(),
+            code: "multiline_delivery_requires_user_action",
+            message: "目标可能执行粘贴的换行，结果已进入待处理区，请由你主动复制".to_string(),
         });
     }
 
@@ -143,7 +146,7 @@ impl DeliveryService {
         let transaction_id = Uuid::new_v4();
         let mode = match intent {
             DeliveryIntent::Legacy => requested_mode,
-            DeliveryIntent::SmartDictation => DeliveryMode::Unicode,
+            DeliveryIntent::SmartDictation => DeliveryMode::ClipboardPaste,
         };
         let started = Instant::now();
         let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
@@ -162,7 +165,7 @@ impl DeliveryService {
                 mode,
             })
             .await
-            .map_err(map_inject_error);
+            .map_err(|error| map_inject_error(error, intent, mode));
         match &result {
             Ok(receipt) => log::info!(
                 "delivery_inject_finished transaction_id={transaction_id} submission={:?} restoration={:?} elapsed_ms={}",
@@ -228,11 +231,29 @@ impl DeliveryService {
     }
 }
 
-fn map_inject_error(error: InjectError) -> DeliveryFailure {
+fn map_inject_error(
+    error: InjectError,
+    intent: DeliveryIntent,
+    mode: DeliveryMode,
+) -> DeliveryFailure {
     match error {
-        InjectError::ClipboardTemporarilyUnavailable => DeliveryFailure {
-            code: "clipboard_compatibility_temporarily_unavailable",
-            message: "剪贴板兼容模式正在安全升级，结果已进入待处理区".to_string(),
+        InjectError::HelperUnavailable(message) => DeliveryFailure {
+            code: if intent == DeliveryIntent::SmartDictation {
+                "atomic_paste_temporarily_unavailable"
+            } else if mode == DeliveryMode::ClipboardPaste {
+                "clipboard_compatibility_temporarily_unavailable"
+            } else {
+                "delivery_helper_unavailable"
+            },
+            message: format!("安全交付辅助进程不可用，结果已进入待处理区：{message}"),
+        },
+        InjectError::ClipboardSnapshotUnsupported(message) => DeliveryFailure {
+            code: "clipboard_snapshot_unsupported",
+            message: format!("当前剪贴板无法安全保存，尚未覆盖，结果已进入待处理区：{message}"),
+        },
+        InjectError::TargetChanged(message) => DeliveryFailure {
+            code: "target_changed",
+            message,
         },
         other => DeliveryFailure {
             code: "injection_task_failed",
@@ -284,15 +305,51 @@ mod tests {
     }
 
     #[test]
-    fn smart_multiline_fails_closed_until_atomic_paste_is_available() {
-        for executable in ["notepad.exe", "Code.exe", "WindowsTerminal.exe"] {
-            let error = prepare_delivery_text(
-                "first\nsecond",
-                &target(executable),
-                DeliveryIntent::SmartDictation,
-            )
-            .unwrap_err();
-            assert_eq!(error.code, "atomic_paste_temporarily_unavailable");
+    fn smart_multiline_is_atomic_for_editors_but_fails_closed_for_terminals() {
+        for executable in ["notepad.exe", "Code.exe"] {
+            assert_eq!(
+                prepare_delivery_text(
+                    "first\nsecond",
+                    &target(executable),
+                    DeliveryIntent::SmartDictation,
+                )
+                .unwrap(),
+                "first\nsecond"
+            );
         }
+        let error = prepare_delivery_text(
+            "first\nsecond",
+            &target("WindowsTerminal.exe"),
+            DeliveryIntent::SmartDictation,
+        )
+        .unwrap_err();
+        assert_eq!(error.code, "multiline_delivery_requires_user_action");
+    }
+
+    #[test]
+    fn helper_unavailable_uses_mode_specific_pending_reasons() {
+        let smart = map_inject_error(
+            InjectError::HelperUnavailable("missing".to_string()),
+            DeliveryIntent::SmartDictation,
+            DeliveryMode::ClipboardPaste,
+        );
+        assert_eq!(smart.code, "atomic_paste_temporarily_unavailable");
+
+        let compatibility = map_inject_error(
+            InjectError::HelperUnavailable("missing".to_string()),
+            DeliveryIntent::Legacy,
+            DeliveryMode::ClipboardPaste,
+        );
+        assert_eq!(
+            compatibility.code,
+            "clipboard_compatibility_temporarily_unavailable"
+        );
+
+        let unicode = map_inject_error(
+            InjectError::HelperUnavailable("missing".to_string()),
+            DeliveryIntent::Legacy,
+            DeliveryMode::Unicode,
+        );
+        assert_eq!(unicode.code, "delivery_helper_unavailable");
     }
 }

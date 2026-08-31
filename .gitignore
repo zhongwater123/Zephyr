@@ -4,6 +4,8 @@ target/
 target-check/
 .vs/
 src-tauri/target/
+src-tauri/binaries/*.exe
+.cargo-target-clipboard/
 .tauri-dev.lock
 src-tauri/gen/
 .env
