@@ -417,7 +417,8 @@
         "docs/architecture/adr/0003-delivery-commit-point-and-pending-output.md",
         "docs/architecture/adr/0006-unicode-injection-default.md",
         "docs/architecture/adr/0012-unified-voice-input-control-plane.md",
-        "docs/architecture/adr/0014-atomic-smart-dictation-paste.md"
+        "docs/architecture/adr/0014-atomic-smart-dictation-paste.md",
+        "docs/architecture/adr/0018-owned-clipboard-transaction-and-isolated-paste.md"
       ],
       "changeTriggers": [
         "目标验证、文本校验、注入、Pending 或副作用提交顺序变化"
@@ -557,7 +558,8 @@
       ],
       "adrs": [
         "docs/architecture/adr/0001-tauri-local-desktop-boundary.md",
-        "docs/architecture/adr/0006-unicode-injection-default.md"
+        "docs/architecture/adr/0006-unicode-injection-default.md",
+        "docs/architecture/adr/0018-owned-clipboard-transaction-and-isolated-paste.md"
       ],
       "changeTriggers": [
         "Win32、OLE、托盘、原生确认或窗口身份行为变化"

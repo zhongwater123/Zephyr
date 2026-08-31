@@ -23,6 +23,7 @@ ADR 记录已经影响代码边界、数据安全或演进成本的决策。Acce
 | [ADR-0015](0015-internal-shared-deepseek-credential-and-isolated-prompts.md) | Superseded | 内部分发共享 DeepSeek 凭据，并以独立文件隔离写作画像 Prompt |
 | [ADR-0016](0016-deterministic-mvp-routing-and-deepseek-flash.md) | Superseded | Router 使用用户覆盖 > 内置 EXE 分类 > general，文本处理默认 DeepSeek Flash |
 | [ADR-0017](0017-unified-app-aware-polishing-with-strength.md) | Accepted | 单一 Prompt 接收应用上下文与三档强度，由模型自主完成场景化润色 |
+| [ADR-0018](0018-owned-clipboard-transaction-and-isolated-paste.md) | Proposed | 以自有剪贴板事务和隔离粘贴进程替代 OLE 活对象恢复 |
 
 - **Proposed**：已提出，尚未承诺。
 - **Accepted**：当前实现和演进应遵循。

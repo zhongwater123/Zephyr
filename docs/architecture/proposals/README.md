@@ -4,7 +4,7 @@
 
 ## 当前提案
 
-- [macOS 单仓并行开发与安全交付边界](macos-parallel-development.md)：记录单仓平台适配、交付提交三态、权限、浮层、直接分发、文档拆分和分阶段门禁的候选方案。
+- [macOS 单仓能力切片开发与安全交付边界](macos-parallel-development.md)：记录共享产品链路、macOS 纵向能力单元、有界原生 helper、交付提交三态、权限、浮层和已确认直接 DMG 路线的候选实现边界。
 - [场景感知文本路由与智能成稿](context-aware-text-routing.md)：记录尚未成为当前实现事实的文本路由与成稿设计历史；其中部分判断已被后续 ADR 和 Feature 契约替代，阅读时以当前 Dossier 与 ADR 状态为准。
 
 每个 Proposal 必须以 JSON front matter 开头：
