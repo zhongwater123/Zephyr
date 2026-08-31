@@ -7,6 +7,21 @@ import { BehaviorSwitch } from "./BehaviorSwitch";
 import { OptionPoolRenderer } from "./OptionPoolRenderer";
 import { PolishLevelSetting } from "./PolishLevelSetting";
 
+const RULER_TICK_COUNT = 12;
+const RULER_TICK_WINDOW = 100 / (RULER_TICK_COUNT - 1);
+const RULER_TICKS = Array.from({ length: RULER_TICK_COUNT }, (_, i) => {
+  const isFirst = i === 0;
+  const isLast = i === RULER_TICK_COUNT - 1;
+  const center = (i / (RULER_TICK_COUNT - 1)) * 100;
+  const start = isFirst ? 0 : Math.max(0, center - RULER_TICK_WINDOW);
+  const end = isLast ? 100 : Math.min(100, center + RULER_TICK_WINDOW);
+  return {
+    i,
+    range: `${start}% ${end}%`,
+    edgeClass: isFirst ? " is-first" : isLast ? " is-last" : "",
+  };
+});
+
 function runtimePresentation(
   config: AppConfig,
   service: ConfigStatus,
@@ -100,7 +115,6 @@ export function SettingsSidebar({
   const voiceControlsLocked = ["Starting", "Recording", "Transcribing", "Pasting"].includes(
     voiceStatus.state,
   );
-
   return (
     <aside id="config-drawer" className={"settings-sidebar " + (open ? "is-open" : "")} aria-hidden={!open}>
       <header className="settings-sidebar-header">
@@ -113,89 +127,100 @@ export function SettingsSidebar({
         </button>
       </header>
 
-      <div className="settings-sidebar-scroll">
-        <section className={"runtime-status-card " + runtime.tone} aria-live="polite">
-          <div className="runtime-status-heading">
-            <span className="runtime-status-indicator" aria-hidden="true" />
-            <div>
-              <strong>{runtime.label}</strong>
-              <p>{runtime.detail}</p>
+      <div className="settings-sidebar-scroll-wrap">
+        <div className="settings-sidebar-scroll">
+          <section className={"runtime-status-card " + runtime.tone} aria-live="polite">
+            <div className="runtime-status-heading">
+              <span className="runtime-status-indicator" aria-hidden="true" />
+              <div>
+                <strong>{runtime.label}</strong>
+                <p>{runtime.detail}</p>
+              </div>
             </div>
-          </div>
-          <BehaviorSwitch
-            label="语音输入"
-            description={config.enabled ? "在任意应用中使用快捷键输入" : "当前不会监听快捷键"}
-            checked={config.enabled}
-            disabled={enabledSaving}
-            onChange={onEnabled}
+            <BehaviorSwitch
+              label="语音输入"
+              description={config.enabled ? "在任意应用中使用快捷键输入" : "当前不会监听快捷键"}
+              checked={config.enabled}
+              disabled={enabledSaving}
+              onChange={onEnabled}
+            />
+            {enabledError ? <p className="field-error" role="alert">{enabledError}</p> : null}
+          </section>
+
+          <ShortcutTriggerModeField
+            value={config.shortcut_trigger_mode}
+            saving={triggerModeSaving}
+            disabled={voiceControlsLocked}
+            error={triggerModeError}
+            onChange={onTriggerMode}
           />
-          {enabledError ? <p className="field-error" role="alert">{enabledError}</p> : null}
-        </section>
 
-        <ShortcutTriggerModeField
-          value={config.shortcut_trigger_mode}
-          saving={triggerModeSaving}
-          disabled={voiceControlsLocked}
-          error={triggerModeError}
-          onChange={onTriggerMode}
-        />
-
-        <ShortcutCaptureField
-          view={shortcutView}
-          onStart={onShortcutCapture}
-          onCancel={onShortcutCancel}
-          onKeyDown={onShortcutKeyDown}
-          onKeyUp={onShortcutKeyUp}
-          mode={config.shortcut_trigger_mode}
-          disabled={voiceControlsLocked}
-          disabledReason={voiceControlsLocked ? "本次语音结束后可修改快捷键。" : ""}
-        />
-
-        <OptionPoolRenderer
-          pool={optionPool}
-          saving={optionSaving}
-          savingOptions={optionSavingMap}
-          errors={optionErrors}
-          onChange={onOption}
-        >
-          <PolishLevelSetting
-            value={config.polish_level}
-            saving={polishSaving}
-            error={polishError}
-            onChange={onPolishLevel}
+          <ShortcutCaptureField
+            view={shortcutView}
+            onStart={onShortcutCapture}
+            onCancel={onShortcutCancel}
+            onKeyDown={onShortcutKeyDown}
+            onKeyUp={onShortcutKeyUp}
+            mode={config.shortcut_trigger_mode}
+            disabled={voiceControlsLocked}
+            disabledReason={voiceControlsLocked ? "本次语音结束后可修改快捷键。" : ""}
           />
-        </OptionPoolRenderer>
 
-        <section className="launch-section" aria-labelledby="launch-title">
-          <div className="section-heading">
-            <h2 id="launch-title">按你的方式使用</h2>
-            <p>词库、习惯和服务设置集中管理</p>
-          </div>
-          <div className="launch-card-grid">
-            <button
-              ref={personalizationRef}
-              type="button"
-              className="launch-card"
-              onClick={() => onLaunch("personalization")}
-            >
-              <span className="launch-icon" aria-hidden="true">Aa</span>
-              <strong>个性化</strong>
-              <small>词库、表达习惯与历史</small>
-              <span className="launch-arrow" aria-hidden="true">↗</span>
-            </button>
-            <button
-              ref={moreSettingsRef}
-              type="button"
-              className="launch-card"
-              onClick={() => onLaunch("more_settings")}
-            >
-              <span className="launch-icon" aria-hidden="true">···</span>
-              <strong>更多设置</strong>
-              <small>服务、兼容性与隐私</small>
-              <span className="launch-arrow" aria-hidden="true">↗</span>
-            </button>
-          </div>
-        </section>
+          <OptionPoolRenderer
+            pool={optionPool}
+            saving={optionSaving}
+            savingOptions={optionSavingMap}
+            errors={optionErrors}
+            onChange={onOption}
+          >
+            <PolishLevelSetting
+              value={config.polish_level}
+              saving={polishSaving}
+              error={polishError}
+              onChange={onPolishLevel}
+            />
+          </OptionPoolRenderer>
+
+          <section className="launch-section" aria-labelledby="launch-title">
+            <div className="section-heading">
+              <h2 id="launch-title">按你的方式使用</h2>
+              <p>词库、习惯和服务设置集中管理</p>
+            </div>
+            <div className="launch-card-grid">
+              <button
+                ref={personalizationRef}
+                type="button"
+                className="launch-card"
+                onClick={() => onLaunch("personalization")}
+              >
+                <span className="launch-icon" aria-hidden="true">Aa</span>
+                <strong>个性化</strong>
+                <small>词库、表达习惯与历史</small>
+                <span className="launch-arrow" aria-hidden="true">↗</span>
+              </button>
+              <button
+                ref={moreSettingsRef}
+                type="button"
+                className="launch-card"
+                onClick={() => onLaunch("more_settings")}
+              >
+                <span className="launch-icon" aria-hidden="true">···</span>
+                <strong>更多设置</strong>
+                <small>服务、兼容性与隐私</small>
+                <span className="launch-arrow" aria-hidden="true">↗</span>
+              </button>
+            </div>
+          </section>
+        </div>
+        <div className="settings-sidebar-ruler" aria-hidden="true">
+          {RULER_TICKS.map((tick) => (
+            <span
+              key={tick.i}
+              className={"settings-sidebar-ruler-tick" + tick.edgeClass}
+              style={{ "--tick-range": tick.range } as JSX.CSSProperties}
+            />
+          ))}
+        </div>
       </div>
     </aside>
   );
