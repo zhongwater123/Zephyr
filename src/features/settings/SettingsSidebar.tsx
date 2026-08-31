@@ -129,42 +129,46 @@ export function SettingsSidebar({
 
       <div className="settings-sidebar-scroll-wrap">
         <div className="settings-sidebar-scroll">
-          <section className={"runtime-status-card " + runtime.tone} aria-live="polite">
-            <div className="runtime-status-heading">
-              <span className="runtime-status-indicator" aria-hidden="true" />
-              <div>
-                <strong>{runtime.label}</strong>
-                <p>{runtime.detail}</p>
+          <section className={"voice-overview-card " + runtime.tone} aria-live="polite">
+            <div className="voice-overview-row">
+              <div className="voice-overview-heading">
+                <span className="runtime-status-indicator" aria-hidden="true" />
+                <strong>语音输入</strong>
+                <span className="voice-overview-state">{runtime.label}</span>
               </div>
+              <BehaviorSwitch
+                compact
+                label="语音输入"
+                description={config.enabled ? "在任意应用中使用快捷键输入" : "当前不会监听快捷键"}
+                checked={config.enabled}
+                disabled={enabledSaving}
+                onChange={onEnabled}
+              />
             </div>
-            <BehaviorSwitch
-              label="语音输入"
-              description={config.enabled ? "在任意应用中使用快捷键输入" : "当前不会监听快捷键"}
-              checked={config.enabled}
-              disabled={enabledSaving}
-              onChange={onEnabled}
-            />
+            <p className="voice-overview-detail">{runtime.detail}</p>
             {enabledError ? <p className="field-error" role="alert">{enabledError}</p> : null}
           </section>
 
-          <ShortcutTriggerModeField
-            value={config.shortcut_trigger_mode}
-            saving={triggerModeSaving}
-            disabled={voiceControlsLocked}
-            error={triggerModeError}
-            onChange={onTriggerMode}
-          />
+          <section className="shortcut-config-card">
+            <ShortcutCaptureField
+              view={shortcutView}
+              onStart={onShortcutCapture}
+              onCancel={onShortcutCancel}
+              onKeyDown={onShortcutKeyDown}
+              onKeyUp={onShortcutKeyUp}
+              mode={config.shortcut_trigger_mode}
+              disabled={voiceControlsLocked}
+              disabledReason={voiceControlsLocked ? "本次语音结束后可修改快捷键。" : ""}
+            />
 
-          <ShortcutCaptureField
-            view={shortcutView}
-            onStart={onShortcutCapture}
-            onCancel={onShortcutCancel}
-            onKeyDown={onShortcutKeyDown}
-            onKeyUp={onShortcutKeyUp}
-            mode={config.shortcut_trigger_mode}
-            disabled={voiceControlsLocked}
-            disabledReason={voiceControlsLocked ? "本次语音结束后可修改快捷键。" : ""}
-          />
+            <ShortcutTriggerModeField
+              value={config.shortcut_trigger_mode}
+              saving={triggerModeSaving}
+              disabled={voiceControlsLocked}
+              error={triggerModeError}
+              onChange={onTriggerMode}
+            />
+          </section>
 
           <OptionPoolRenderer
             pool={optionPool}

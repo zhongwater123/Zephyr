@@ -4,16 +4,18 @@ export function BehaviorSwitch({
   checked,
   onChange,
   disabled = false,
+  compact = false,
 }: {
   label: string;
   description: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
   disabled?: boolean;
+  compact?: boolean;
 }) {
   return (
-    <label className={`behavior-switch ${disabled ? "is-disabled" : ""}`}>
-      <span className="behavior-switch-copy">
+    <label className={`behavior-switch ${disabled ? "is-disabled" : ""} ${compact ? "is-compact" : ""}`}>
+      <span className={`behavior-switch-copy ${compact ? "sr-only" : ""}`}>
         <strong>{label}</strong>
         <small>{description}</small>
       </span>
