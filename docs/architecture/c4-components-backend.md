@@ -1,5 +1,5 @@
 ---
-{"documentType":"c4-view","viewStatus":"current","sourceRevision":"b62667deab18f740c83bab2f1bcebae2fd0a59e2","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller","src-tauri/src/voice_trigger.rs","src-tauri/src/voice_input_service.rs","src-tauri/src/streaming_pipeline.rs","src-tauri/src/lib.rs","docs/architecture/c4-components-backend.md"],"reviewStatus":"reviewed","reviewedAt":"2026-08-28","knownDeviations":[]}
+{"documentType":"c4-view","viewStatus":"current","sourceRevision":"b62667deab18f740c83bab2f1bcebae2fd0a59e2","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller","src-tauri/src/voice_trigger.rs","src-tauri/src/voice_input_service.rs","src-tauri/src/streaming_pipeline.rs","src-tauri/src/lib.rs","docs/architecture/c4-components-backend.md"],"reviewStatus":"stale","reviewedAt":"2026-08-28","knownDeviations":["源码快照早于当前 main；等待收口者基于合并后的 clean revision 完成语义复核"]}
 ---
 
 # C4 L3：Rust 后端组件

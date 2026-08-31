@@ -1,5 +1,5 @@
 ---
-{"documentType":"c4-view","viewStatus":"current","sourceRevision":"38e54443bb4357771c9c789f83d5fc7e4ed3830c","worktreeState":"dirty","changedPaths":["docs/architecture/c4-container.md"],"reviewStatus":"reviewed","reviewedAt":"2026-08-27","knownDeviations":[]}
+{"documentType":"c4-view","viewStatus":"current","sourceRevision":"38e54443bb4357771c9c789f83d5fc7e4ed3830c","worktreeState":"dirty","changedPaths":["docs/architecture/c4-container.md"],"reviewStatus":"stale","reviewedAt":"2026-08-27","knownDeviations":["源码快照早于当前 main；等待收口者基于合并后的 clean revision 完成语义复核"]}
 ---
 
 # C4 L2：容器

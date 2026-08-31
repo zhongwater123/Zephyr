@@ -23,7 +23,7 @@ Feature Dossier 服务于当前 MVP，但其章节并不具有相同约束力：
 - **上下文与证据**：`局部假设`、可选的`概念迭代记录`、`架构决策`链接、`当前实现入口`、`验证状态` 和 `澄清历史`。它们帮助判断与复核，但不能单独阻止一个更符合最新用户需求的实现。
 - `specStatus=draft` 的 Dossier 全部为候选材料；`confirmed` 只表示其中的产品契约已有可追溯的用户确认，不代表当前实现、验收方法或技术方案被永久确认。
 
-所有 Dossier 可选声明 `authority`：`mvp_contract` 表示当前可调整的验证契约，`hard_boundary` 仅用于安全、数据完整性或外部承诺边界，`reference` 表示背景材料。未声明时按 `mvp_contract` 处理。
+所有 Dossier 必须显式声明 `authority`：`mvp_contract` 表示当前可调整的验证契约，`hard_boundary` 仅用于安全、数据完整性或外部承诺边界，`reference` 表示背景材料。禁止依赖默认值猜测文档权威级别。
 
 ## 创建门槛
 
@@ -34,6 +34,24 @@ Feature Dossier 服务于当前 MVP，但其章节并不具有相同约束力：
 - 失败会造成数据、副作用、安全或长期不可用的功能。
 
 普通 UI 文案、局部算法和不改变边界的小修复不创建 Dossier。局部假设保存在功能文件内；只有跨功能假设增长到需要独立生命周期时才建立全局索引。
+
+## 默认读取与写入预算
+
+Dossier 是跨组件或高风险任务的单一产品入口，不是通往全部架构文档的必读索引。
+
+- 普通局部修改不读取 Dossier，也不修改文档。
+- 现有契约内的跨组件或高风险修改通常只读一份主 Dossier 的`用户目标`、`验收场景`、`明确不规定的实现`、尚未关闭的`局部假设`和`验证状态`。
+- 只有组件责任、依赖、外部边界或关键时序发生变化，才额外打开一份相关 Current View；只有长期决策边界可能被改变或违反，才打开相关 ADR。
+- `架构决策`、`当前实现入口`、证据和历史用于按需追踪，不要求开发 Agent 递归阅读。
+- 普通任务默认不修改任何 Dossier。只有用户可观察契约改变、出现新的开放假设、目标环境结果使验证失效，或收口者升级验证状态时才修改。
+
+如果一个普通任务在开始实现前需要阅读三份以上规范性材料，应先检查是否存在重复规定、组件映射过宽，或任务其实需要拆分；不得把文档数量当作审查充分性的替代品。
+
+## 并行 Agent 权限
+
+开发 Agent 可以报告实现事实、追加实际执行过的证据，或按用户最新明确要求修改受影响的 MVP 契约；它不能仅凭自己完成实现或单元测试就把 `implementationReview.status` 升为 `conformant`、把 `validationStatus` 升为 `validated`，也不能替其他并行分支声明无偏差。
+
+验证和符合性升级由指定的集成/文档收口者完成。收口者只使用已经合并的 clean revision，核对最终代码、验收切片、目标环境结果和未关闭偏差。普通缺陷留在 Issue/PR；只有跨 PR 持续存在并会污染架构判断的偏差，才以稳定 Issue ID 回链到 Dossier 或 Current View。项目不创建每任务一张文档交付单。
 
 ## 元数据
 
@@ -70,7 +88,7 @@ Dossier 以 `---` 包围的 JSON 对象开头。JSON 同时是 YAML 的合法子
 状态含义：
 
 - `specStatus`: `draft | confirmed | superseded`
-- `authority`: `mvp_contract | hard_boundary | reference`（省略时为 `mvp_contract`）
+- `authority`: `mvp_contract | hard_boundary | reference`（必填）
 - `implementationStatus`: `not_started | in_progress | implemented | deprecated | superseded`
 - `implementationReview.status`: `unreviewed | partial | conformant | deviating`
 - `validationStatus`: `unverified | partial | validated | invalidated`
@@ -129,7 +147,9 @@ MVP 讨论中的想法先按权威级别分类，避免“说过”自动变成�
 
 ## 验证证据
 
-普通开发证据记录 source revision、worktree 状态、变更路径、环境和日期，并明确它证明的能力、范围和限制。发布级证据再增加 build ID 和 artifact SHA-256。
+证据按事件写入，而不是每个任务都写。只有以下情况需要新增或更新证据：准备升级验证状态、真实目标环境/人工质量/故障注入结果会改变完成判断、现有证据被新源码影响，或发布工件需要追溯。普通单元测试与 CI 结果保留在 PR/CI；只有它承担某个验收切片的长期证明时才进入 Dossier。
+
+进入 Dossier 的开发证据记录 source revision、worktree 状态、变更路径、环境和日期，并明确它证明的能力、范围和限制。发布级证据再增加 build ID 和 artifact SHA-256。
 
 - `human_quality_eval`：对模型或生成结果进行有协议的人工质量评测。至少记录语料范围、对照基线、评审维度、评审者范围和主要失败类型；单纯“看起来不错”不构成该能力。
 - `usability_observation`：让目标用户完成代表性任务，观察其是否理解控件、能否预测结果并完成操作。组件测试、快照和作者自评不能替代该能力。

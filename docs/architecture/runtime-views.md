@@ -1,5 +1,5 @@
 ---
-{"documentType":"runtime-view","viewStatus":"current","sourceRevision":"b5929f21cee3329d80e732a3fa2ed86ff6035f5c","worktreeState":"dirty","changedPaths":["src-tauri/src/config.rs","src-tauri/src/commands/config.rs","src-tauri/src/shortcut_manager","src-tauri/src/voice_controller","src-tauri/src/voice_trigger.rs","src-tauri/src/state.rs","src-tauri/src/overlay.rs","src/app/AppShellV2.tsx","src/features/shortcut","src/features/settings","src/preinput","docs/architecture/runtime-views.md"],"reviewStatus":"reviewed","reviewedAt":"2026-08-28","knownDeviations":[]}
+{"documentType":"runtime-view","viewStatus":"current","sourceRevision":"b5929f21cee3329d80e732a3fa2ed86ff6035f5c","worktreeState":"dirty","changedPaths":["src-tauri/src/config.rs","src-tauri/src/commands/config.rs","src-tauri/src/shortcut_manager","src-tauri/src/voice_controller","src-tauri/src/voice_trigger.rs","src-tauri/src/state.rs","src-tauri/src/overlay.rs","src/app/AppShellV2.tsx","src/features/shortcut","src/features/settings","src/preinput","docs/architecture/runtime-views.md"],"reviewStatus":"stale","reviewedAt":"2026-08-28","knownDeviations":["源码快照早于当前 main；等待收口者基于合并后的 clean revision 完成语义复核"]}
 ---
 
 # 运行时与部署视图

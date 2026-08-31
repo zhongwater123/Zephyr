@@ -10,11 +10,20 @@
 - **代码地图**：把当前组件 ID 映射到源码、Current 叙事、ADR，并将非规范性 Implementation Guide 单独分类，支持自动影响分析。
 - **测试与实机记录**：提供绑定版本、工作树和环境的验证证据。
 
-当前基线：Windows-only Tauri 2 桌面应用；前端为 Preact/Vite，核心语音链路为 Rust；Current 视图最后按脏工作区代码复核于 2026-08-27，具体偏差和源码基线记录在各视图 front matter。
+当前基线：Windows-only Tauri 2 桌面应用；前端为 Preact/Vite，核心语音链路为 Rust。现有 Current 视图绑定 2026-08-27 至 2026-08-28 的历史脏工作区快照，已统一标为 `reviewStatus=stale`；在收口者基于合并后的 clean revision 完成语义复核前，它们只能用于导航和提出核查问题，不能作为当前实现符合性证明。
 
 ## 推荐阅读路径
 
 本路径面向需要建立系统全貌的人类读者，不是 Agent 执行任务时的默认上下文。Agent 的最小读取范围以仓库根目录 `AGENTS.md` 为准，并依据实际影响面按需展开架构材料。
+
+Agent 执行任务的默认路径是：
+
+- L0 局部修改：`AGENTS.md` → 代码 → 测试 → PR。
+- L1 跨组件/高风险但契约不变：`AGENTS.md` → 一份主 Dossier → 代码 → 测试 → PR。
+- L2/L3 契约或架构变化：在 L1 基础上最多先打开一份相关 Current View；只有触及长期决策边界时再打开相关 ADR。
+- L4 验证升级：Dossier → 对应证据 → 由集成/文档收口者升级状态。
+
+这是一条按事件升级的路径，不要求从 Dossier 递归阅读其全部链接。完整架构阅读清单仅用于 onboarding、整体审计或明确的跨系统设计任务。
 
 新成员按以下顺序阅读：
 
@@ -29,7 +38,7 @@
 9. [ADR 索引](adr/README.md)
 10. [代码地图](code-map.md)
 
-排查或改代码时，先运行：
+跨组件、高风险或边界不确定时运行：
 
 ```powershell
 npm run architecture:impact
@@ -69,6 +78,8 @@ npm run architecture:check
 - [architecture.config.json](architecture.config.json) 定义必需文档与生产源码覆盖范围。
 - 安全、容量和时限常量必须登记在 [架构不变量](invariants.md)，并从 Rust 具名常量自动核验。
 - ADR 一经 Accepted 不重写结论；需要改变时新增 ADR 并标记 supersedes/superseded by。
+- 开发 Agent 不得自行把 Dossier 升为 `validated`、Current View 升为 `reviewed`，或把 ADR 从 Proposed 升为 Accepted；这些状态由集成/文档收口者基于合并后的 clean revision 更新。
+- Issue/PR 保存普通任务和缺陷记录，不新增每任务文档交付单。只有契约、长期决策、持续跨 PR 偏差或验证升级进入长期文档。
 - 拟议 C4/Runtime View 必须进入 [proposals](proposals/README.md) 并声明 `viewStatus=proposed`；当前视图声明 `viewStatus=current`，同时记录 `sourceRevision`、`worktreeState`、`reviewStatus`、`reviewedAt`、`knownDeviations`，脏工作树还记录 `changedPaths`。
 - Implementation Guide 必须声明 `normative=false` 并绑定 source revision、worktree 状态、复核状态和关联 Feature；不得用它覆盖 Dossier、ADR 或源码事实。
 - 测试通过但目标环境失败时，产品验收仍失败；不得用文档或局部测试解释掉实机结果。

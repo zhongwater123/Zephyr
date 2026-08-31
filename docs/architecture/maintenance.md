@@ -21,11 +21,38 @@
 
 在 MVP 迭代中，Dossier 的用户目标、已确认验收和明确不规定的实现构成当前契约；假设、实现入口、验证记录和历史只提供上下文。用户最新明确需求可以直接修订 MVP 契约。只有涉及安全、数据完整性、外部承诺或难以逆转的 Accepted ADR 决策时，才先暂停并更新决策记录。
 
+`current`、`reviewed`、`accepted` 和 `validated` 不是同义词。Current View 只解释它绑定的源码快照；ADR Accepted 只说明决策已经接受；Dossier validated 只说明列出的验收在指定 revision 与环境获得了足够证据。结构检查通过也不升级任何语义状态。
+
+## 最小上下文分级
+
+文档读取按实际影响面升级，不按链接数量扩散：
+
+| 等级 | 典型变化 | 默认读取 | 默认文档写入 |
+| --- | --- | --- | --- |
+| L0 局部实现 | 重构、局部算法、测试、样式或文案修正，不改变公共行为 | `AGENTS.md`、代码、测试 | 无 |
+| L1 契约内功能 | 在既有用户契约内修改跨组件/高风险功能 | L0 + 一份主 Dossier 的契约、开放假设和验证状态 | 通常无；测试留在 PR/CI |
+| L2 产品契约 | 用户目标、验收结果或明确非目标变化 | L1 | 更新一份 Dossier；只有时序/边界也变化时更新一份 View |
+| L3 架构边界 | 组件责任、依赖、信任边界、不可逆副作用顺序或长期决策变化 | L1 + 一份相关 Current View + 相关 ADR | 更新 View；决策变化时新增 Proposed/Superseding ADR |
+| L4 验证/发布 | 升级验证状态、目标环境验收、安全/故障验证或发布工件 | 相关 Dossier、证据范围和必要的符合性材料 | 写入可追溯证据并由收口者升级状态 |
+
+“一份”表示主入口，不是硬性禁止在确有跨边界影响时多读；但普通任务若需要三份以上规范性材料，应先检查任务是否过宽或文档是否重复。Architecture impact 输出用于选择入口，不是要求逐项阅读和修改的完成清单。
+
+## 多 Agent 隔离与收口
+
+- 每个编辑任务使用从最新 `origin/main` 创建的短生命周期 task branch 和独立 Git worktree；同一 worktree 同时只允许一个写入 Agent。
+- 分支只表达实现隔离，不表达项目状态。任务状态由 Issue/PR、CI，功能验证状态由 Dossier，发布状态由 tag/release 表达。
+- 开发 Agent 可以修改代码、测试和用户明确改变的 MVP 契约，也可以报告实际执行的验证与偏差；不得自行把 Dossier 升为 `validated`、Current View 升为 `reviewed`，或把 ADR 从 Proposed 升为 Accepted。
+- 集成/文档收口者不并行开发该功能。它在分支合并后，以 clean revision 对照最终代码、Dossier 契约、必要的 Current View/ADR、CI 和目标环境证据，解决冲突并执行状态升级。
+- 同一事实出现冲突时，不以最后写入者为准。源码决定实现事实，Dossier 契约决定用户行为目标，Accepted ADR 决定仍有效的长期边界，目标环境证据决定对应验收是否成立。
+- 不建立 `docs/changes/<task-id>` 流水账。PR 保存一次性交付信息；普通 bug 留在 Issue。只有跨 PR 持续存在且会影响架构判断的偏差，才使用稳定 Issue ID 回链到 `knownDeviations`。
+
+建议分支名使用 `codex/<issue-or-task>-<slug>`（其他工具可使用团队统一前缀），不要使用 Agent 名称作为长期分类。合并后及时删除短期分支和 worktree。
+
 ## 日常工作流
 
 ### 1. 变更前：确定产品与影响面
 
-跨组件或高风险用户功能先读取对应 Dossier，再运行：
+跨组件或高风险用户功能先读取一份主 Dossier 的最小契约范围，再运行：
 
 ```powershell
 npm run architecture:impact
@@ -37,7 +64,7 @@ npm run architecture:impact
 npm run architecture:impact -- --base origin/main
 ```
 
-脚本合并已暂存、未暂存、未跟踪文件和可选 Git base diff。源码命中组件后沿 `dependsOn` 反向传播，并计算相关 Dossier 验收切片的 `effectiveFreshness`。脚本不修改 Dossier；`partial` / `unverified` 只告警，只有已声明 `validated` 且缺少重新验证或有效 `impactAssessment` 时阻断门禁。
+脚本合并已暂存、未暂存、未跟踪文件和可选 Git base diff。源码命中组件后沿 `dependsOn` 反向传播，并计算相关 Dossier 验收切片的 `effectiveFreshness`。输出分为主 Dossier 候选、条件阅读的 View/ADR 和仅审计的证据新鲜度；开发者按任务实际边界选择，不递归阅读全部候选。脚本不修改 Dossier；`partial` / `unverified` 只告警，只有已声明 `validated` 且缺少重新验证或有效 `impactAssessment` 时阻断门禁。
 
 ### 2. 设计中：隔离 Proposed
 
@@ -49,15 +76,15 @@ npm run architecture:impact -- --base origin/main
 
 ### 3. 实现中：按变更类型复核
 
-| 变化 | 至少复核 |
-| --- | --- |
-| 用户可观察行为 | 阅读 Feature Dossier 的 MVP 契约；契约变化时更新它，并记录可获得的相关自动化或实机证据 |
-| 外部系统、用户或信任边界 | C4 L1/L2、arc42 风险、ADR |
-| 进程、WebView、存储或组件责任 | C4 L2/L3、代码地图、ADR |
-| 录音、识别、交付、配置或快捷键时序 | Current Runtime View、Dossier、相关 ADR |
-| 容量、时限或安全上限 | 代码常量、架构事实、不变量及 mentions |
-| 仅组件内部算法 | 确认公共契约、验收和叙事仍准确 |
-| 推翻既有架构决策 | 新增 ADR 并建立替代关系，不改写历史结论 |
+| 变化 | 至少复核 | 何时写文档 |
+| --- | --- | --- |
+| 用户可观察行为 | 一份 Feature Dossier 的 MVP 契约 | 只有契约或验证判断变化时更新 Dossier |
+| 外部系统、用户或信任边界 | 相关 C4 L1/L2、arc42 风险、ADR | 边界实际变化时更新 View；长期取舍变化时新增 ADR |
+| 进程、WebView、存储或组件责任 | 相关 C4 L2/L3、代码地图、ADR | 责任或依赖变化时更新，不记录私有重构 |
+| 录音、识别、交付、配置或快捷键关键时序 | 一份主 Dossier、Runtime View、相关 ADR | 不可逆副作用或关键顺序变化时更新 Runtime View |
+| 容量、时限或安全上限 | 代码常量、架构事实、不变量及 mentions | 事实值或安全边界变化时同步 |
+| 仅组件内部算法 | 公共契约和测试 | 默认不写文档 |
+| 推翻既有架构决策 | 旧 ADR 与受影响契约 | 新增 ADR 并建立替代关系，不改写历史结论 |
 
 ### 4. 变更后：结构校验与验证
 
@@ -80,11 +107,13 @@ npm run architecture:check
 ## Feature Dossier
 
 - 只有跨组件、高风险或依赖目标环境验证的功能创建 Dossier。
+- `authority` 必须显式填写，禁止通过缺省值猜测权威级别。
 - 规格状态、实现状态和验证状态独立维护。
 - 实现状态由 `implementationReview` 绑定源码 revision、工作树和已知偏差；存在未关闭偏差时不得声明 `implemented`。
 - `confirmed` 必须记录确认人、日期和来源，不允许作者自行升级。
 - `validated` 要求所有关键验收的 requiredEvidence 都有成功、带版本/环境且有效新鲜的证据能力。
-- 普通开发证据记录 revision、worktree、变更路径、环境、日期、scope 和 limitations；发布级证据再记录 build ID 与 artifact SHA-256。
+- 普通测试结果保留在 PR/CI，不自动抄入 Dossier。只有验证状态升级、目标环境/人工/故障结果、证据失效评估或发布工件追溯需要时，才记录长期证据。
+- 进入 Dossier 的开发证据记录 revision、worktree、变更路径、环境、日期、scope 和 limitations；发布级证据再记录 build ID 与 artifact SHA-256。
 - 自动化证据必须提供 `testRefs`，并用 `acceptanceCoverage` 逐验收声明完整或部分覆盖；不得用一条笼统的全量测试记录替代不同验收语义。
 - 生成式功能的工程正确性和产品质量分开验证：协议与兜底使用 `automated`，结果质量使用 `human_quality_eval`，用户是否理解和能否预测交互使用 `usability_observation`。
 - 相关源码变化产生 `potentially_stale` 的有效状态；可以重新验证，或提交绑定 revision、切片和理由的 `impactAssessment`。
@@ -92,6 +121,7 @@ npm run architecture:check
 ## Current 与 Proposed
 
 - `c4-*.md`、`runtime-views.md` 和 `arc42-lean.md` 是 Current 文档，必须声明 `viewStatus=current`，并记录 `sourceRevision`、`worktreeState`、`reviewStatus`、`reviewedAt` 和 `knownDeviations`；脏工作树还必须记录 `changedPaths`。
+- `viewStatus=current` 只表示这份文件承担 Current 角色；当 `reviewStatus=stale|partial` 时，Agent 不得把它当作当前源码的完整事实。只有收口者能基于合并后的 clean revision 将其升级为 `reviewed`。
 - Proposal 必须声明 owner、创建日期、复核条件和关联 Feature。
 - `code-map.json` 只连接当前源码、Current 文档和 Accepted/相关 ADR，不登记 Proposal。
 - 如果某个实现细节改变而组件责任和关系不变，该细节通常不属于 C4。
@@ -120,7 +150,7 @@ Accepted ADR 可以依赖 Open Assumption，但必须在 `Revisit when` 中说�
 
 ## 文档完成定义
 
-架构或高风险功能变更完成时必须同时满足：
+只有 L2-L4 变更需要文档完成定义；L0/L1 若没有触发文档写入条件，以代码、测试和 PR/CI 为完成依据。L2-L4 完成时必须同时满足：
 
 - 源码仍能从代码地图导航，生产源码覆盖保持完整；
 - Current C4 与实际进程、组件和外部边界一致；

@@ -42,6 +42,7 @@ function metadata(overrides = {}) {
   return {
     schemaVersion: 3,
     featureId: "FEAT-TEST",
+    authority: "mvp_contract",
     specStatus: "confirmed",
     confirmation: {
       confirmedBy: "test user",
@@ -121,6 +122,18 @@ test("confirmed dossier requires a traceable confirmation source", () => {
     errors,
   );
   assert.ok(errors.some((error) => error.includes("confirmation")));
+});
+
+test("dossier authority must be explicit", () => {
+  const errors = [];
+  validateFeatureDossiers(
+    [dossier({ authority: undefined })],
+    validator(),
+    new Set(["frontend.features"]),
+    new Set(["ADR-0010"]),
+    errors,
+  );
+  assert.ok(errors.some((error) => error.includes("authority")));
 });
 
 test("unknown component and ADR references are rejected", () => {
@@ -294,6 +307,10 @@ test("impact report does not rewrite dossiers and partial features remain non-bl
     encoding: "utf8",
   });
   assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /最小上下文路由/);
+  assert.match(result.stdout, /主 Dossier 候选/);
+  assert.match(result.stdout, /条件阅读 Current View/);
+  assert.match(result.stdout, /仅审计：Potentially Stale/);
   assert.match(result.stdout, /Potentially Stale/);
   assert.equal(digestFeatureFiles(), before);
   assert.match(result.stdout, /declaredStatus=partial; effectiveFreshness=potentially_stale/);

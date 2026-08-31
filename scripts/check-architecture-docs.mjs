@@ -207,6 +207,7 @@ function runImpact(architecture) {
   const changed = changedFiles(baseRef);
   const directSource = new Set();
   const directDocs = new Set();
+  const directlyChangedFeatures = new Set();
 
   for (const component of map.components) {
     if ([...changed].some((file) => component.source.some((entry) => sourceMatches(repoPath(entry), file)))) {
@@ -219,6 +220,7 @@ function runImpact(architecture) {
   for (const dossier of dossiers) {
     const relative = repoPath(path.relative(root, dossier.file));
     if (!changed.has(relative)) continue;
+    directlyChangedFeatures.add(dossier.metadata.featureId);
     for (const componentId of dossier.metadata.components ?? []) {
       directDocs.add(componentId);
     }
@@ -252,13 +254,50 @@ function runImpact(architecture) {
     return;
   }
 
+  const directIds = new Set([...directSource, ...directDocs]);
+  const dossierCandidates = dossiers.filter(
+    (dossier) =>
+      directlyChangedFeatures.has(dossier.metadata.featureId) ||
+      dossier.metadata.components.some((id) => directIds.has(id)),
+  );
+  const conditionalViews = [...new Set(affected.flatMap((component) => component.docs))].sort();
+  const conditionalGuides = [
+    ...new Set(affected.flatMap((component) => component.implementationGuides ?? [])),
+  ].sort();
+  const conditionalAdrs = [...new Set(affected.flatMap((component) => component.adrs))].sort();
+
+  console.log("\n最小上下文路由（不是文档完成清单）：");
+  console.log("- 必读：AGENTS.md、受影响代码和测试。");
+  if (dossierCandidates.length > 0) {
+    console.log(
+      `- 主 Dossier 候选：${dossierCandidates
+        .map((dossier) => repoPath(path.relative(root, dossier.file)))
+        .join(", ")}。仅跨组件/高风险任务读取任务范围内的一份主 Dossier。`,
+    );
+  } else {
+    console.log("- 主 Dossier 候选：无；若这是新的跨组件/高风险用户功能，再判断是否需要创建 Dossier。");
+  }
+  console.log(
+    `- 条件阅读 Current View：${conditionalViews.join(", ")}。仅当对应组件责任、依赖、外部边界或关键时序实际变化时打开。`,
+  );
+  if (conditionalAdrs.length > 0) {
+    console.log(
+      `- 条件阅读 ADR：${conditionalAdrs.join(", ")}。仅当长期决策边界可能被改变或违反时打开。`,
+    );
+  }
+  if (conditionalGuides.length > 0) {
+    console.log(
+      `- 审计/排障参考：${conditionalGuides.join(", ")}。非规范性材料，不自动成为实现约束。`,
+    );
+  }
+
   for (const component of affected) {
     console.log(`\n- ${component.id} — ${component.name} [${component.status}]`);
     console.log(`  Owner：${component.owner}`);
     console.log(`  命中原因：${[...reasons.get(component.id)].join("；")}`);
     console.log(`  触发条件：${component.changeTriggers.join("；")}`);
-    console.log(`  复核文档：${component.docs.join(", ")}`);
-    if (component.adrs.length > 0) console.log(`  相关 ADR：${component.adrs.join(", ")}`);
+    console.log(`  条件阅读的视图：${component.docs.join(", ")}`);
+    if (component.adrs.length > 0) console.log(`  条件阅读的 ADR：${component.adrs.join(", ")}`);
   }
 
   const affectedIds = new Set(affected.map((component) => component.id));
@@ -268,7 +307,7 @@ function runImpact(architecture) {
       .map((slice) => ({ dossier, slice })),
   );
   if (impacted.length > 0) {
-    console.log("\nPotentially Stale 验收切片（仅提示，不自动修改证据状态）：");
+    console.log("\n仅审计：Potentially Stale 验收切片（不要求开发任务逐项读写，不自动修改证据状态）：");
     const cache = new Map();
     const blocking = [];
     for (const { dossier, slice } of impacted) {
