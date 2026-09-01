@@ -45,24 +45,28 @@ describe("PolishLevelSetting semantics", () => {
   it("announces the committed level, not a continuous value", () => {
     renderSetting({ value: 0 });
     const slider = screen.getByRole("slider", { name: "智能润色输出方式" });
-    expect(slider.getAttribute("aria-valuetext")).toBe("Fast");
-    expect(screen.getByText("快速响应，仅识别原话。")).toBeTruthy();
+    expect(slider.getAttribute("aria-valuetext")).toBe("极速模式");
+    expect(screen.getByText("适合高频短对话")).toBeTruthy();
   });
 
   it("hides the pixel field and decorations from assistive tech", () => {
     const { container } = renderSetting();
-    for (const selector of [".polish-track-bed", ".polish-thumb", ".polish-range-labels"]) {
+    for (const selector of [".polish-track-bed", ".polish-thumb", ".polish-scale"]) {
       expect(container.querySelector(selector)?.getAttribute("aria-hidden")).toBe("true");
     }
     // the track itself must stay reachable — it hosts the slider
     expect(container.querySelector(".polish-track")?.getAttribute("aria-hidden")).toBeNull();
   });
 
-  it("marks the control busy while saving without greying the module out", () => {
-    renderSetting({ saving: true });
+  it("keeps saving invisible: announced to AT, never shown or blocking", () => {
+    const { container } = renderSetting({ saving: true });
     const slider = screen.getByRole("slider", { name: "智能润色输出方式" });
-    expect(slider).toHaveProperty("disabled", true);
+    // announced...
     expect(slider.getAttribute("aria-busy")).toBe("true");
+    // ...but the control stays fully usable and visually unchanged
+    expect(slider).toHaveProperty("disabled", false);
+    expect(container.querySelector(".polish-saving-halo")).toBeNull();
+    expect(container.querySelector(".polish-track.is-saving")).toBeNull();
   });
 
   it("shows a plain-language error and keeps the raw reason in the title", () => {
@@ -171,19 +175,25 @@ describe("PolishLevelSetting pointer gestures", () => {
     expect(onChange).toHaveBeenCalledWith(0);
   });
 
-  it("ignores a gesture entirely while saving", () => {
+  it("still accepts a gesture while an earlier save is in flight", () => {
+    // Persisting is background work; it must never block the next gesture.
     const { onChange, track } = renderSetting({ value: 2, saving: true });
     fireEvent.pointerDown(track, { clientX: clientXForRaw(0), pointerId: 1 });
     fireEvent.pointerUp(track, { clientX: clientXForRaw(0), pointerId: 1 });
-    expect(onChange).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith(0);
   });
 
   it("drives the whole render from one position variable", () => {
-    const { track } = renderSetting({ value: 2 });
-    expect(Number(track.style.getPropertyValue("--polish-pos"))).toBeCloseTo(2 / 3, 4);
+    // The variable lives on the HANDLE, not the track: only the handle reads
+    // it, and setting it on an ancestor made the whole subtree recompute
+    // style on every pointermove.
+    const { track, container } = renderSetting({ value: 2 });
+    const thumb = container.querySelector(".polish-thumb") as HTMLElement;
+    expect(Number(thumb.style.getPropertyValue("--polish-pos"))).toBeCloseTo(2 / 3, 4);
     fireEvent.pointerDown(track, { clientX: clientXForRaw(0), pointerId: 1 });
     fireEvent.pointerUp(track, { clientX: clientXForRaw(0), pointerId: 1 });
-    expect(Number(track.style.getPropertyValue("--polish-pos"))).toBeCloseTo(0, 4);
+    expect(Number(thumb.style.getPropertyValue("--polish-pos"))).toBeCloseTo(0, 4);
   });
 
   it("previews the level under the pointer, with hysteresis at the boundary", () => {

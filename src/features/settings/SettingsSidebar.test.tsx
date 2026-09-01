@@ -220,21 +220,23 @@ describe("SettingsSidebar", () => {
     expect(slider).toHaveProperty("min", "0");
     expect(slider).toHaveProperty("max", "3");
     expect(slider.getAttribute("aria-valuetext")).toBe("自然表达");
-    expect(screen.getByText("Fast")).toBeTruthy();
-    expect(screen.getByText("说完后，希望得到怎样的文字？")).toBeTruthy();
-    expect(screen.getByText(/选择更快直出/)).toBeTruthy();
+    // The surface now shows only the selected mode and its one-line meaning;
+    // the other three are reachable by moving the control, not by printing
+    // all four names on screen.
+    expect(screen.getAllByText("自然表达").length).toBeGreaterThan(0);
+    expect(screen.getByText("让表达更顺，合适时自动整理要点。")).toBeTruthy();
     expect(screen.queryByText(/Prompt|模型|介入程度/)).toBeNull();
 
     fireEvent.change(slider, { target: { value: "0" } });
     expect(onPolishLevel).toHaveBeenCalledWith(0);
   });
 
-  it("explains Fast as the ASR-only output mode", () => {
+  it("explains the ASR-only output mode in plain language", () => {
     renderSidebar({ polishLevel: 0 });
 
     const slider = screen.getByRole("slider", { name: "智能润色输出方式" });
-    expect(slider.getAttribute("aria-valuetext")).toBe("Fast");
-    expect(screen.getByText("快速响应，仅识别原话。")).toBeTruthy();
+    expect(slider.getAttribute("aria-valuetext")).toBe("极速模式");
+    expect(screen.getByText("适合高频短对话")).toBeTruthy();
   });
 
   it("keeps polishing available while ASR options are still loading", () => {
