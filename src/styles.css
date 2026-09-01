@@ -252,6 +252,7 @@ button {
   font-weight: 400;
   letter-spacing: 0;
   line-height: 1.45;
+  white-space: nowrap;
 }
 
 .config-toggle {
