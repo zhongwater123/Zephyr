@@ -1097,6 +1097,7 @@
 }
 
 .polish-setting {
+  --polish-row-h: 26px;
   margin-top: 6px;
   padding: 18px 14px 14px;
   border-top: 1px solid rgba(31, 43, 53, 0.085);
@@ -1104,74 +1105,234 @@
   background: linear-gradient(145deg, rgba(31, 113, 129, 0.075), rgba(255, 255, 252, 0.7));
 }
 
+/*
+ * Smart-polish level control: four real levels shown as a magnetic pixel
+ * energy track. `--polish-pos` (0..1) is the single coordinate; pointer
+ * handlers write it straight onto `.polish-track`, so dragging never goes
+ * through component state.
+ */
 .polish-setting-heading {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
+/*
+ * Same metric as the sibling section titles (.console-title), so 智能润色 reads
+ * as a peer of 输入效果 rather than a sub-label. ROW_H below is the single
+ * source of truth for the roll's line height, which is what keeps the title
+ * and the rolling readout on one baseline.
+ */
 .polish-setting-heading strong {
+  flex: 0 0 auto;
   color: var(--z-text);
-  font-size: 14px;
+  font-size: 16.5px;
+  font-weight: 680;
+  line-height: var(--polish-row-h);
 }
 
-.polish-setting-heading span,
-.polish-setting-intro,
-.polish-setting-result span {
+/* Faster / Smarter sit ABOVE the track and push to the edges, so the track
+   itself gets the full width for the field to play in */
+/* the track was spanning the whole sidebar and read as stretched */
+.polish-control {
+  max-width: 292px;
+}
+
+.polish-scale {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 12px 0 6px;
   color: var(--z-text-muted);
-  font-size: 12px;
-  line-height: 1.5;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  user-select: none;
 }
 
-.polish-setting-intro {
-  margin: 8px 0 14px;
+/*
+ * One clip window carrying BOTH the level name and its meaning, so the two can
+ * never drift out of sync or out of alignment with the title — they are one
+ * row of one strip. The window is taller than the text so a bigger slice of
+ * the roll is visible while it moves.
+ */
+.polish-readout-window {
+  position: relative;
+  flex: 1 1 auto;
+  height: var(--polish-row-h);
+  min-width: 0;
+  overflow: hidden;
+  /*
+   * Fade the top and bottom edges instead of slicing the glyphs flat against
+   * them. A hard clip is what made the roll's boundaries so obvious; a real
+   * wheel dissolves at the rim. This gradient never changes, so unlike a
+   * --polish-pos-driven mask it is rasterised once and cached.
+   */
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 30%,
+    black 70%,
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    black 30%,
+    black 70%,
+    transparent 100%
+  );
 }
 
-.polish-range {
+.polish-readout-strip {
+  display: block;
+  /*
+   * No permanent will-change: it is applied from JS for the duration of a swap
+   * only. A standing will-change keeps a compositor layer alive for a strip
+   * that is motionless almost all the time.
+   */
+}
+
+.polish-readout-line {
+  display: flex;
+  height: var(--polish-row-h);
+  min-width: 0;
+  align-items: baseline;
+  gap: 7px;
+}
+
+/*
+ * Fast's name carries its own hue, matching its blue plume — it is a different
+ * mode, not a weaker level. Taken from the plume's hot stop and nudged darker
+ * so it holds contrast as text on the paper background.
+ */
+.polish-readout-name.is-fast {
+  color: #2f6ecb;
+}
+
+.polish-readout-name {
+  flex: 0 0 auto;
+  color: var(--z-accent);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: var(--polish-row-h);
+  white-space: nowrap;
+}
+
+.polish-readout-desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--z-text-muted);
+  font-size: 11.5px;
+  line-height: var(--polish-row-h);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.polish-track-row {
+  display: flex;
+  align-items: center;
+}
+
+/* overflow stays visible so the handle can overhang the bed */
+.polish-track {
+  --polish-pos: 0.6667;
+  position: relative;
+  flex: 1 1 auto;
+  height: 26px;
+  min-width: 0;
+  cursor: pointer;
+  touch-action: none;
+  /* no text-selection flash while dragging across the track */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.polish-track-bed {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px;
+  border: 1px solid var(--z-line);
+  background: rgba(31, 43, 53, 0.055);
+  overflow: hidden;
+  /* keep `screen` blending inside the track instead of hitting the page */
+  isolation: isolate;
+}
+
+/*
+ * Plain alpha compositing, deliberately NOT `screen`: the field paints
+ * light-to-saturated cyan with energy as opacity, so there is nothing dark to
+ * hide and a blend mode would only wash it out.
+ *
+ * Nothing is drawn to the right of the handle by the renderer itself, so no
+ * CSS mask is needed here; masking with a --polish-pos gradient re-rasterised
+ * the whole layer on every pointermove.
+ */
+.polish-field {
+  position: absolute;
+  inset: 0;
+  display: block;
   width: 100%;
+  height: 100%;
+}
+
+.polish-notch {
+  position: absolute;
+  top: 50%;
+  width: 1px;
+  height: 8px;
+  margin-top: -4px;
+  background: rgba(31, 43, 53, 0.16);
+}
+
+.polish-thumb {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  width: 20px;
+  height: 32px;
+  margin-top: -16px;
+  left: 0;
+  /*
+   * transform, not `left`: `left` forces layout on every pointermove, which is
+   * what made dragging feel like it lagged behind the pointer. --polish-travel
+   * is the usable pixel span, published by the component on resize.
+   */
+  transform: translateX(calc(var(--polish-pos) * var(--polish-travel, 0px)));
+  border-radius: 6px;
+  border: 1px solid rgba(31, 43, 53, 0.2);
+  background: #fffefb;
+  box-shadow: 0 1px 4px rgba(31, 43, 53, 0.2);
+  transition: transform var(--polish-settle, 200ms) cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+
+/*
+ * The native range stays a real slider for semantics, keyboard and tests; it
+ * is only visually hidden. Never display:none / visibility:hidden — that would
+ * drop it out of the accessibility tree.
+ */
+.polish-range {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  width: 100%;
+  height: 100%;
   margin: 0;
-  accent-color: var(--z-accent);
+  opacity: 0;
   cursor: pointer;
 }
 
-.polish-range:disabled {
-  cursor: wait;
-  opacity: 0.58;
-}
-
-.polish-range-labels {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin-top: 4px;
-  color: var(--z-text-muted);
-  font-size: 11px;
-}
-
-.polish-range-labels span:nth-child(2),
-.polish-range-labels span:nth-child(3) {
-  text-align: center;
-}
-
-.polish-range-labels span:last-child {
-  text-align: right;
-}
-
-.polish-range-labels span.is-active {
-  color: var(--z-accent);
-  font-weight: 680;
-}
-
-.polish-setting-result {
-  display: grid;
-  gap: 2px;
-  margin: 13px 0 0;
-  padding: 10px 12px;
-  border-radius: 9px;
-  background: rgba(255, 255, 252, 0.72);
-}
-
-.polish-setting-result strong {
-  color: var(--z-text);
-  font-size: 12px;
+/*
+ * Keyboard focus only. `:focus-within` also fired for the programmatic focus
+ * taken on pointerdown, so a ring flashed on every mouse drag.
+ */
+.polish-track:has(.polish-range:focus-visible) .polish-track-bed {
+  border-color: var(--z-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--z-accent) 18%, transparent);
 }
 
 .profile-override-add {
