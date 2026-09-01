@@ -30,27 +30,76 @@
 | 等级 | 典型变化 | 默认读取 | 默认文档写入 |
 | --- | --- | --- | --- |
 | L0 局部实现 | 重构、局部算法、测试、样式或文案修正，不改变公共行为 | `AGENTS.md`、代码、测试 | 无 |
-| L1 契约内功能 | 在既有用户契约内修改跨组件/高风险功能 | L0 + 一份主 Dossier 的契约、开放假设和验证状态 | 通常无；测试留在 PR/CI |
+| L1 契约内功能 | 在既有用户契约内修改跨组件/高风险功能 | L0 + 一份主 Dossier 的契约、开放假设和验证状态 | 通常无；测试留在 commit/CI 或可选 PR |
 | L2 产品契约 | 用户目标、验收结果或明确非目标变化 | L1 | 更新一份 Dossier；只有时序/边界也变化时更新一份 View |
 | L3 架构边界 | 组件责任、依赖、信任边界、不可逆副作用顺序或长期决策变化 | L1 + 一份相关 Current View + 相关 ADR | 更新 View；决策变化时新增 Proposed/Superseding ADR |
 | L4 验证/发布 | 升级验证状态、目标环境验收、安全/故障验证或发布工件 | 相关 Dossier、证据范围和必要的符合性材料 | 写入可追溯证据并由收口者升级状态 |
 
 “一份”表示主入口，不是硬性禁止在确有跨边界影响时多读；但普通任务若需要三份以上规范性材料，应先检查任务是否过宽或文档是否重复。Architecture impact 输出用于选择入口，不是要求逐项阅读和修改的完成清单。
 
-## 多 Agent 隔离与收口
+## MVP Trunk、写入租约与隔离
 
-- Codex 中作为 **Local** 打开的仓库主 checkout 是单写者集成与实机验证区。所有指向同一路径的会话共享 `HEAD`、索引和未提交文件；除非用户明确指定当前任务为唯一集成者且没有其他写入任务使用该路径，否则 Local 中的 Agent 只能只读，不得切换/创建分支或修改跟踪文件。
-- 每个编辑任务使用从最新 `origin/main` 创建的短生命周期 task branch 和独立 Git worktree；在 Codex 中应以 **Worktree** 模式启动，或在编辑前通过 Handoff 移入 worktree。同一 worktree 同时只允许一个写入 Agent。
-- 开始编辑前执行 `git rev-parse --show-toplevel`、`git worktree list --porcelain` 和 `git status --short --branch`，确认当前路径是分配给本任务的独立 worktree。若当前路径是共享 Local、与其他写入任务相同，或仓库实际上只有一个 checkout，则停止写入并先创建/移交到 worktree。
-- 分支名不隔离工作文件。禁止在共享 Local 中用 `git switch`、`git checkout` 或 `git switch -c` 代替独立 worktree；否则该目录下所有会话都会同时改变分支并共享脏状态。
-- 如果受环境限制只能使用一个物理 checkout，所有写入必须在当前分支串行执行；其他 Agent 仅做只读分析，并在给出结论前重新检查 `HEAD`。此模式不创建并行任务分支。
-- 分支只在绑定独立 worktree 时表达实现隔离，不表达项目状态。任务状态由 Issue/PR、CI，功能验证状态由 Dossier，发布状态由 tag/release 表达。
-- 开发 Agent 可以修改代码、测试和用户明确改变的 MVP 契约，也可以报告实际执行的验证与偏差；不得自行把 Dossier 升为 `validated`、Current View 升为 `reviewed`，或把 ADR 从 Proposed 升为 Accepted。
-- 集成/文档收口者不并行开发该功能。它在分支合并后，以 clean revision 对照最终代码、Dossier 契约、必要的 Current View/ADR、CI 和目标环境证据，解决冲突并执行状态升级。
+本项目由一位维护者负责，多个会话和 Agent 可以异步处理不同功能。默认采用 trunk-based 的 **main 单写租约**，而不是“每个 Agent 一条分支和一个 PR”。Agent 身份不是交付单位；一次可回滚的用户目标或原子修改才是提交单位。
+
+| 通道 | 适用范围 | 写入方式 | 收口方式 |
+| --- | --- | --- | --- |
+| Main 快速通道 | 普通 MVP 功能、bug、局部重构、测试、UI 和文档修正 | 获得租约后直接修改并提交 `main` | 范围测试通过即可；PR 可省略 |
+| Main 批次通道 | 同一目标跨多个短会话连续完成，但不需要并行写文件 | 后续会话轮流取得同一租约，继续在 `main` 创建原子提交 | 在功能或每日节点统一 push/CI |
+| 隔离通道 | 真正并行的写入者、长任务、实验、大型重构、迁移、安全/隐私/数据完整性变化 | 独立 branch + 独立 worktree；一个 worktree 一个写入者 | 由 main 租约持有者 cherry-pick/合并；PR 仅按风险需要 |
+| 审计通道 | 代码阅读、诊断、评审、方案比较 | 不取得租约，不修改跟踪文件 | 把结论交给后续写入者 |
+
+### Main 写入租约
+
+所有指向 canonical Local checkout 的会话共享 `HEAD`、索引和未提交文件，因此可以并行分析，但不能并行编辑、测试、暂存、提交、pull 或 push。直接写 main 前必须取得 Git common directory 下的 `codex-main-writer.lock` 目录；目录的原子创建就是租约获取，禁止先检查后覆盖，也禁止使用 `-Force` 抢锁。
+
+PowerShell 获取示例：
+
+```powershell
+$repoRoot = (git rev-parse --show-toplevel).Trim()
+$gitCommonValue = (git rev-parse --git-common-dir).Trim()
+$gitCommon = if ([IO.Path]::IsPathRooted($gitCommonValue)) { $gitCommonValue } else { Join-Path $repoRoot $gitCommonValue }
+$leasePath = Join-Path ([IO.Path]::GetFullPath($gitCommon)) "codex-main-writer.lock"
+New-Item -ItemType Directory -Path $leasePath -ErrorAction Stop
+@{
+  task = "<task-id-or-short-description>"
+  owner = "<thread-or-session-id>"
+  baseRevision = (git rev-parse HEAD).Trim()
+  acquiredAt = (Get-Date).ToString("o")
+} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $leasePath "owner.json") -Encoding UTF8
+```
+
+获取失败表示已有写入者。该 Agent 继续只读分析、等待，或在任务确实满足隔离门槛时使用 worktree；不得修改已有租约。租约不能仅因时间过去而自动窃取。只有原持有者，或在确认原会话已经结束且 canonical checkout 干净后执行恢复的 Agent，才能删除陈旧租约。
+
+持有租约后必须再次执行：
+
+```powershell
+git rev-parse --show-toplevel
+git worktree list --porcelain
+git status --short --branch
+git rev-parse HEAD
+```
+
+快速通道要求当前路径是 canonical checkout、分支为 `main`、工作区干净，并重新读取受影响文件，不能把租约前的旧分析直接当成当前事实。Agent 在一个租约内只处理一个原子任务：修改、执行匹配风险的检查、创建可回滚 commit、确认 `git status --short` 为空，再释放租约。分析尽量在获取租约前完成；不要在等待用户、外部服务或长时间实验时占用 main。
+
+释放时先确认 `$leasePath` 是本仓库 Git common directory 下的精确租约目录，并核对 `owner.json` 属于当前任务，然后删除文件和空目录：
+
+```powershell
+Remove-Item -LiteralPath (Join-Path $leasePath "owner.json")
+Remove-Item -LiteralPath $leasePath
+```
+
+如果实现未完成、测试失败或工作区无法安全恢复为干净状态，Agent 不得释放租约后把脏 main 留给下一会话；应报告当前状态并继续收口，或在取得用户同意后把剩余工作迁移到隔离通道。禁止用 `git reset --hard` 或覆盖他人文件清理现场。
+
+### 分支、PR 与状态
+
+- 分支名不隔离工作文件。禁止在共享 canonical checkout 中用 `git switch`、`git checkout` 或 `git switch -c` 开启并行任务；需要分支时创建独立 worktree。
+- worktree 是并发和风险隔离工具，不自动产生 PR。隔离任务完成后可以由 main 租约持有者 cherry-pick 一个或多个原子提交，并及时删除临时 worktree/branch。
+- PR 只用于发布批次、难以逆转的长期决策、需要外部审查的安全/隐私/迁移变更，或用户明确要求的检查点。普通 MVP 修改不需要逐提交等待用户审核。
+- 本地 commit、pull、push 都改变共享项目状态，必须在 main 租约内串行执行。可以每个成功提交后 push，也可以按功能/每日批次 push；push 前运行与批次匹配的汇总检查。
+- 项目状态由 main 的 clean commits、CI、Dossier 验证状态和 release tag 表达，不由 Agent 数量、会话数量或临时分支数量表达。
+- 开发 Agent 可以修改代码、测试和用户明确改变的 MVP 契约，也可以报告验证与偏差；不得自行把 Dossier 升为 `validated`、Current View 升为 `reviewed`，或把 ADR 从 Proposed 升为 Accepted。指定收口者基于 clean main revision 和目标环境证据执行语义升级。
 - 同一事实出现冲突时，不以最后写入者为准。源码决定实现事实，Dossier 契约决定用户行为目标，Accepted ADR 决定仍有效的长期边界，目标环境证据决定对应验收是否成立。
-- 不建立 `docs/changes/<task-id>` 流水账。PR 保存一次性交付信息；普通 bug 留在 Issue。只有跨 PR 持续存在且会影响架构判断的偏差，才使用稳定 Issue ID 回链到 `knownDeviations`。
-
-建议分支名使用 `codex/<issue-or-task>-<slug>`（其他工具可使用团队统一前缀），不要使用 Agent 名称作为长期分类。合并后及时删除短期分支和 worktree。
+- 不建立 `docs/changes/<task-id>` 流水账。普通交付信息保存在 commit、CI 和可选 Issue/PR；只有跨任务持续存在且会影响架构判断的偏差，才使用稳定 Issue ID 回链到 `knownDeviations`。
 
 ## 日常工作流
 
@@ -120,7 +169,7 @@ npm run architecture:check
 - 实现状态由 `implementationReview` 绑定源码 revision、工作树和已知偏差；存在未关闭偏差时不得声明 `implemented`。
 - `confirmed` 必须记录确认人、日期和来源，不允许作者自行升级。
 - `validated` 要求所有关键验收的 requiredEvidence 都有成功、带版本/环境且有效新鲜的证据能力。
-- 普通测试结果保留在 PR/CI，不自动抄入 Dossier。只有验证状态升级、目标环境/人工/故障结果、证据失效评估或发布工件追溯需要时，才记录长期证据。
+- 普通测试结果保留在 commit/CI、任务摘要或可选 PR，不自动抄入 Dossier。只有验证状态升级、目标环境/人工/故障结果、证据失效评估或发布工件追溯需要时，才记录长期证据。
 - 进入 Dossier 的开发证据记录 revision、worktree、变更路径、环境、日期、scope 和 limitations；发布级证据再记录 build ID 与 artifact SHA-256。
 - 自动化证据必须提供 `testRefs`，并用 `acceptanceCoverage` 逐验收声明完整或部分覆盖；不得用一条笼统的全量测试记录替代不同验收语义。
 - 生成式功能的工程正确性和产品质量分开验证：协议与兜底使用 `automated`，结果质量使用 `human_quality_eval`，用户是否理解和能否预测交互使用 `usability_observation`。
@@ -129,7 +178,7 @@ npm run architecture:check
 ## Current 与 Proposed
 
 - `c4-*.md`、`runtime-views.md` 和 `arc42-lean.md` 是 Current 文档，必须声明 `viewStatus=current`，并记录 `sourceRevision`、`worktreeState`、`reviewStatus`、`reviewedAt` 和 `knownDeviations`；脏工作树还必须记录 `changedPaths`。
-- `viewStatus=current` 只表示这份文件承担 Current 角色；当 `reviewStatus=stale|partial` 时，Agent 不得把它当作当前源码的完整事实。只有收口者能基于合并后的 clean revision 将其升级为 `reviewed`。
+- `viewStatus=current` 只表示这份文件承担 Current 角色；当 `reviewStatus=stale|partial` 时，Agent 不得把它当作当前源码的完整事实。只有收口者能基于 clean main revision 将其升级为 `reviewed`。
 - Proposal 必须声明 owner、创建日期、复核条件和关联 Feature。
 - `code-map.json` 只连接当前源码、Current 文档和 Accepted/相关 ADR，不登记 Proposal。
 - 如果某个实现细节改变而组件责任和关系不变，该细节通常不属于 C4。
@@ -158,7 +207,7 @@ Accepted ADR 可以依赖 Open Assumption，但必须在 `Revisit when` 中说�
 
 ## 文档完成定义
 
-只有 L2-L4 变更需要文档完成定义；L0/L1 若没有触发文档写入条件，以代码、测试和 PR/CI 为完成依据。L2-L4 完成时必须同时满足：
+只有 L2-L4 变更需要文档完成定义；L0/L1 若没有触发文档写入条件，以代码、测试和 commit/CI（或可选 PR）为完成依据。L2-L4 完成时必须同时满足：
 
 - 源码仍能从代码地图导航，生产源码覆盖保持完整；
 - Current C4 与实际进程、组件和外部边界一致；

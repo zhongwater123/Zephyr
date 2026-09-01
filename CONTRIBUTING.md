@@ -57,26 +57,25 @@ npm run tauri build
 - Keep history and hotword database changes covered by focused tests.
 - Do not commit generated output such as `node_modules/`, `dist/`, `target/`, or local provider demo packages.
 
-## Branches And Agent Worktrees
+## MVP Trunk And Agent Workspaces
 
-This repository uses trunk-based development with short-lived task branches:
+This single-maintainer MVP uses direct-to-main trunk development with serialized Agent writes:
 
-- Start each task from the latest `origin/main`.
-- Treat the canonical checkout opened as **Local** in Codex as a single-writer integration and real-device-test workspace. Multiple chats pointing at this directory share the same branch, index, and uncommitted files.
-- For parallel editing, start each Agent in an independent Git worktree, with only one writer in that worktree. In Codex, select **Worktree** when starting the task or use Handoff before editing.
-- Before editing, verify the assignment with `git rev-parse --show-toplevel`, `git worktree list --porcelain`, and `git status --short --branch`.
-- Do not create or switch task branches in a shared Local checkout. A branch without a separate worktree does not isolate files and changes the checked-out branch for every chat using that directory.
-- If work must stay in one physical checkout, use one writer at a time and serialize the work on the current branch; other Agents must remain read-only.
-- Prefer `codex/<issue-or-task>-<slug>` for Codex-created branches; use the team prefix for other tools.
-- Keep branches scoped to one reviewable outcome and merge through a PR after CI passes.
-- A branch is an implementation sandbox, not the source of project status. Use Issue/PR state, CI, Feature Dossier validation status, and release tags for status.
-- Delete the task branch and worktree after merge.
+- Multiple Agents may analyze different tasks concurrently. Only one Agent may write, test, stage, commit, pull, or push the canonical checkout at a time.
+- Ordinary fixes and MVP features commit directly to `main` after acquiring the main-writer lease defined in [the maintenance guide](docs/architecture/maintenance.md#main-写入租约). They do not require a task branch, worktree, PR, or per-commit maintainer review.
+- Before editing canonical main, verify the repository root, worktree list, clean `main` status, lease ownership, and current `HEAD`. Re-read affected files after acquiring the lease.
+- Keep each direct-to-main commit atomic, tested in proportion to risk, and independently revertible. Release the lease only after the canonical checkout is clean.
+- Use an independent worktree only for genuinely concurrent writers, long-running changes, risky experiments, large refactors, migrations, or security/privacy/data-integrity work that benefits from isolation. One writer per worktree applies.
+- A worktree branch can be integrated by cherry-pick under the main lease. It does not automatically require a PR.
+- Never create or switch branches in a shared canonical checkout. A branch name does not isolate working files and changes `HEAD` for every chat using that directory.
+- PRs are optional checkpoints for release batches, costly-to-reverse decisions, external review, or explicit maintainer requests. When a PR is used, keep it scoped to one reviewable outcome and delete its short-lived branch/worktree after integration.
+- Project status comes from clean main commits, CI, Feature Dossier validation status, and release tags—not from the number of Agent sessions or temporary branches.
 
 Small changes do not need architecture-document edits. Follow the context levels in [the maintenance guide](docs/architecture/maintenance.md#最小上下文分级): local work reads code and tests; cross-component/high-risk work normally adds one primary Feature Dossier; Current Views and ADRs are conditional on actual boundary changes.
 
-## Pull Requests
+## Optional Pull Requests
 
-Please include:
+Routine MVP work may commit directly to `main`. When a change uses a PR, please include:
 
 - What changed.
 - How you tested it.
@@ -85,4 +84,4 @@ Please include:
 - The primary Feature Dossier, if the task is cross-component or high-risk.
 - Whether the change alters a product contract, component/timing boundary, long-lived ADR decision, validation claim, or none of these.
 
-Do not copy routine CI output into long-lived documentation. Development Agents may report deviations and evidence in the PR, but validation, Current View review, and ADR acceptance are promoted by the designated integration/documentation owner against the merged clean revision.
+Do not copy routine CI output into long-lived documentation. Development Agents may report deviations and evidence in a commit summary, task, Issue, or PR, but validation, Current View review, and ADR acceptance are promoted by the designated integration/documentation owner against a clean main revision.

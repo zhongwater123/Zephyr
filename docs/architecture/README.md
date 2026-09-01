@@ -80,8 +80,8 @@ npm run architecture:check
 - [architecture.config.json](architecture.config.json) 定义必需文档与生产源码覆盖范围。
 - 安全、容量和时限常量必须登记在 [架构不变量](invariants.md)，并从 Rust 具名常量自动核验。
 - ADR 一经 Accepted 不重写结论；需要改变时新增 ADR 并标记 supersedes/superseded by。
-- 开发 Agent 不得自行把 Dossier 升为 `validated`、Current View 升为 `reviewed`，或把 ADR 从 Proposed 升为 Accepted；这些状态由集成/文档收口者基于合并后的 clean revision 更新。
-- Issue/PR 保存普通任务和缺陷记录，不新增每任务文档交付单。只有契约、长期决策、持续跨 PR 偏差或验证升级进入长期文档。
+- 开发 Agent 不得自行把 Dossier 升为 `validated`、Current View 升为 `reviewed`，或把 ADR 从 Proposed 升为 Accepted；这些状态由集成/文档收口者基于 clean main revision 更新。
+- Commit、CI 和可选 Issue/PR 保存普通任务和缺陷记录，不新增每任务文档交付单。只有契约、长期决策、持续跨任务偏差或验证升级进入长期文档。
 - 拟议 C4/Runtime View 必须进入 [proposals](proposals/README.md) 并声明 `viewStatus=proposed`；当前视图声明 `viewStatus=current`，同时记录 `sourceRevision`、`worktreeState`、`reviewStatus`、`reviewedAt`、`knownDeviations`，脏工作树还记录 `changedPaths`。
 - Implementation Guide 必须声明 `normative=false` 并绑定 source revision、worktree 状态、复核状态和关联 Feature；不得用它覆盖 Dossier、ADR 或源码事实。
 - 测试通过但目标环境失败时，产品验收仍失败；不得用文档或局部测试解释掉实机结果。
