@@ -41,6 +41,12 @@ jobs:
         run: npm ci
       - name: Scan committed credentials
         run: npm run security:secrets
+      - name: Test architecture documentation checks
+        run: npm run architecture:test
+      - name: Check architecture documentation
+        run: npm run architecture:check
+      - name: Check ASR layer boundaries
+        run: npm run architecture:asr
       - name: Build frontend
         run: npm run build
       - name: Test frontend
