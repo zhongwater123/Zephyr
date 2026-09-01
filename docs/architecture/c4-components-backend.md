@@ -1,5 +1,5 @@
 ---
-{"documentType":"c4-view","viewStatus":"current","sourceRevision":"ce04cfb","worktreeState":"clean","changedPaths":["src-tauri/src/clipboard_transaction.rs","src-tauri/crates/paste-protocol","src-tauri/crates/zephyr-paste-helper","src-tauri/src/delivery.rs","src-tauri/src/inject.rs","src-tauri/src/lib.rs","src-tauri/tauri.conf.json","scripts/build-paste-helper.mjs","scripts/tauri.mjs","scripts/package-windows.mjs","docs/architecture/c4-components-backend.md"],"reviewStatus":"stale","reviewedAt":"2026-08-31","knownDeviations":["实现和开发打包已存在 clean revision；仍等待指定收口者基于安装后的真实 Windows 应用、格式与 helper 强杀矩阵复核"]}
+{"documentType":"c4-view","viewStatus":"current","sourceRevision":"0f6dc06ac3eded7805814e58463aa66203dc409b","worktreeState":"clean","reviewStatus":"stale","reviewedAt":"2026-09-01","knownDeviations":["已基于当前 main 的 clean revision 重新核对主进程与 zephyr-paste-helper 的职责、事务边界、三态提交仲裁和打包门禁；仍等待指定收口者基于安装后的真实 Windows 应用、格式与 helper 强杀矩阵复核"]}
 ---
 
 # C4 L3：Rust 后端组件

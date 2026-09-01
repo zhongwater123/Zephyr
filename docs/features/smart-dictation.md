@@ -12,12 +12,11 @@
   "implementationStatus": "in_progress",
   "implementationReview": {
     "status": "deviating",
-    "sourceRevision": "a69242240d7da4e3d4f086b61548bfa019f93bdf",
-    "worktreeState": "dirty",
-    "changedPaths": ["src-tauri/crates/zephyr-paste-helper/src/platform.rs", "src-tauri/src/clipboard_transaction.rs", "src-tauri/src/delivery.rs", "src-tauri/src/inject.rs", "docs/features/smart-dictation.md", "docs/architecture/adr/0018-owned-clipboard-transaction-and-isolated-paste.md"],
+    "sourceRevision": "0f6dc06ac3eded7805814e58463aa66203dc409b",
+    "worktreeState": "clean",
     "reviewedAt": "2026-09-01",
-    "summary": "已提交 revision f93bc4d、3ea6d9f 与 ce04cfb 分别移除 OLE 活对象路径、建立隔离剪贴板事务并完成 sidecar 打包门禁。基于 a692422 的当前脏工作树进一步修复动态注册格式被名称白名单误拒绝的问题，并只为 SmartDictation 单行开放覆盖前失败后的 Unicode 安全降级；Windows 打包前检查和自动化通过，用户随后报告暂未再遇到阻塞。该反馈缺少 clean revision、精确应用/格式矩阵和重复次数，不升级验证状态。",
-    "knownDeviations": ["当前动态注册格式修复仍在脏工作树，尚无可追溯安装包或 clean revision；2026-08-28 与 2026-08-31 的既有 0xc000041d 失败证据尚未被同等级目标环境矩阵关闭。", "可以锁定并复制的注册格式已按不透明字节保存，但尚未用受控真实剪贴板 owner 验证其恢复后的语义等价；Chromium、Office、图片、文件和延迟渲染格式仍需矩阵验证。", "自动化尚未在真实 helper 进程上完成每阶段强杀、剪贴板占用、并发复制、部分提交和单次 recover。", "helper 缺失或自检失败时仍统一进入 Pending；当前没有独立于 sidecar 的 Phase 0 进程内 Unicode 回退。", "真实运行曾出现 PendingFull 后用户无法找到可操作的待处理入口；重启可清空内存队列，但这不是已验证的产品恢复路径。"]
+    "summary": "已在当前 main 的 clean revision 0f6dc06 上重新核对实现：7dc2e45 引入自有剪贴板事务、隔离 zephyr-paste-helper、三态提交仲裁与动态注册格式的受限值快照；当前 revision 继续包含四档智能润色设置 UI，未改变 Fast/三档 LLM 的后端语义。实现仍登记为 deviating：目标环境崩溃证据、真实格式/应用互操作和 helper 故障矩阵尚未关闭，因此本次只修正源码追踪，不升级验证状态。",
+    "knownDeviations": ["实现已绑定当前可解析的 clean revision，但尚无可追溯安装包；2026-08-28 与 2026-08-31 的既有 0xc000041d 失败证据尚未被同等级目标环境矩阵关闭。", "可以锁定并复制的注册格式已按不透明字节保存，但尚未用受控真实剪贴板 owner 验证其恢复后的语义等价；Chromium、Office、图片、文件和延迟渲染格式仍需矩阵验证。", "自动化尚未在真实 helper 进程上完成每阶段强杀、剪贴板占用、并发复制、部分提交和单次 recover。", "helper 缺失或自检失败时仍统一进入 Pending；当前没有独立于 sidecar 的 Phase 0 进程内 Unicode 回退。", "真实运行曾出现 PendingFull 后用户无法找到可操作的待处理入口；重启可清空内存队列，但这不是已验证的产品恢复路径。"]
   },
   "validationStatus": "invalidated",
   "components": ["system.zephyr", "frontend.features", "backend.services", "backend.repositories", "backend.voice-controller", "backend.streaming", "backend.delivery", "backend.shortcut", "backend.incident-vault", "platform.windows"],
@@ -167,7 +166,7 @@ Bootstrap 为首次交付和 Pending 重发注入同一个 `ClipboardTransaction
 
 ## 验证状态
 
-当前实现状态为 `in_progress`，验证状态为 `invalidated`。基于 revision `a69242240d7da4e3d4f086b61548bfa019f93bdf` 的脏工作树已修复动态注册格式被固定名称名单误拒绝的问题，并把覆盖前确认未提交的单行降级限制在 SmartDictation；Legacy 兼容路径不会被静默改回已知不适配的 Unicode 语义。当前 Windows 打包前检查通过，包含前端 58 项、Rust 主库 195 项、共享协议 1 项、helper 8 项，以及架构、ASR 边界和秘密扫描；2 项需要真实网络凭据的测试按预期忽略。用户在重新使用后报告“暂时没遇到问题”，这只能作为修复方向的冒烟反馈：没有绑定 clean revision、安装包、精确应用/格式组合、重复次数或剪贴板恢复比对，因此不新增正式验证证据，也不关闭既有失败。
+当前实现状态为 `in_progress`，验证状态为 `invalidated`。在 clean revision `0f6dc06ac3eded7805814e58463aa66203dc409b` 上复核可见：动态注册格式不再仅因名称不在固定名单而被拒绝；能够成为 Zephyr 自有、受限且可重建值的格式进入隔离 helper 事务，无法证明可安全保存时仍在覆盖前失败关闭，SmartDictation 单行才允许不触碰剪贴板的安全输入降级。该 clean revision 追踪修复不新增正式验证证据，也不关闭既有 Windows 崩溃、真实互操作或故障注入偏差。
 
 
 现有自动化证据不具备 `human_quality_eval` 或 `usability_observation` 能力，因此不能回答“用户是否感到明显润色”“三档是否可预测”或“结果是否比原文更可用”。这些问题属于未完成的产品验证，不应再用链路测试通过来代替。
