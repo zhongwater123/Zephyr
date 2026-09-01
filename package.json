@@ -10,6 +10,7 @@
     "test": "vitest run",
     "architecture:check": "node scripts/check-architecture-docs.mjs",
     "architecture:asr": "node scripts/check-asr-boundaries.mjs",
+    "architecture:platform": "node scripts/check-platform-boundaries.mjs",
     "security:secrets": "node scripts/check-secrets.mjs",
     "architecture:impact": "node scripts/check-architecture-docs.mjs --impact",
     "package:windows": "node scripts/package-windows.mjs",

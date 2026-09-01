@@ -1,4 +1,4 @@
-use crate::target::TargetWindowIdentity;
+use crate::target_port::CapturedTarget;
 use async_trait::async_trait;
 pub use paste_protocol::{DeliveryMode, DeliveryReceipt, RestorationState, SubmissionState};
 use thiserror::Error;
@@ -8,7 +8,7 @@ use uuid::Uuid;
 pub struct DeliveryRequest {
     pub transaction_id: Uuid,
     pub text: String,
-    pub target: TargetWindowIdentity,
+    pub target: CapturedTarget,
     pub mode: DeliveryMode,
     pub allow_unicode_fallback: bool,
 }

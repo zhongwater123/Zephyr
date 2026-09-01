@@ -1,9 +1,10 @@
 use crate::delivery::DeliveryIntent;
 use crate::history::HistoryProvenance;
 use crate::target::{
-    DeliveryCertainty, PendingOutput, PendingOutputError, PendingOutputRecord, PendingOutputStore,
-    TargetWindowIdentity,
+    DeliveryCertainty, PendingOutput, PendingOutputDraft, PendingOutputError, PendingOutputRecord,
+    PendingOutputStore,
 };
+use crate::target_port::{CapturedTarget, TargetPort};
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
@@ -38,8 +39,8 @@ struct PendingState {
     metadata: HashMap<String, PendingDeliveryMetadata>,
 }
 
-#[derive(Default)]
 pub struct PendingOutputService {
+    targets: std::sync::Arc<dyn TargetPort>,
     state: Mutex<PendingState>,
 }
 
@@ -93,6 +94,13 @@ impl Drop for PendingOutputLease {
 }
 
 impl PendingOutputService {
+    pub fn new(targets: std::sync::Arc<dyn TargetPort>) -> Self {
+        Self {
+            targets,
+            state: Mutex::new(PendingState::default()),
+        }
+    }
+
     pub fn is_full(&self) -> bool {
         self.state
             .lock()
@@ -106,7 +114,7 @@ impl PendingOutputService {
         &self,
         session_id: u64,
         text: String,
-        target: TargetWindowIdentity,
+        target: CapturedTarget,
         reason_code: impl Into<String>,
         reason_message: impl Into<String>,
     ) -> Result<PendingOutput, PendingOutputServiceError> {
@@ -124,25 +132,27 @@ impl PendingOutputService {
         &self,
         session_id: u64,
         text: String,
-        target: TargetWindowIdentity,
+        target: CapturedTarget,
         reason_code: impl Into<String>,
         reason_message: impl Into<String>,
         metadata: PendingDeliveryMetadata,
     ) -> Result<PendingOutput, PendingOutputServiceError> {
+        let target_available = self.targets.exists(&target).is_ok();
         let mut state = self
             .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let output = state
             .store
-            .push_with_certainty(
+            .push(PendingOutputDraft {
                 session_id,
                 text,
                 target,
-                reason_code,
-                reason_message,
-                metadata.certainty,
-            )
+                target_available,
+                reason_code: reason_code.into(),
+                reason_message: reason_message.into(),
+                certainty: metadata.certainty,
+            })
             .map_err(|error| match error {
                 PendingOutputError::Full => PendingOutputServiceError::Full,
             })?;
@@ -151,11 +161,12 @@ impl PendingOutputService {
     }
 
     pub fn list(&self) -> Vec<PendingOutput> {
+        let targets = self.targets.clone();
         self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .store
-            .list()
+            .list(|target| targets.exists(target).is_ok())
     }
 
     pub fn reserve(&self, id: &str) -> Result<PendingOutputRecord, PendingOutputServiceError> {
@@ -261,21 +272,19 @@ impl PendingOutputService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::target_port::tests::{fake_target, FakeTargetPort};
 
-    fn target() -> TargetWindowIdentity {
-        TargetWindowIdentity {
-            hwnd: 1,
-            process_id: 2,
-            process_started_at: 3,
-            executable_name: "editor.exe".to_string(),
-            executable_path: r"C:\\Apps\\editor.exe".to_string(),
-            window_title: Some("Editor".to_string()),
-        }
+    fn target() -> CapturedTarget {
+        fake_target("editor.exe")
+    }
+
+    fn service() -> PendingOutputService {
+        PendingOutputService::new(std::sync::Arc::new(FakeTargetPort::available()))
     }
 
     #[test]
     fn reservation_prevents_duplicate_delivery() {
-        let service = PendingOutputService::default();
+        let service = service();
         let output = service
             .push(1, "hello".to_string(), target(), "test", "test")
             .unwrap();
@@ -293,7 +302,7 @@ mod tests {
 
     #[test]
     fn failed_delivery_release_keeps_output() {
-        let service = PendingOutputService::default();
+        let service = service();
         let output = service
             .push(1, "hello".to_string(), target(), "test", "test")
             .unwrap();
@@ -305,7 +314,7 @@ mod tests {
 
     #[test]
     fn committed_delivery_removes_output() {
-        let service = PendingOutputService::default();
+        let service = service();
         let output = service
             .push(1, "hello".to_string(), target(), "test", "test")
             .unwrap();
@@ -320,7 +329,7 @@ mod tests {
 
     #[test]
     fn dropped_lease_releases_reservation() {
-        let service = std::sync::Arc::new(PendingOutputService::default());
+        let service = std::sync::Arc::new(service());
         let output = service
             .push(1, "hello".to_string(), target(), "test", "test")
             .unwrap();
@@ -331,7 +340,7 @@ mod tests {
 
     #[test]
     fn smart_metadata_survives_pending_reservation() {
-        let service = std::sync::Arc::new(PendingOutputService::default());
+        let service = std::sync::Arc::new(service());
         let provenance = HistoryProvenance::smart_processed("office", "office-v1");
         let output = service
             .push_with_metadata(
@@ -355,7 +364,7 @@ mod tests {
 
     #[test]
     fn uncertain_retention_updates_the_public_retry_boundary() {
-        let service = std::sync::Arc::new(PendingOutputService::default());
+        let service = std::sync::Arc::new(service());
         let output = service
             .push(1, "hello".to_string(), target(), "test", "test")
             .unwrap();
@@ -376,5 +385,17 @@ mod tests {
         );
         assert_eq!(retained.reason_code, "delivery_submission_unknown");
         assert!(service.reserve(&output.id).is_ok());
+    }
+
+    #[test]
+    fn pending_availability_is_always_resolved_through_the_target_port() {
+        let targets = std::sync::Arc::new(FakeTargetPort::failing_exists("closed"));
+        let service = PendingOutputService::new(targets.clone());
+        let output = service
+            .push(1, "hello".to_string(), target(), "test", "test")
+            .unwrap();
+        assert!(!output.target_available);
+        assert!(!service.list()[0].target_available);
+        assert_eq!(targets.calls(), vec!["exists", "exists"]);
     }
 }

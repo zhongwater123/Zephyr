@@ -32,14 +32,16 @@ impl VoiceSessionActor {
             return;
         }
         let config = self.services.config.snapshot();
-        let method = match config.injection_strategy_for(&lease.record().target.executable_name) {
-            InjectionStrategy::Unicode => DeliveryMode::Unicode,
-            InjectionStrategy::ClipboardCompatibility => DeliveryMode::ClipboardPaste,
-        };
+        let method =
+            match config.injection_strategy_for(&lease.record().target.context().application_key) {
+                InjectionStrategy::Unicode => DeliveryMode::Unicode,
+                InjectionStrategy::ClipboardCompatibility => DeliveryMode::ClipboardPaste,
+            };
         self.pending_operation = Some(PendingOperation { id, response });
         workflow::spawn_pending_delivery(
             PendingDeliveryJob {
                 lease,
+                targets: self.targets.clone(),
                 executor: self.executor.clone(),
                 delivery_mode: method,
                 services: self.services.clone(),

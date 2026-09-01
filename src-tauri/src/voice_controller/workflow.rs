@@ -4,7 +4,7 @@ mod start;
 
 pub(super) use finalize::spawn_finalization;
 pub(super) use pending::spawn_pending_delivery;
-pub(super) use start::spawn_start;
+pub(super) use start::{spawn_start, StartJob};
 
 #[cfg(test)]
 mod tests {

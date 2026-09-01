@@ -57,7 +57,7 @@ impl VoiceSessionActor {
                 session.state_tx.send_replace(VoiceState::Transcribing);
                 let method = match session
                     .config
-                    .injection_strategy_for(&session.target.executable_name)
+                    .injection_strategy_for(&session.target.context().application_key)
                 {
                     InjectionStrategy::Unicode => DeliveryMode::Unicode,
                     InjectionStrategy::ClipboardCompatibility => DeliveryMode::ClipboardPaste,
@@ -67,6 +67,7 @@ impl VoiceSessionActor {
                 workflow::spawn_finalization(
                     FinalizationJob {
                         session,
+                        targets: self.targets.clone(),
                         executor: self.executor.clone(),
                         delivery_mode: method,
                         services: self.services.clone(),

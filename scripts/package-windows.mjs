@@ -351,6 +351,11 @@ try {
 
   run(process.execPath, ["scripts/check-architecture-docs.mjs"], "架构文档结构检查");
   run(process.execPath, ["scripts/check-asr-boundaries.mjs"], "ASR 边界检查");
+  run(
+    process.execPath,
+    ["scripts/check-platform-boundaries.mjs"],
+    "共享平台边界检查",
+  );
   run(process.execPath, ["scripts/check-secrets.mjs"], "凭据扫描");
   run(
     process.execPath,

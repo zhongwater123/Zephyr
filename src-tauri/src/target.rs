@@ -1,3 +1,4 @@
+use crate::target_port::CapturedTarget;
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -5,16 +6,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 pub const MAX_OUTPUT_CHARACTERS: usize = 8_000;
 pub const MAX_PENDING_OUTPUTS: usize = 5;
 pub const PENDING_OUTPUT_TTL: Duration = Duration::from_secs(10 * 60);
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct TargetWindowIdentity {
-    pub hwnd: isize,
-    pub process_id: u32,
-    pub process_started_at: u64,
-    pub executable_name: String,
-    pub executable_path: String,
-    pub window_title: Option<String>,
-}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,8 +33,18 @@ pub enum DeliveryCertainty {
 #[derive(Clone, Debug)]
 pub struct PendingOutputRecord {
     pub dto: PendingOutput,
-    pub target: TargetWindowIdentity,
+    pub target: CapturedTarget,
     expires_at: Instant,
+}
+
+pub struct PendingOutputDraft {
+    pub session_id: u64,
+    pub text: String,
+    pub target: CapturedTarget,
+    pub target_available: bool,
+    pub reason_code: String,
+    pub reason_message: String,
+    pub certainty: DeliveryCertainty,
 }
 
 #[derive(Debug, Default)]
@@ -75,76 +76,19 @@ pub fn normalize_smart_output_text(text: &str) -> Result<String, OutputValidatio
     Ok(normalized)
 }
 
-/// Returns true for targets where pasting a multiline payload can execute
-/// commands according to the captured executable identity.
-pub fn is_multiline_unsafe_target(executable_name: &str) -> bool {
-    const UNSAFE_EXECUTABLES: &[&str] = &[
-        "cmd.exe",
-        "powershell.exe",
-        "pwsh.exe",
-        "windowsterminal.exe",
-        "openconsole.exe",
-        "conhost.exe",
-    ];
-
-    UNSAFE_EXECUTABLES
-        .iter()
-        .any(|candidate| executable_name.eq_ignore_ascii_case(candidate))
-}
-
 impl PendingOutputStore {
     pub fn is_full(&mut self) -> bool {
         self.purge_expired();
         self.entries.len() >= MAX_PENDING_OUTPUTS
     }
 
-    pub fn push(
-        &mut self,
-        session_id: u64,
-        text: String,
-        target: TargetWindowIdentity,
-        reason_code: impl Into<String>,
-        reason_message: impl Into<String>,
-    ) -> Result<PendingOutput, PendingOutputError> {
-        self.push_with_certainty_and_ttl(
-            session_id,
-            text,
-            target,
-            reason_code,
-            reason_message,
-            DeliveryCertainty::Retryable,
-            PENDING_OUTPUT_TTL,
-        )
+    pub fn push(&mut self, draft: PendingOutputDraft) -> Result<PendingOutput, PendingOutputError> {
+        self.push_with_ttl(draft, PENDING_OUTPUT_TTL)
     }
 
-    pub fn push_with_certainty(
+    fn push_with_ttl(
         &mut self,
-        session_id: u64,
-        text: String,
-        target: TargetWindowIdentity,
-        reason_code: impl Into<String>,
-        reason_message: impl Into<String>,
-        certainty: DeliveryCertainty,
-    ) -> Result<PendingOutput, PendingOutputError> {
-        self.push_with_certainty_and_ttl(
-            session_id,
-            text,
-            target,
-            reason_code,
-            reason_message,
-            certainty,
-            PENDING_OUTPUT_TTL,
-        )
-    }
-
-    fn push_with_certainty_and_ttl(
-        &mut self,
-        session_id: u64,
-        text: String,
-        target: TargetWindowIdentity,
-        reason_code: impl Into<String>,
-        reason_message: impl Into<String>,
-        certainty: DeliveryCertainty,
+        draft: PendingOutputDraft,
         ttl: Duration,
     ) -> Result<PendingOutput, PendingOutputError> {
         self.purge_expired();
@@ -155,17 +99,26 @@ impl PendingOutputStore {
         let now = Instant::now();
         let created_at_unix_ms = unix_time_ms();
         let ttl_ms = ttl.as_millis() as u64;
+        let PendingOutputDraft {
+            session_id,
+            text,
+            target,
+            target_available,
+            reason_code,
+            reason_message,
+            certainty,
+        } = draft;
         let dto = PendingOutput {
             id: uuid::Uuid::new_v4().to_string(),
             session_id,
             text,
-            executable_name: target.executable_name.clone(),
-            window_title: target.window_title.clone(),
+            executable_name: target.context().application_key.clone(),
+            window_title: target.context().window_title.clone(),
             created_at_unix_ms,
             expires_at_unix_ms: created_at_unix_ms.saturating_add(ttl_ms),
-            target_available: validate_target_exists(&target).is_ok(),
-            reason_code: reason_code.into(),
-            reason_message: reason_message.into(),
+            target_available,
+            reason_code,
+            reason_message,
             delivery_certainty: certainty,
         };
 
@@ -177,13 +130,16 @@ impl PendingOutputStore {
         Ok(dto)
     }
 
-    pub fn list(&mut self) -> Vec<PendingOutput> {
+    pub fn list<F>(&mut self, mut target_available: F) -> Vec<PendingOutput>
+    where
+        F: FnMut(&CapturedTarget) -> bool,
+    {
         self.purge_expired();
         self.entries
             .iter()
             .map(|record| {
                 let mut dto = record.dto.clone();
-                dto.target_available = validate_target_exists(&record.target).is_ok();
+                dto.target_available = target_available(&record.target);
                 dto
             })
             .collect()
@@ -261,182 +217,22 @@ fn unix_time_ms() -> u64 {
         .as_millis() as u64
 }
 
-#[cfg(target_os = "windows")]
-fn process_started_at(process_id: u32) -> Result<u64, String> {
-    use windows::Win32::Foundation::{CloseHandle, FILETIME};
-    use windows::Win32::System::Threading::{
-        GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-
-    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
-        .map_err(|error| format!("无法打开目标进程: {error}"))?;
-    let mut creation = FILETIME::default();
-    let mut exit = FILETIME::default();
-    let mut kernel = FILETIME::default();
-    let mut user = FILETIME::default();
-    let result =
-        unsafe { GetProcessTimes(process, &mut creation, &mut exit, &mut kernel, &mut user) };
-    unsafe {
-        let _ = CloseHandle(process);
-    }
-    result.map_err(|error| format!("无法读取目标进程创建时间: {error}"))?;
-    Ok(((creation.dwHighDateTime as u64) << 32) | creation.dwLowDateTime as u64)
-}
-
-#[cfg(target_os = "windows")]
-fn executable_path(process_id: u32) -> Result<String, String> {
-    use windows::core::PWSTR;
-    use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-        PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-
-    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process_id) }
-        .map_err(|error| format!("无法打开目标进程: {error}"))?;
-    let mut buffer = vec![0u16; 32_768];
-    let mut length = buffer.len() as u32;
-    let result = unsafe {
-        QueryFullProcessImageNameW(
-            process,
-            PROCESS_NAME_WIN32,
-            PWSTR(buffer.as_mut_ptr()),
-            &mut length,
-        )
-    };
-    unsafe {
-        let _ = CloseHandle(process);
-    }
-    result.map_err(|error| format!("无法读取目标程序路径: {error}"))?;
-    let queried = String::from_utf16_lossy(&buffer[..length as usize]);
-    Ok(std::fs::canonicalize(&queried)
-        .unwrap_or_else(|_| std::path::PathBuf::from(&queried))
-        .to_string_lossy()
-        .into_owned())
-}
-
-fn executable_name_from_path(path: &str) -> String {
-    std::path::Path::new(path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(&path)
-        .to_string()
-}
-
-#[cfg(target_os = "windows")]
-fn window_title(hwnd: windows::Win32::Foundation::HWND) -> Option<String> {
-    use windows::Win32::UI::WindowsAndMessaging::{GetWindowTextLengthW, GetWindowTextW};
-
-    let length = unsafe { GetWindowTextLengthW(hwnd) };
-    if length <= 0 {
-        return None;
-    }
-    let mut buffer = vec![0u16; length as usize + 1];
-    let copied = unsafe { GetWindowTextW(hwnd, &mut buffer) };
-    (copied > 0).then(|| String::from_utf16_lossy(&buffer[..copied as usize]))
-}
-
-#[cfg(target_os = "windows")]
-pub fn capture_foreground_target() -> Result<TargetWindowIdentity, String> {
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetWindowThreadProcessId, IsWindow,
-    };
-
-    let hwnd = unsafe { GetForegroundWindow() };
-    if hwnd.0.is_null() || !unsafe { IsWindow(hwnd).as_bool() } {
-        return Err("当前没有可用的前台窗口".to_string());
-    }
-    let mut process_id = 0u32;
-    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
-    if process_id == 0 {
-        return Err("无法识别目标窗口所属进程".to_string());
-    }
-
-    let executable_path = executable_path(process_id)?;
-    Ok(TargetWindowIdentity {
-        hwnd: hwnd.0 as isize,
-        process_id,
-        process_started_at: process_started_at(process_id)?,
-        executable_name: executable_name_from_path(&executable_path),
-        executable_path,
-        window_title: window_title(hwnd),
-    })
-}
-
-#[cfg(target_os = "windows")]
-pub fn validate_target_exists(target: &TargetWindowIdentity) -> Result<(), String> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsWindow};
-
-    let hwnd = HWND(target.hwnd as *mut _);
-    if !unsafe { IsWindow(hwnd).as_bool() } {
-        return Err("原目标窗口已经关闭".to_string());
-    }
-    let mut process_id = 0u32;
-    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut process_id)) };
-    if process_id != target.process_id {
-        return Err("原目标窗口的进程身份已经变化".to_string());
-    }
-    if process_started_at(process_id)? != target.process_started_at {
-        return Err("原目标进程已经被替换".to_string());
-    }
-    let current_path = executable_path(process_id)?;
-    if !current_path.eq_ignore_ascii_case(&target.executable_path)
-        || !executable_name_from_path(&current_path).eq_ignore_ascii_case(&target.executable_name)
-    {
-        return Err("原目标程序身份已经变化".to_string());
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-pub fn validate_foreground_target(target: &TargetWindowIdentity) -> Result<(), String> {
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-
-    validate_target_exists(target)?;
-    let foreground = unsafe { GetForegroundWindow() };
-    if foreground.0 as isize != target.hwnd {
-        return Err("识别期间前台窗口已经变化".to_string());
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
-pub fn activate_target(target: &TargetWindowIdentity) -> Result<(), String> {
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
-
-    validate_target_exists(target)?;
-    let hwnd = HWND(target.hwnd as *mut _);
-    if !unsafe { SetForegroundWindow(hwnd).as_bool() } {
-        return Err("Windows 拒绝激活原目标窗口".to_string());
-    }
-    validate_foreground_target(target)
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn capture_foreground_target() -> Result<TargetWindowIdentity, String> {
-    Err("目标窗口身份仅支持 Windows".to_string())
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn validate_target_exists(_target: &TargetWindowIdentity) -> Result<(), String> {
-    Err("目标窗口身份仅支持 Windows".to_string())
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn validate_foreground_target(_target: &TargetWindowIdentity) -> Result<(), String> {
-    Err("目标窗口身份仅支持 Windows".to_string())
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn activate_target(_target: &TargetWindowIdentity) -> Result<(), String> {
-    Err("目标窗口身份仅支持 Windows".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::target_port::tests::fake_target;
+
+    fn pending_draft(session_id: u64, text: impl Into<String>) -> PendingOutputDraft {
+        PendingOutputDraft {
+            session_id,
+            text: text.into(),
+            target: fake_target("app.exe"),
+            target_available: true,
+            reason_code: "test".to_string(),
+            reason_message: "test".to_string(),
+            certainty: DeliveryCertainty::Retryable,
+        }
+    }
 
     #[test]
     fn validates_safe_text() {
@@ -465,73 +261,31 @@ mod tests {
     }
 
     #[test]
-    fn process_creation_time_is_part_of_window_identity() {
-        let first = TargetWindowIdentity {
-            hwnd: 10,
-            process_id: 20,
-            process_started_at: 30,
-            executable_name: "app.exe".to_string(),
-            executable_path: r"C:\\Apps\\app.exe".to_string(),
-            window_title: None,
-        };
-        let mut reused = first.clone();
-        reused.process_started_at = 31;
-        assert_ne!(first, reused);
-    }
-
-    #[test]
     fn pending_store_never_overwrites_the_sixth_result() {
-        let target = TargetWindowIdentity {
-            hwnd: 0,
-            process_id: 0,
-            process_started_at: 0,
-            executable_name: "app.exe".to_string(),
-            executable_path: r"C:\\Apps\\app.exe".to_string(),
-            window_title: None,
-        };
         let mut store = PendingOutputStore::default();
         for index in 0..MAX_PENDING_OUTPUTS {
             store
-                .push(
-                    index as u64,
-                    format!("result {index}"),
-                    target.clone(),
-                    "test",
-                    "test",
-                )
+                .push(pending_draft(index as u64, format!("result {index}")))
                 .unwrap();
         }
         assert!(matches!(
-            store.push(9, "sixth".to_string(), target, "test", "test"),
+            store.push(pending_draft(9, "sixth")),
             Err(PendingOutputError::Full)
         ));
-        assert_eq!(store.list().len(), MAX_PENDING_OUTPUTS);
-        assert!(store.list().iter().all(|entry| entry.text != "sixth"));
+        assert_eq!(store.list(|_| true).len(), MAX_PENDING_OUTPUTS);
+        assert!(store
+            .list(|_| true)
+            .iter()
+            .all(|entry| entry.text != "sixth"));
     }
 
     #[test]
     fn pending_store_purges_expired_results() {
-        let target = TargetWindowIdentity {
-            hwnd: 0,
-            process_id: 0,
-            process_started_at: 0,
-            executable_name: "app.exe".to_string(),
-            executable_path: r"C:\\Apps\\app.exe".to_string(),
-            window_title: None,
-        };
         let mut store = PendingOutputStore::default();
         store
-            .push_with_certainty_and_ttl(
-                1,
-                "expired".to_string(),
-                target,
-                "test",
-                "test",
-                DeliveryCertainty::Retryable,
-                Duration::ZERO,
-            )
+            .push_with_ttl(pending_draft(1, "expired"), Duration::ZERO)
             .unwrap();
-        assert!(store.list().is_empty());
+        assert!(store.list(|_| true).is_empty());
     }
 
     #[test]
@@ -571,22 +325,5 @@ mod tests {
             normalize_smart_output_text(&over_limit),
             Err(OutputValidationError::TooLong)
         );
-    }
-
-    #[test]
-    fn multiline_unsafe_targets_are_case_insensitive() {
-        for executable in [
-            "cmd.exe",
-            "PowerShell.exe",
-            "pwsh.exe",
-            "WindowsTerminal.exe",
-            "OpenConsole.exe",
-            "conhost.exe",
-        ] {
-            assert!(is_multiline_unsafe_target(executable), "{executable}");
-        }
-        assert!(!is_multiline_unsafe_target("notepad.exe"));
-        assert!(!is_multiline_unsafe_target("Code.exe"));
-        assert!(!is_multiline_unsafe_target("Cursor.exe"));
     }
 }

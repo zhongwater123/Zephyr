@@ -7,7 +7,7 @@ use crate::pending_output_service::PendingOutputLease;
 use crate::provider::ProviderError;
 use crate::services::AppServices;
 use crate::state::{VoiceState, VoiceStatePayload};
-use crate::target::TargetWindowIdentity;
+use crate::target_port::{CapturedTarget, TargetPort};
 use crate::voice_trigger::{ActivationId, BeginDecision, VoiceActivation, VoiceCancelReason};
 use serde::Serialize;
 use std::sync::Arc;
@@ -209,6 +209,7 @@ impl StartOutcome {
 
 pub(super) struct FinalizationJob {
     pub session: SessionResources,
+    pub targets: Arc<dyn TargetPort>,
     pub executor: Arc<dyn DeliveryExecutor>,
     pub delivery_mode: DeliveryMode,
     pub services: AppServices,
@@ -216,7 +217,7 @@ pub(super) struct FinalizationJob {
 
 pub(super) struct PendingDraft {
     pub text: String,
-    pub target: TargetWindowIdentity,
+    pub target: CapturedTarget,
     pub reason_code: String,
     pub reason_message: String,
     pub delivery_intent: DeliveryIntent,
@@ -257,6 +258,7 @@ impl FinalizeOutcome {
 
 pub(super) struct PendingDeliveryJob {
     pub lease: PendingOutputLease,
+    pub targets: Arc<dyn TargetPort>,
     pub executor: Arc<dyn DeliveryExecutor>,
     pub delivery_mode: DeliveryMode,
     pub services: AppServices,

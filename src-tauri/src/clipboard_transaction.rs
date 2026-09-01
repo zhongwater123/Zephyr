@@ -2,6 +2,8 @@ use crate::inject::{
     DeliveryExecutor, DeliveryMode, DeliveryReceipt, DeliveryRequest, InjectError,
     RestorationState, SubmissionState,
 };
+#[cfg(target_os = "windows")]
+use crate::windows_target::WindowsTargetAdapter;
 use async_trait::async_trait;
 use paste_protocol::{
     HelperEvent, HelperEventKind, HelperOperation, HelperRequest, HelperStage, TargetIdentity,
@@ -75,33 +77,39 @@ impl ClipboardTransactionService {
         &self,
         request: DeliveryRequest,
     ) -> Result<DeliveryReceipt, InjectError> {
-        let allow_unicode_fallback = request.allow_unicode_fallback;
-        let helper_request = HelperRequest {
-            protocol_version: PROTOCOL_VERSION,
-            operation: HelperOperation::Deliver,
-            transaction_id: request.transaction_id,
-            mode: Some(request.mode),
-            text: Some(request.text),
-            target: Some(TargetIdentity {
-                hwnd: request.target.hwnd as i64,
-                process_id: request.target.process_id,
-                process_started_at: request.target.process_started_at,
-                executable_path: request.target.executable_path,
-            }),
-            fault_at: None,
-            send_input_count: None,
-        };
-        let result = self.execute_delivery_helper(&helper_request).await;
-        if should_fallback_to_unicode(&helper_request, allow_unicode_fallback, &result) {
-            log::warn!(
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = request;
+            return Err(InjectError::HelperUnavailable(
+                "paste helper is only available on Windows".to_string(),
+            ));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let allow_unicode_fallback = request.allow_unicode_fallback;
+            let target = helper_target_identity(&request.target)?;
+            let helper_request = HelperRequest {
+                protocol_version: PROTOCOL_VERSION,
+                operation: HelperOperation::Deliver,
+                transaction_id: request.transaction_id,
+                mode: Some(request.mode),
+                text: Some(request.text),
+                target: Some(target),
+                fault_at: None,
+                send_input_count: None,
+            };
+            let result = self.execute_delivery_helper(&helper_request).await;
+            if should_fallback_to_unicode(&helper_request, allow_unicode_fallback, &result) {
+                log::warn!(
                 "clipboard snapshot unavailable; retrying safe single-line Unicode delivery transaction_id={}",
                 helper_request.transaction_id
             );
-            let mut fallback_request = helper_request.clone();
-            fallback_request.mode = Some(DeliveryMode::Unicode);
-            return self.execute_delivery_helper(&fallback_request).await;
+                let mut fallback_request = helper_request.clone();
+                fallback_request.mode = Some(DeliveryMode::Unicode);
+                return self.execute_delivery_helper(&fallback_request).await;
+            }
+            result
         }
-        result
     }
 
     async fn execute_delivery_helper(
@@ -427,9 +435,53 @@ fn should_fallback_to_unicode(
         && matches!(result, Err(InjectError::ClipboardSnapshotUnsupported(_)))
 }
 
+#[cfg(target_os = "windows")]
+fn helper_target_identity(
+    target: &crate::target_port::CapturedTarget,
+) -> Result<TargetIdentity, InjectError> {
+    let identity = WindowsTargetAdapter::identity(target).map_err(InjectError::TargetChanged)?;
+    Ok(TargetIdentity {
+        hwnd: identity.hwnd as i64,
+        process_id: identity.process_id,
+        process_started_at: identity.process_started_at,
+        executable_path: identity.executable_path.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn captured_windows_target_preserves_the_helper_protocol_identity() {
+        let captured = crate::target_port::CapturedTarget::new(
+            crate::target_port::TargetContext {
+                application_key: "editor.exe".to_string(),
+                window_title: Some("Editor".to_string()),
+                process_id: 22,
+                multiline_may_execute: false,
+            },
+            crate::windows_target::WindowsTargetIdentity {
+                hwnd: 11,
+                process_id: 22,
+                process_started_at: 33,
+                executable_name: "editor.exe".to_string(),
+                executable_path: r"C:\\Apps\\editor.exe".to_string(),
+                window_title: Some("Editor".to_string()),
+            },
+        );
+
+        assert_eq!(
+            helper_target_identity(&captured).unwrap(),
+            TargetIdentity {
+                hwnd: 11,
+                process_id: 22,
+                process_started_at: 33,
+                executable_path: r"C:\\Apps\\editor.exe".to_string(),
+            }
+        );
+    }
 
     #[test]
     fn helper_stage_arbitration_is_monotonic_and_conservative() {

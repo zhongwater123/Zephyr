@@ -47,6 +47,8 @@ jobs:
         run: npm run architecture:check
       - name: Check ASR layer boundaries
         run: npm run architecture:asr
+      - name: Check shared platform boundaries
+        run: npm run architecture:platform
       - name: Build frontend
         run: npm run build
       - name: Test frontend
@@ -96,6 +98,8 @@ jobs:
         run: npm run architecture:check
       - name: Check ASR layer boundaries
         run: npm run architecture:asr
+      - name: Check shared platform boundaries
+        run: npm run architecture:platform
       - name: Lint Rust
         working-directory: src-tauri
         run: cargo clippy --all-targets --all-features -- -D warnings

@@ -14,6 +14,7 @@ pub use resources::SessionMetrics;
 use crate::inject::DeliveryExecutor;
 use crate::pending_output_service::PendingOutputService;
 use crate::services::AppServices;
+use crate::target_port::TargetPort;
 use crate::voice_trigger::{
     ActivationId, BeginReceipt, VoiceActivation, VoiceCancelReason, VoiceTriggerError,
     VoiceTriggerPort,
@@ -42,6 +43,7 @@ impl VoiceSessionHandle {
         revision: u64,
         services: AppServices,
         pending: Arc<PendingOutputService>,
+        targets: Arc<dyn TargetPort>,
         executor: Arc<dyn DeliveryExecutor>,
     ) -> Self {
         let (tx, rx) = mpsc::channel(CONTROL_QUEUE_CAPACITY);
@@ -53,6 +55,7 @@ impl VoiceSessionHandle {
             revision,
             services,
             pending,
+            targets,
             executor,
             rx,
             VoiceInternalEventSink::new(tx.clone()),

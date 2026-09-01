@@ -406,6 +406,7 @@
         "src-tauri/src/delivery.rs",
         "src-tauri/src/pending_output_service.rs",
         "src-tauri/src/target.rs",
+        "src-tauri/src/target_port.rs",
         "src-tauri/src/inject.rs",
         "src-tauri/src/clipboard_transaction.rs",
         "src-tauri/crates/paste-protocol"
@@ -552,7 +553,7 @@
         "src-tauri/src/platform.rs",
         "src-tauri/src/platform",
         "src-tauri/src/overlay.rs",
-        "src-tauri/src/target.rs",
+        "src-tauri/src/windows_target.rs",
         "src-tauri/src/inject.rs",
         "src-tauri/src/windows_keyboard.rs",
         "src-tauri/crates/zephyr-paste-helper",

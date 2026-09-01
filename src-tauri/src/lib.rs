@@ -22,11 +22,14 @@ mod shortcut_manager;
 mod state;
 mod streaming_pipeline;
 mod target;
+mod target_port;
 mod text_processing;
 mod voice_controller;
 mod voice_input_service;
 mod voice_trigger;
 mod windows_keyboard;
+#[cfg(target_os = "windows")]
+mod windows_target;
 
 use config::{AppConfig, ConfigRecovery};
 use std::sync::Arc;
@@ -123,7 +126,15 @@ pub fn run() {
             commands::provider::test_provider
         ])
         .setup(move |app| {
-            let pending = Arc::new(pending_output_service::PendingOutputService::default());
+            #[cfg(target_os = "windows")]
+            let targets: Arc<dyn target_port::TargetPort> =
+                Arc::new(windows_target::WindowsTargetAdapter);
+            #[cfg(not(target_os = "windows"))]
+            let targets: Arc<dyn target_port::TargetPort> =
+                Arc::new(target_port::UnsupportedTargetPort);
+            let pending = Arc::new(pending_output_service::PendingOutputService::new(
+                targets.clone(),
+            ));
             let delivery_executor: Arc<dyn inject::DeliveryExecutor> = Arc::new(
                 clipboard_transaction::ClipboardTransactionService::new(app.handle().clone()),
             );
@@ -134,6 +145,7 @@ pub fn run() {
                 initial_config.revision,
                 voice_services.clone(),
                 pending.clone(),
+                targets,
                 delivery_executor,
             );
             let shortcut_manager = shortcut_manager::ShortcutManager::initialize(

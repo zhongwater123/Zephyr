@@ -130,7 +130,7 @@ pub fn capture_clipboard(owner: &ClipboardOwner, transaction_id: Uuid) -> Result
     let has_dib = ids
         .iter()
         .any(|id| *id == FORMAT_DIB || *id == FORMAT_DIBV5);
-    let has_unicode = ids.iter().any(|id| *id == FORMAT_UNICODETEXT);
+    let has_unicode = ids.contains(&FORMAT_UNICODETEXT);
     let mut formats = Vec::new();
     let mut total = 0usize;
     for format_id in ids {
@@ -439,7 +439,7 @@ fn validate_format(
 }
 
 fn decode_unicode_text(data: &[u8]) -> Result<String, String> {
-    if data.len() % 2 != 0 {
+    if !data.len().is_multiple_of(2) {
         return Err("Unicode clipboard text has odd byte length".to_string());
     }
     let units = data

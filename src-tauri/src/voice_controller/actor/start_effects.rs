@@ -12,12 +12,15 @@ impl VoiceSessionActor {
                         continue;
                     }
                     workflow::spawn_start(
-                        self.audio.clone(),
-                        self.services.clone(),
-                        starting.config.clone(),
-                        session_id,
-                        starting.cancellation.clone(),
-                        starting.intent,
+                        workflow::StartJob {
+                            audio: self.audio.clone(),
+                            services: self.services.clone(),
+                            targets: self.targets.clone(),
+                            config: starting.config.clone(),
+                            session_id,
+                            cancellation: starting.cancellation.clone(),
+                            activation_intent: starting.intent,
+                        },
                         self.events.clone(),
                     );
                 }

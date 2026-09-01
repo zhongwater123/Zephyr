@@ -25,6 +25,7 @@ use crate::inject::{DeliveryExecutor, DeliveryMode};
 use crate::pending_output_service::{PendingOutputService, PendingOutputServiceError};
 use crate::services::AppServices;
 use crate::state::{ReleaseDecision, VoiceState};
+use crate::target_port::TargetPort;
 use crate::voice_trigger::{
     AcceptedActivation, ActivationCompletionReceipt, ActivationId, BeginDecision, VoiceActivation,
 };
@@ -62,6 +63,7 @@ pub(super) struct VoiceSessionActor {
     fail_closed: Arc<AtomicBool>,
     fail_closed_notify: Arc<tokio::sync::Notify>,
     audio: AudioSessionHandle,
+    targets: Arc<dyn TargetPort>,
     executor: Arc<dyn DeliveryExecutor>,
     starting: Option<StartingResources>,
     resources: Option<SessionResources>,
@@ -77,6 +79,7 @@ pub(super) fn build_actor(
     revision: u64,
     services: AppServices,
     pending: Arc<PendingOutputService>,
+    targets: Arc<dyn TargetPort>,
     executor: Arc<dyn DeliveryExecutor>,
     rx: mpsc::Receiver<ActorMessage>,
     events: VoiceInternalEventSink,
@@ -97,6 +100,7 @@ pub(super) fn build_actor(
             fail_closed,
             fail_closed_notify,
             audio: AudioSessionHandle::spawn(),
+            targets,
             executor,
             starting: None,
             resources: None,

@@ -6,7 +6,7 @@ use crate::provider::{
     AsrSessionHints, AudioChunk, AudioStreamInfo, ProviderError, StreamingTranscriptionProvider,
     TranscriptEvent,
 };
-use crate::target::TargetWindowIdentity;
+use crate::target_port::CapturedTarget;
 use serde::Serialize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -60,7 +60,7 @@ pub(super) struct PreparedSession {
     pub transcript_events: watch::Receiver<Option<TranscriptEvent>>,
     pub preview_state: Arc<tokio::sync::Mutex<TranscriptPreviewState>>,
     pub app_context: AppContext,
-    pub target: TargetWindowIdentity,
+    pub target: CapturedTarget,
     pub cancellation: Arc<SessionCancellation>,
     pub deadline_cancellation: Arc<SessionCancellation>,
     pub audio_queue: Arc<AudioQueueMonitor>,
@@ -77,7 +77,7 @@ pub(super) struct SessionResources {
     pub provider_result: oneshot::Receiver<Result<String, ProviderError>>,
     pub preview_state: Arc<tokio::sync::Mutex<TranscriptPreviewState>>,
     pub app_context: AppContext,
-    pub target: TargetWindowIdentity,
+    pub target: CapturedTarget,
     pub cancellation: Arc<SessionCancellation>,
     pub deadline_cancellation: Arc<SessionCancellation>,
     pub audio_queue: Arc<AudioQueueMonitor>,

@@ -18,6 +18,7 @@ pub(crate) fn spawn_pending_delivery(job: PendingDeliveryJob, events: VoiceInter
 async fn deliver_pending(job: PendingDeliveryJob) -> PendingDeliveryOutcome {
     let PendingDeliveryJob {
         lease,
+        targets,
         executor,
         delivery_mode,
         services,
@@ -27,7 +28,7 @@ async fn deliver_pending(job: PendingDeliveryJob) -> PendingDeliveryOutcome {
     let target = lease.record().target.clone();
     let current_certainty = lease.record().dto.delivery_certainty;
     let metadata = lease.metadata().clone();
-    let delivery = DeliveryService::new(services);
+    let delivery = DeliveryService::new(services, targets);
     let text = match delivery.validate_with_intent(&text, &target, true, metadata.intent) {
         Ok(text) => text,
         Err(error) => {
@@ -82,8 +83,8 @@ async fn deliver_pending(job: PendingDeliveryJob) -> PendingDeliveryOutcome {
         .commit_with_provenance(
             text,
             history::AppContext {
-                app_name: Some(target.executable_name),
-                app_title: target.window_title,
+                app_name: Some(target.context().application_key.clone()),
+                app_title: target.context().window_title.clone(),
             },
             config,
             metadata.provenance,

@@ -5,6 +5,7 @@ use crate::inject::{
 };
 use crate::services::AppServices;
 use crate::target;
+use crate::target_port::{CapturedTarget, TargetPort};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use std::time::Instant;
@@ -24,7 +25,7 @@ pub enum DeliveryIntent {
 
 pub fn prepare_delivery_text(
     text: &str,
-    _target_window: &target::TargetWindowIdentity,
+    target_window: &CapturedTarget,
     intent: DeliveryIntent,
 ) -> Result<String, DeliveryFailure> {
     let prepared = match intent {
@@ -39,7 +40,7 @@ pub fn prepare_delivery_text(
 
     if intent == DeliveryIntent::SmartDictation
         && prepared.contains('\n')
-        && target::is_multiline_unsafe_target(&_target_window.executable_name)
+        && target_window.context().multiline_may_execute
     {
         return Err(DeliveryFailure {
             code: "multiline_delivery_requires_user_action",
@@ -69,18 +70,19 @@ fn map_output_validation_error(error: target::OutputValidationError) -> Delivery
 #[derive(Clone)]
 pub struct DeliveryService {
     services: AppServices,
+    targets: Arc<dyn TargetPort>,
 }
 
 impl DeliveryService {
-    pub fn new(services: AppServices) -> Self {
-        Self { services }
+    pub fn new(services: AppServices, targets: Arc<dyn TargetPort>) -> Self {
+        Self { services, targets }
     }
 
     #[allow(dead_code)]
     pub fn validate(
         &self,
         text: &str,
-        target: &target::TargetWindowIdentity,
+        target: &CapturedTarget,
         activate: bool,
     ) -> Result<(), DeliveryFailure> {
         target::validate_output_text(text).map_err(|error| {
@@ -102,43 +104,25 @@ impl DeliveryService {
             };
             DeliveryFailure { code, message }
         })?;
-        if activate {
-            target::activate_target(target).map_err(|message| DeliveryFailure {
-                code: "target_changed",
-                message,
-            })?;
-        }
-        target::validate_foreground_target(target).map_err(|message| DeliveryFailure {
-            code: "target_changed",
-            message,
-        })
+        validate_delivery_target(self.targets.as_ref(), target, activate)
     }
 
     pub fn validate_with_intent(
         &self,
         text: &str,
-        target_window: &target::TargetWindowIdentity,
+        target_window: &CapturedTarget,
         activate: bool,
         intent: DeliveryIntent,
     ) -> Result<String, DeliveryFailure> {
         let prepared = prepare_delivery_text(text, target_window, intent)?;
-        if activate {
-            target::activate_target(target_window).map_err(|message| DeliveryFailure {
-                code: "target_changed",
-                message,
-            })?;
-        }
-        target::validate_foreground_target(target_window).map_err(|message| DeliveryFailure {
-            code: "target_changed",
-            message,
-        })?;
+        validate_delivery_target(self.targets.as_ref(), target_window, activate)?;
         Ok(prepared)
     }
 
     pub async fn inject_with_intent(
         &self,
         text: String,
-        target_window: target::TargetWindowIdentity,
+        target_window: CapturedTarget,
         executor: Arc<dyn DeliveryExecutor>,
         requested_mode: DeliveryMode,
         intent: DeliveryIntent,
@@ -154,8 +138,8 @@ impl DeliveryService {
             "delivery_inject_started transaction_id={transaction_id} mode={mode:?} chars={} bytes={} sha256={digest} target_exe={} target_pid={}",
             text.chars().count(),
             text.len(),
-            target_window.executable_name,
-            target_window.process_id
+            target_window.context().application_key,
+            target_window.context().process_id
         );
         let result = executor
             .deliver(DeliveryRequest {
@@ -232,6 +216,27 @@ impl DeliveryService {
     }
 }
 
+fn validate_delivery_target(
+    targets: &dyn TargetPort,
+    target: &CapturedTarget,
+    activate: bool,
+) -> Result<(), DeliveryFailure> {
+    if activate {
+        targets
+            .activate(target)
+            .map_err(|message| DeliveryFailure {
+                code: "target_changed",
+                message,
+            })?;
+    }
+    targets
+        .validate_foreground(target)
+        .map_err(|message| DeliveryFailure {
+            code: "target_changed",
+            message,
+        })
+}
+
 fn map_inject_error(
     error: InjectError,
     intent: DeliveryIntent,
@@ -266,16 +271,19 @@ fn map_inject_error(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::target_port::tests::{fake_target_with_multiline, FakeTargetPort};
 
-    fn target(executable_name: &str) -> target::TargetWindowIdentity {
-        target::TargetWindowIdentity {
-            hwnd: 1,
-            process_id: 2,
-            process_started_at: 3,
-            executable_name: executable_name.to_string(),
-            executable_path: format!(r"C:\\Apps\\{executable_name}"),
-            window_title: None,
-        }
+    fn target(executable_name: &str) -> CapturedTarget {
+        let multiline_may_execute = matches!(
+            executable_name.to_ascii_lowercase().as_str(),
+            "cmd.exe"
+                | "powershell.exe"
+                | "pwsh.exe"
+                | "windowsterminal.exe"
+                | "openconsole.exe"
+                | "conhost.exe"
+        );
+        fake_target_with_multiline(executable_name, multiline_may_execute)
     }
 
     #[test]
@@ -352,5 +360,27 @@ mod tests {
             DeliveryMode::Unicode,
         );
         assert_eq!(unicode.code, "delivery_helper_unavailable");
+    }
+
+    #[test]
+    fn initial_delivery_validates_without_activating() {
+        let targets = FakeTargetPort::available();
+        validate_delivery_target(&targets, &target("notepad.exe"), false).unwrap();
+        assert_eq!(targets.calls(), vec!["validate_foreground"]);
+    }
+
+    #[test]
+    fn pending_delivery_activates_then_revalidates() {
+        let targets = FakeTargetPort::available();
+        validate_delivery_target(&targets, &target("notepad.exe"), true).unwrap();
+        assert_eq!(targets.calls(), vec!["activate", "validate_foreground"]);
+    }
+
+    #[test]
+    fn target_validation_failure_preserves_the_stable_delivery_error() {
+        let targets = FakeTargetPort::failing_validation("识别期间前台窗口已经变化");
+        let error = validate_delivery_target(&targets, &target("notepad.exe"), false).unwrap_err();
+        assert_eq!(error.code, "target_changed");
+        assert_eq!(error.message, "识别期间前台窗口已经变化");
     }
 }

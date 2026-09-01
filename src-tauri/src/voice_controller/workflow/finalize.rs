@@ -42,6 +42,7 @@ pub(crate) fn spawn_finalization(job: FinalizationJob, events: VoiceInternalEven
 async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> FinalizeOutcome {
     let FinalizationJob {
         session,
+        targets,
         executor,
         delivery_mode,
         services,
@@ -215,7 +216,7 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
     let plan = ProcessingPlan::new(
         config.revision,
         polish_level,
-        target.executable_name.clone(),
+        target.context().application_key.clone(),
         app_context.app_name.clone(),
     );
     let processing_attempt = if !should_start_text_processing(polish_level) {
@@ -304,7 +305,7 @@ async fn finalize(job: FinalizationJob, events: &VoiceInternalEventSink) -> Fina
         }
     };
 
-    let delivery = DeliveryService::new(services.clone());
+    let delivery = DeliveryService::new(services.clone(), targets);
     let delivery_intent = DeliveryIntent::SmartDictation;
     incident.stage(IncidentStage::Delivery, IncidentStageOutcome::Running, None);
     let delivery_text =

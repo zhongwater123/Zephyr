@@ -11,6 +11,7 @@ use crate::incident::model::{
 };
 use crate::preview::TranscriptPreviewState;
 use crate::services::AppServices;
+use crate::target_port::TargetPort;
 use crate::{history, hotwords};
 use std::sync::Arc;
 use std::time::Instant;
@@ -19,55 +20,47 @@ use tokio::sync::{mpsc, watch};
 const STREAM_CHUNK_MS: u16 = 200;
 const AUDIO_QUEUE_CAPACITY: usize = 32;
 
-pub(crate) fn spawn_start(
-    audio: AudioSessionHandle,
-    services: AppServices,
-    config: crate::config::AppConfig,
-    session_id: u64,
-    cancellation: Arc<SessionCancellation>,
-    activation_intent: crate::text_processing::ActivationIntent,
-    events: VoiceInternalEventSink,
-) {
+pub(crate) struct StartJob {
+    pub(crate) audio: AudioSessionHandle,
+    pub(crate) services: AppServices,
+    pub(crate) targets: Arc<dyn TargetPort>,
+    pub(crate) config: crate::config::AppConfig,
+    pub(crate) session_id: u64,
+    pub(crate) cancellation: Arc<SessionCancellation>,
+    pub(crate) activation_intent: crate::text_processing::ActivationIntent,
+}
+
+pub(crate) fn spawn_start(job: StartJob, events: VoiceInternalEventSink) {
     tauri::async_runtime::spawn(async move {
-        let outcome = prepare_start(
-            audio,
-            services,
-            config,
-            session_id,
-            cancellation,
-            activation_intent,
-        )
-        .await;
+        let outcome = prepare_start(job).await;
         let _ = events
             .send(VoiceInternalEvent::StartFinished(outcome))
             .await;
     });
 }
 
-async fn prepare_start(
-    audio: AudioSessionHandle,
-    services: AppServices,
-    config: crate::config::AppConfig,
-    session_id: u64,
-    cancellation: Arc<SessionCancellation>,
-    activation_intent: crate::text_processing::ActivationIntent,
-) -> StartOutcome {
+async fn prepare_start(job: StartJob) -> StartOutcome {
+    let StartJob {
+        audio,
+        services,
+        targets,
+        config,
+        session_id,
+        cancellation,
+        activation_intent,
+    } = job;
     if cancellation.is_cancelled() {
         return StartOutcome::Cancelled { session_id };
     }
 
-    let target = match crate::target::capture_foreground_target() {
-        Ok(target) => target,
+    let (target, app_context) = match capture_target_context(targets.as_ref()) {
+        Ok(captured) => captured,
         Err(message) => {
             return StartOutcome::Failed {
                 session_id,
                 message,
             }
         }
-    };
-    let app_context = history::AppContext {
-        app_name: Some(target.executable_name.clone()),
-        app_title: target.window_title.clone(),
     };
     let attempt_id = uuid::Uuid::new_v4().to_string();
     let content_enabled = config.incident_recovery_enabled && config.incident_consent_version > 0;
@@ -170,4 +163,41 @@ async fn prepare_start(
             asr_hints,
         },
     })
+}
+
+fn capture_target_context(
+    targets: &dyn TargetPort,
+) -> Result<(crate::target_port::CapturedTarget, history::AppContext), String> {
+    let target = targets.capture()?;
+    let app_context = history::AppContext {
+        app_name: Some(target.context().application_key.clone()),
+        app_title: target.context().window_title.clone(),
+    };
+    Ok((target, app_context))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::target_port::tests::FakeTargetPort;
+
+    #[test]
+    fn capture_failure_is_returned_before_start_resources_are_created() {
+        let targets = FakeTargetPort::failing_capture("capture failed");
+        assert_eq!(
+            capture_target_context(&targets).unwrap_err(),
+            "capture failed"
+        );
+        assert_eq!(targets.calls(), vec!["capture"]);
+    }
+
+    #[test]
+    fn captured_windows_application_context_is_preserved() {
+        let targets = FakeTargetPort::available();
+        let (target, context) = capture_target_context(&targets).unwrap();
+        assert_eq!(target.context().application_key, "notepad.exe");
+        assert_eq!(context.app_name.as_deref(), Some("notepad.exe"));
+        assert_eq!(context.app_title.as_deref(), Some("Target"));
+        assert_eq!(targets.calls(), vec!["capture"]);
+    }
 }
