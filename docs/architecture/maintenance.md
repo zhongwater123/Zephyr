@@ -39,8 +39,12 @@
 
 ## 多 Agent 隔离与收口
 
-- 每个编辑任务使用从最新 `origin/main` 创建的短生命周期 task branch 和独立 Git worktree；同一 worktree 同时只允许一个写入 Agent。
-- 分支只表达实现隔离，不表达项目状态。任务状态由 Issue/PR、CI，功能验证状态由 Dossier，发布状态由 tag/release 表达。
+- Codex 中作为 **Local** 打开的仓库主 checkout 是单写者集成与实机验证区。所有指向同一路径的会话共享 `HEAD`、索引和未提交文件；除非用户明确指定当前任务为唯一集成者且没有其他写入任务使用该路径，否则 Local 中的 Agent 只能只读，不得切换/创建分支或修改跟踪文件。
+- 每个编辑任务使用从最新 `origin/main` 创建的短生命周期 task branch 和独立 Git worktree；在 Codex 中应以 **Worktree** 模式启动，或在编辑前通过 Handoff 移入 worktree。同一 worktree 同时只允许一个写入 Agent。
+- 开始编辑前执行 `git rev-parse --show-toplevel`、`git worktree list --porcelain` 和 `git status --short --branch`，确认当前路径是分配给本任务的独立 worktree。若当前路径是共享 Local、与其他写入任务相同，或仓库实际上只有一个 checkout，则停止写入并先创建/移交到 worktree。
+- 分支名不隔离工作文件。禁止在共享 Local 中用 `git switch`、`git checkout` 或 `git switch -c` 代替独立 worktree；否则该目录下所有会话都会同时改变分支并共享脏状态。
+- 如果受环境限制只能使用一个物理 checkout，所有写入必须在当前分支串行执行；其他 Agent 仅做只读分析，并在给出结论前重新检查 `HEAD`。此模式不创建并行任务分支。
+- 分支只在绑定独立 worktree 时表达实现隔离，不表达项目状态。任务状态由 Issue/PR、CI，功能验证状态由 Dossier，发布状态由 tag/release 表达。
 - 开发 Agent 可以修改代码、测试和用户明确改变的 MVP 契约，也可以报告实际执行的验证与偏差；不得自行把 Dossier 升为 `validated`、Current View 升为 `reviewed`，或把 ADR 从 Proposed 升为 Accepted。
 - 集成/文档收口者不并行开发该功能。它在分支合并后，以 clean revision 对照最终代码、Dossier 契约、必要的 Current View/ADR、CI 和目标环境证据，解决冲突并执行状态升级。
 - 同一事实出现冲突时，不以最后写入者为准。源码决定实现事实，Dossier 契约决定用户行为目标，Accepted ADR 决定仍有效的长期边界，目标环境证据决定对应验收是否成立。

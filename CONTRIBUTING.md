@@ -62,7 +62,11 @@ npm run tauri build
 This repository uses trunk-based development with short-lived task branches:
 
 - Start each task from the latest `origin/main`.
-- Use one independent Git worktree per editing Agent, with only one writer in that worktree.
+- Treat the canonical checkout opened as **Local** in Codex as a single-writer integration and real-device-test workspace. Multiple chats pointing at this directory share the same branch, index, and uncommitted files.
+- For parallel editing, start each Agent in an independent Git worktree, with only one writer in that worktree. In Codex, select **Worktree** when starting the task or use Handoff before editing.
+- Before editing, verify the assignment with `git rev-parse --show-toplevel`, `git worktree list --porcelain`, and `git status --short --branch`.
+- Do not create or switch task branches in a shared Local checkout. A branch without a separate worktree does not isolate files and changes the checked-out branch for every chat using that directory.
+- If work must stay in one physical checkout, use one writer at a time and serialize the work on the current branch; other Agents must remain read-only.
 - Prefer `codex/<issue-or-task>-<slug>` for Codex-created branches; use the team prefix for other tools.
 - Keep branches scoped to one reviewable outcome and merge through a PR after CI passes.
 - A branch is an implementation sandbox, not the source of project status. Use Issue/PR state, CI, Feature Dossier validation status, and release tags for status.
