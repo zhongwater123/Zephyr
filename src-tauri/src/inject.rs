@@ -10,6 +10,7 @@ pub struct DeliveryRequest {
     pub text: String,
     pub target: TargetWindowIdentity,
     pub mode: DeliveryMode,
+    pub allow_unicode_fallback: bool,
 }
 
 #[derive(Debug, Error)]

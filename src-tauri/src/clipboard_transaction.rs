@@ -75,6 +75,7 @@ impl ClipboardTransactionService {
         &self,
         request: DeliveryRequest,
     ) -> Result<DeliveryReceipt, InjectError> {
+        let allow_unicode_fallback = request.allow_unicode_fallback;
         let helper_request = HelperRequest {
             protocol_version: PROTOCOL_VERSION,
             operation: HelperOperation::Deliver,
@@ -90,7 +91,24 @@ impl ClipboardTransactionService {
             fault_at: None,
             send_input_count: None,
         };
-        match self.run_helper(&helper_request).await {
+        let result = self.execute_delivery_helper(&helper_request).await;
+        if should_fallback_to_unicode(&helper_request, allow_unicode_fallback, &result) {
+            log::warn!(
+                "clipboard snapshot unavailable; retrying safe single-line Unicode delivery transaction_id={}",
+                helper_request.transaction_id
+            );
+            let mut fallback_request = helper_request.clone();
+            fallback_request.mode = Some(DeliveryMode::Unicode);
+            return self.execute_delivery_helper(&fallback_request).await;
+        }
+        result
+    }
+
+    async fn execute_delivery_helper(
+        &self,
+        helper_request: &HelperRequest,
+    ) -> Result<DeliveryReceipt, InjectError> {
+        match self.run_helper(helper_request).await {
             Ok(report) => self.receipt_from_report(report, helper_request.mode).await,
             Err(failure) => {
                 let mut receipt = DeliveryReceipt {
@@ -384,6 +402,20 @@ fn restoration_after_abnormal_exit(stage: Option<HelperStage>) -> RestorationSta
     }
 }
 
+fn should_fallback_to_unicode(
+    request: &HelperRequest,
+    allowed: bool,
+    result: &Result<DeliveryReceipt, InjectError>,
+) -> bool {
+    allowed
+        && request.mode == Some(DeliveryMode::ClipboardPaste)
+        && request
+            .text
+            .as_deref()
+            .is_some_and(|text| !text.contains('\n'))
+        && matches!(result, Err(InjectError::ClipboardSnapshotUnsupported(_)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,5 +440,36 @@ mod tests {
             submission_from_stage(Some(HelperStage::RestoreStarted)),
             SubmissionState::Submitted
         );
+    }
+
+    #[test]
+    fn unsupported_clipboard_snapshot_only_falls_back_for_single_line_delivery() {
+        let request = HelperRequest {
+            protocol_version: PROTOCOL_VERSION,
+            operation: HelperOperation::Deliver,
+            transaction_id: uuid::Uuid::nil(),
+            mode: Some(DeliveryMode::ClipboardPaste),
+            text: Some("single line".to_string()),
+            target: Some(TargetIdentity {
+                hwnd: 1,
+                process_id: 2,
+                process_started_at: 3,
+                executable_path: r"C:\\Apps\\editor.exe".to_string(),
+            }),
+            fault_at: None,
+            send_input_count: None,
+        };
+        let unsupported = Err(InjectError::ClipboardSnapshotUnsupported(
+            "unmaterialized format".to_string(),
+        ));
+        assert!(should_fallback_to_unicode(&request, true, &unsupported));
+        assert!(!should_fallback_to_unicode(&request, false, &unsupported));
+
+        let mut multiline = request.clone();
+        multiline.text = Some("first\nsecond".to_string());
+        assert!(!should_fallback_to_unicode(&multiline, true, &unsupported));
+
+        let worker_failure = Err(InjectError::Worker("failed".to_string()));
+        assert!(!should_fallback_to_unicode(&request, true, &worker_failure));
     }
 }

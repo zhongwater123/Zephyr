@@ -12,12 +12,12 @@
   "implementationStatus": "in_progress",
   "implementationReview": {
     "status": "deviating",
-    "sourceRevision": "ce04cfb",
-    "worktreeState": "clean",
-    "changedPaths": ["src-tauri/src/clipboard_transaction.rs", "src-tauri/src/delivery.rs", "src-tauri/src/inject.rs", "src-tauri/src/voice_controller", "src-tauri/crates/paste-protocol", "src-tauri/crates/zephyr-paste-helper", "src-tauri/tauri.conf.json", "scripts/build-paste-helper.mjs", "scripts/tauri.mjs", "scripts/package-windows.mjs"],
-    "reviewedAt": "2026-08-31",
-    "summary": "revision f93bc4d 已独立移除生产自动交付的 OLE 活对象路径；revision 3ea6d9f 实现共享协议、单例事务 service、隔离 Windows helper、DPAPI 自有快照、三态回执、Unknown 二次确认与 Tauri sidecar；revision ce04cfb 增加实际 NSIS 的 helper 架构、协议、自检、运行目录哈希和发布清单门禁。自动化和开发打包已经通过，但尚无安装后完整真实 Windows 互操作/强杀矩阵，因此此前目标环境崩溃造成的 invalidated 状态保持不变。",
-    "knownDeviations": ["Phase 0 和最终 helper 尚未在真实 Windows 外部目标矩阵上证明主进程不再退出；2026-08-28 与 2026-08-31 的既有 0xc000041d 失败证据仍是最近的目标环境结论。", "开发打包已经验证 NSIS 生成、sidecar 运行目录包含性、AMD64 PE、协议、自检与哈希一致；尚未验证安装后的启动、覆盖安装、签名或外部目标交付。", "自动化覆盖协议、状态仲裁、格式边界、DPAPI 快照原子替换和部分 SendInput 分类，但尚未在真实 helper 进程上完成每个阶段强杀、剪贴板占用、并发复制及 Office/浏览器/编辑器/终端互操作矩阵。", "helper 不可用时当前最终实现对自动交付统一失败关闭进入 Pending；它没有恢复进程内 Phase 0 Unicode 注入，因为最终源码门禁要求所有自动 SendInput 只能存在于 helper。"]
+    "sourceRevision": "a69242240d7da4e3d4f086b61548bfa019f93bdf",
+    "worktreeState": "dirty",
+    "changedPaths": ["src-tauri/crates/zephyr-paste-helper/src/platform.rs", "src-tauri/src/clipboard_transaction.rs", "src-tauri/src/delivery.rs", "src-tauri/src/inject.rs", "docs/features/smart-dictation.md", "docs/architecture/adr/0018-owned-clipboard-transaction-and-isolated-paste.md"],
+    "reviewedAt": "2026-09-01",
+    "summary": "已提交 revision f93bc4d、3ea6d9f 与 ce04cfb 分别移除 OLE 活对象路径、建立隔离剪贴板事务并完成 sidecar 打包门禁。基于 a692422 的当前脏工作树进一步修复动态注册格式被名称白名单误拒绝的问题，并只为 SmartDictation 单行开放覆盖前失败后的 Unicode 安全降级；Windows 打包前检查和自动化通过，用户随后报告暂未再遇到阻塞。该反馈缺少 clean revision、精确应用/格式矩阵和重复次数，不升级验证状态。",
+    "knownDeviations": ["当前动态注册格式修复仍在脏工作树，尚无可追溯安装包或 clean revision；2026-08-28 与 2026-08-31 的既有 0xc000041d 失败证据尚未被同等级目标环境矩阵关闭。", "可以锁定并复制的注册格式已按不透明字节保存，但尚未用受控真实剪贴板 owner 验证其恢复后的语义等价；Chromium、Office、图片、文件和延迟渲染格式仍需矩阵验证。", "自动化尚未在真实 helper 进程上完成每阶段强杀、剪贴板占用、并发复制、部分提交和单次 recover。", "helper 缺失或自检失败时仍统一进入 Pending；当前没有独立于 sidecar 的 Phase 0 进程内 Unicode 回退。", "真实运行曾出现 PendingFull 后用户无法找到可操作的待处理入口；重启可清空内存队列，但这不是已验证的产品恢复路径。"]
   },
   "validationStatus": "invalidated",
   "components": ["system.zephyr", "frontend.features", "backend.services", "backend.repositories", "backend.voice-controller", "backend.streaming", "backend.delivery", "backend.shortcut", "backend.incident-vault", "platform.windows"],
@@ -65,7 +65,7 @@ MVP 的快捷键 A 固定表达 SmartDictation 意图。系统把冻结的完整
 
 润色设置位于首页设置栏“输入效果”的最下方，只保留一处入口。用户通过四档控件选择 `Fast`、轻微整理、自然表达或理清重点；`Fast` 的用户说明固定为“快速响应，仅识别原话”。界面用最终可观察结果解释能力，不向 C 端用户暴露 Prompt、模型、画像、路由或“介入强度”等实现术语。
 
-智能成稿和兜底选择必须在目标输入框外全部完成。普通可编辑文本目标接收的是一份完整、已校验的最终纯文本，系统应像用户日常粘贴大段内容一样一次性整体写入并保留段落，而不是边生成边输入、逐段注入或为换行模拟 Enter。已知终端、shell 等粘贴换行可能执行命令的目标不属于普通文本框，必须失败关闭或转为用户主动交付。自动交付不得因为保存或恢复剪贴板而终止主进程，也不得在无法安全保存原剪贴板数据时静默覆盖它；无法证明安全时必须在不可逆写入前降级或进入 Pending。
+智能成稿和兜底选择必须在目标输入框外全部完成。普通可编辑文本目标接收的是一份完整、已校验的最终纯文本，系统应像用户日常粘贴大段内容一样一次性整体写入并保留段落，而不是边生成边输入、逐段注入或为换行模拟 Enter。已知终端、shell 等粘贴换行可能执行命令的目标不属于普通文本框，必须失败关闭或转为用户主动交付。自动交付不得因为保存或恢复剪贴板而终止主进程，也不得在无法安全保存原剪贴板数据时静默覆盖它；无法证明安全时必须在不可逆写入前降级或进入 Pending。正常输入可用性高于对固定格式名单的机械服从：只要当前剪贴板内容可以由 Zephyr 独立保存和恢复，就不得仅因格式身份未知而阻断输入；确实无法安全保存时，单行文本应先尝试不触碰剪贴板的安全交付，再进入 Pending。
 
 MVP 面向线下分发的公司内部员工。员工不负责提供、输入、测试或轮换 DeepSeek API Key；内部部署流程预置一份由 HotwordAgent 与 TextProcessing 共同引用的凭据，两项用途仍分别授权和审计。智能润色使用一份独立、版本化、带哈希校验的统一语义 Prompt；三个 LLM 档的整理程度作为明确输入，不复制三份 Prompt。`Fast` 不加载或调用该 Prompt。TextProcessing 默认使用关闭思考模式的 `deepseek-v4-flash`。
 
@@ -88,7 +88,7 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 | `AC-SD-13` | 快捷键 A 固定请求 SmartDictation；非 `Fast` 处理冻结并传递完整 ASR 原文、目标 EXE、可选应用名称和三种 LLM 整理程度的快照，默认自然表达。请求不得包含窗口标题、页面、屏幕、聊天历史、文档正文、源代码或剪贴板内容；未覆盖部署配置时使用关闭思考模式的 `deepseek-v4-flash` | 请求数据边界/三种 LLM 程度配置迁移与快照/默认模型自动化 + 真实快捷键运行时 |
 | `AC-SD-14` | 首页设置栏的“输入效果”末尾显示唯一的智能润色入口；用户可选择 `Fast`、轻微整理、自然表达或理清重点，默认自然表达。`Fast` 显示“快速响应，仅识别原话”；其余文案说明允许的整理结果，不暴露 Prompt、模型、画像、路由或“介入强度”等专业术语。选择后自动保存并在重启后保持 | 前端自动化 + 目标用户可用性观察 + Windows WebView2 视觉/键盘可访问性 + 重启持久化 |
 | `AC-SD-15` | 用户选择 `Fast` 后，系统仍等待并冻结有序的完整 ASR final，但不创建 TextProcessing/Chatbot 请求，不等待 LLM、不加载语义 Prompt，也不把该路径记录为超时或失败兜底；确认原文经允许的本地转换后直接进入既有 Delivery。History 必须把它标记为用户主动选择的 ASR 直出来源，而不是 LLM 失败；因此该档响应时间不包含 LLM 往返 | 自动化旁路与 provenance 契约 + 真实快捷键运行时 + 真实输入框互操作 + 重启持久化 |
-| `AC-SD-16` | 自动交付保存和恢复剪贴板时不得让主进程崩溃；只有已经复制为应用自有数据且可以安全重建的原格式才能自动恢复。发现无法保存的格式时必须在覆盖剪贴板前失败关闭、改用不触碰剪贴板的安全交付或进入 Pending；任何交付方式只提交了部分输入事件、在不可逆提交附近失联或不能证明尚未提交时，都必须标记为状态不确定并禁止自动重试。剪贴板清空、事务标记写入、逐格式写入和恢复之间的任一辅助进程故障不得被误判为可安全重放，也不得把内容送往未经复验的当前窗口 | 自动化 + 原生辅助进程/剪贴板格式/部分 SendInput 故障注入 + 真实 Windows 文本/HTML/RTF/图片/文件/自定义格式互操作 |
+| `AC-SD-16` | 自动交付保存和恢复剪贴板时不得让主进程崩溃；只有已经成为 Zephyr 自有数据且可以独立重建的原格式才能自动恢复。不得仅因格式身份不在内置名单而拒绝可安全保存的剪贴板；无法证明可重建时必须在覆盖前失败，并对单行文本先尝试不触碰剪贴板的安全交付，再进入 Pending。任何交付方式只提交了部分输入事件、在不可逆提交附近失联或不能证明尚未提交时，都必须标记为状态不确定并禁止自动重试。剪贴板清空、事务标记写入、逐格式写入和恢复之间的任一辅助进程故障不得被误判为可安全重放，也不得把内容送往未经复验的当前窗口 | 自动化 + 原生辅助进程/剪贴板格式/部分 SendInput 故障注入 + 真实 Windows 文本/HTML/RTF/图片/文件/自定义格式互操作 |
 
 ## 明确不规定的实现
 
@@ -117,7 +117,7 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 - `ASM-SD-09`（Confirmed for internal MVP）：安装包只线下分发给公司内部员工，维护者负责同一 DeepSeek Key 的预置、监控、轮换和吊销，员工无需配置。该信任模型接受桌面端共享秘密可能被本机账户提取的剩余风险，不把流量监控表述为绝对防泄露保证；外部分发时必须重新评估。
 - `ASM-SD-10`（Resolved for MVP）：TextProcessing 默认模型为 `deepseek-v4-flash` 并显式关闭思考模式。模型名由内部部署配置拥有，不向员工暴露；一次处理使用冻结的配置快照。
 - `ASM-SD-11`（Resolved for MVP）：`Fast` 是明确的 ASR 直出模式，不是最低 LLM 润色强度。它保留 ASR provider 自身的确认文本、标点、热词和允许的本地简繁转换，因此“识别原话”不承诺逐音逐字转写。
-- `ASM-SD-12`（Confirmed）：系统不能把 `OleGetClipboard` 返回的活 `IDataObject` 代理视为应用自有的完整快照。自动恢复只覆盖已经按值复制并能安全重建的格式；遇到不支持或延迟渲染格式时，数据完整性优先于自动粘贴便利。
+- `ASM-SD-12`（Confirmed）：系统不能把外部应用仍然拥有的活剪贴板对象视为 Zephyr 自有的完整快照。自动恢复只覆盖已经按值复制并能安全重建的格式；数据完整性仍是硬边界，但“格式身份未知”本身不证明数据不可保存，系统应在不静默丢失原内容的前提下优先保持正常输入可用。
 
 ## 概念迭代记录
 
@@ -129,6 +129,7 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 | `CI-SD-04` | Open | 若引入 `0–100` 连续值，前端位置必须对应真实处理差异，不能在后端静默压回 1/2/3 造成虚假精细控制。候选方案是把一个用户滑块映射为保留原句、句式改写、结构重排、场景语气和分点门槛等内部策略曲线；确认前需要跨场景语料对照评测。 |
 | `CI-SD-05` | Confirmed | 用户已确认提供 `Fast` 正常模式：“快速响应，仅识别原话”。它主动跳过 LLM，但仍保留 ASR provider 与允许的本地转换；不再把最低 LLM 整理程度命名为“保留原话”。 |
 | `CI-SD-06` | Rejected | “保存活 OLE `IDataObject`、粘贴后再 `OleSetClipboard`/`OleFlushClipboard` 就等于完整原子恢复”已被真实 Windows 两次进程崩溃推翻。不得通过增加线程栈、延长等待或重试继续包装该方案；后续采用自有数据快照、完整事务串行化和原生故障隔离。 |
+| `CI-SD-07` | Rejected | “名称不在固定白名单就一定不安全”把格式识别能力误当成数据所有权证明，并曾导致普通 Chromium 文本永久进入 Pending。安全判断应基于当前数据能否成为 Zephyr 自有、受限且可重建的值；格式身份只决定是否需要专用解析或额外验证。 |
 
 ## 架构决策
 
@@ -162,16 +163,16 @@ MVP 面向线下分发的公司内部员工。员工不负责提供、输入、�
 
 当前 finalize 链路只在权威 ASR final 返回后创建不可变 `FrozenTranscript`。`Fast` 在此后把 Processing 标记为策略跳过，不加载 Prompt、不创建 TextProcessing 请求、不记录 LLM 超时或失败，并以 `asr_direct` provenance 交给 Delivery；其余三档才创建 ProcessingPlan、调用 Processor，任何非取消处理失败选择冻结原文并标记 `asr_fallback`。普通可编辑目标的 SmartDictation 单行和多行都请求一次 `clipboardPaste`，已知终端含 LF 仍在不可逆写入前进入 Pending。
 
-Bootstrap 为首次交付和 Pending 重发注入同一个 `ClipboardTransactionService`。它用异步互斥锁覆盖 helper 自检、捕获、发布、提交、500ms 载荷保留、恢复及最多一次 recover；显式复制不取锁。主进程通过 stdin 单请求和 stdout NDJSON 驱动 `zephyr-paste-helper`，按最后可信阶段仲裁 `NotSubmitted | Submitted | Unknown`。helper 按值验证并保存受支持格式，使用当前用户 DPAPI 和 UUID 事务文件，发布私有标记与 Unicode 文本，并在目标 HWND/PID/创建时间/规范化 EXE/前台身份复验后发送一次 Ctrl+V。恢复在同一次剪贴板锁内重验 sequence、标记和指纹；竞争变化只跳过恢复。生产自动交付主进程不再含 OLE、Win32 剪贴板写入或 `SendInput`。
+Bootstrap 为首次交付和 Pending 重发注入同一个 `ClipboardTransactionService`。它用异步互斥锁覆盖 helper 自检、捕获、发布、提交、500ms 载荷保留、恢复及最多一次 recover；显式复制不取锁。主进程通过 stdin 单请求和 stdout NDJSON 驱动 `zephyr-paste-helper`，按最后可信阶段仲裁 `NotSubmitted | Submitted | Unknown`。helper 按值验证并保存已解析的已知格式，以及能够同步物化、锁定并通过大小边界的动态注册 `HGLOBAL`；格式名称仍随原始字节一起保存，以便恢复 helper 重新注册。它使用当前用户 DPAPI 和 UUID 事务文件，发布私有标记与 Unicode 文本，并在目标 HWND/PID/创建时间/规范化 EXE/前台身份复验后发送一次 Ctrl+V。恢复在同一次剪贴板锁内重验 sequence、标记和指纹；竞争变化只跳过恢复。捕获在覆盖前明确失败且文本为单行时，同一隔离 helper 改用 Unicode 输入；多行不模拟 Enter。生产自动交付主进程不再含 OLE、Win32 剪贴板写入或 `SendInput`。
 
 ## 验证状态
 
-当前实现状态为 `in_progress`，验证状态为 `invalidated`。本分支自动化已经覆盖共享协议、三态阶段仲裁、Unknown 后端确认、终端多行失败关闭、格式白名单与基础结构验证、64/128 MiB 边界、DPAPI 快照编解密及阶段原子替换、部分 `SendInput` 分类和主进程源码隔离门禁；开发打包还验证了实际 NSIS 生成与运行目录 sidecar 哈希一致。这些结果不能替代真实 sidecar 进程强杀、安装后启动和目标应用互操作。2026-08-31 的真实 Tauri 运行中，13 字文本从 provider final 到 delivery payload 的长度、bytes 和哈希完全一致，旧 AtomicPaste 仍以 `0xc000041d` 终止进程；2026-08-28 的较长文本也在同一边界崩溃。新的隔离路径尚未产生同等级目标环境反证，因此 `AC-SD-10`、`AC-SD-15` 和 `AC-SD-16` 仍未通过，自动化通过不能支持整体完成声明。
+当前实现状态为 `in_progress`，验证状态为 `invalidated`。基于 revision `a69242240d7da4e3d4f086b61548bfa019f93bdf` 的脏工作树已修复动态注册格式被固定名称名单误拒绝的问题，并把覆盖前确认未提交的单行降级限制在 SmartDictation；Legacy 兼容路径不会被静默改回已知不适配的 Unicode 语义。当前 Windows 打包前检查通过，包含前端 58 项、Rust 主库 195 项、共享协议 1 项、helper 8 项，以及架构、ASR 边界和秘密扫描；2 项需要真实网络凭据的测试按预期忽略。用户在重新使用后报告“暂时没遇到问题”，这只能作为修复方向的冒烟反馈：没有绑定 clean revision、安装包、精确应用/格式组合、重复次数或剪贴板恢复比对，因此不新增正式验证证据，也不关闭既有失败。
 
 
 现有自动化证据不具备 `human_quality_eval` 或 `usability_observation` 能力，因此不能回答“用户是否感到明显润色”“三档是否可预测”或“结果是否比原文更可用”。这些问题属于未完成的产品验证，不应再用链路测试通过来代替。
 
-仍未完成：安装 clean revision 生成的实际 NSIS 并验证 helper 启动自检；在真实 helper 进程上覆盖每个阶段强杀、超时、剪贴板占用、部分提交和单次 recover；覆盖文本、HTML、RTF、图片、文件、自定义/延迟渲染格式与并发复制；验证记事本、浏览器/WebView2、Word/Outlook、VS Code/Cursor 和终端；执行 1–2 分钟长语音并复核 ASR/润色/Delivery 哈希、单次提交、恢复规则和主进程存活；完成真实 DeepSeek 成稿质量评测、Windows Credential Manager 重启持久化、覆盖安装以及 IncidentVault 拥塞故障注入。目标环境崩溃关闭前不得恢复为 `partial`，缺少完整证据时不得升级为 `validated` 或发布完成。
+仍未完成：把当前修复形成 clean revision 和可追踪安装包；在受控 clipboard owner 上验证已知结构、动态注册值、图片、文件和无法物化格式的逐格式恢复等价；在真实 helper 进程上覆盖每个阶段强杀、超时、剪贴板占用、部分提交和单次 recover；验证记事本、浏览器/WebView2、Word/Outlook、VS Code/Cursor 和终端；确认 PendingFull 时用户始终能找到并处理队列而无需重启；执行 1–2 分钟长语音并复核 ASR/润色/Delivery 哈希、单次提交、恢复规则和主进程存活；完成真实 DeepSeek 成稿质量评测、Windows Credential Manager 重启持久化、覆盖安装以及 IncidentVault 拥塞故障注入。目标环境崩溃关闭前不得恢复为 `partial`，缺少完整证据时不得升级为 `validated` 或发布完成。
 
 ## 澄清历史
 
@@ -193,3 +194,4 @@ Bootstrap 为首次交付和 Pending 重发注入同一个 `ClipboardTransaction
 - 2026-08-31：用户确认智能润色改为四档，并将第一档命名为 `Fast`，面向用户说明“快速响应，仅识别原话”；该档主动跳过 LLM Chatbot，仅在完整 ASR final 冻结后进入本地转换和 Delivery。
 - 2026-08-31：用户提供第二次真实 Windows 短文本崩溃日志；13 字文本在 provider、relay、aggregate 和 delivery 阶段哈希一致，排除长文本、ASR 聚合和 LLM 润色后仍在 AtomicPaste 边界栈溢出。用户确认把“自有剪贴板快照、单一事务所有者、隔离粘贴辅助进程、无法安全保存时失败关闭”的替代计划写入文档系统。
 - 2026-08-31：基于 revision `b0c2faa1e116763a18cfeb318cb50bbbb238996a` 的源码复核确认，当前 SmartDictation 首次交付与 Pending 重新交付共用危险 AtomicPaste，Legacy `clipboard_compatibility` 仍可启用，现有自动化未执行原生 OLE 路径。用户进一步确认文档应区分当前已证实偏差与迁移方案风险，并把部分 `SendInput`、提交附近失联以及剪贴板清空后标记写入前崩溃纳入不可自动重试边界。
+- 2026-09-01：真实运行在复制普通 Chromium 文本后重复进入 `clipboard_snapshot_unsupported`，确认可保存的注册元数据与 Unicode/HTML 文本并存。用户确认正常输入可用性优先于机械格式名单；能够成为应用自有值的格式不得仅因身份未知而被拒绝，剪贴板确实无法安全保存时单行文本先使用不触碰剪贴板的安全输入。

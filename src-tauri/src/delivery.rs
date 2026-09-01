@@ -163,6 +163,7 @@ impl DeliveryService {
                 text,
                 target: target_window,
                 mode,
+                allow_unicode_fallback: intent == DeliveryIntent::SmartDictation,
             })
             .await
             .map_err(|error| map_inject_error(error, intent, mode));

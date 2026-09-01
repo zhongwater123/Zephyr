@@ -144,7 +144,7 @@ pub fn capture_clipboard(owner: &ClipboardOwner, transaction_id: Uuid) -> Result
             return Err("clipboard OwnerDisplay format is unsupported".to_string());
         }
         let registered_name = registered_format_name(format_id);
-        if !is_supported_format(format_id, registered_name.as_deref()) {
+        if !is_hglobal_snapshot_candidate(format_id, registered_name.as_deref()) {
             return Err(format!("unsupported clipboard format: {format_id}"));
         }
         let handle = unsafe { GetClipboardData(format_id) }.map_err(|error| {
@@ -361,7 +361,10 @@ fn registered_format_name(format_id: u32) -> Option<String> {
     (length > 0).then(|| String::from_utf16_lossy(&buffer[..length as usize]))
 }
 
-fn is_supported_format(format_id: u32, registered_name: Option<&str>) -> bool {
+fn is_hglobal_snapshot_candidate(format_id: u32, registered_name: Option<&str>) -> bool {
+    // Registered formats are candidates, not automatically trusted. The subsequent
+    // GlobalSize/GlobalLock copy is the capability check that proves this instance
+    // is bounded, materialized memory owned by the snapshot.
     matches!(
         format_id,
         value if value == FORMAT_UNICODETEXT
@@ -369,13 +372,9 @@ fn is_supported_format(format_id: u32, registered_name: Option<&str>) -> bool {
             || value == FORMAT_OEMTEXT
             || value == FORMAT_DIB
             || value == FORMAT_DIBV5
-            || value == FORMAT_HDROP
-            || value == FORMAT_LOCALE
-    ) || registered_name.is_some_and(|name| {
-        name.eq_ignore_ascii_case("HTML Format")
-            || name.eq_ignore_ascii_case("Rich Text Format")
-            || name.eq_ignore_ascii_case("PNG")
-    })
+             || value == FORMAT_HDROP
+             || value == FORMAT_LOCALE
+    ) || (format_id >= 0xC000 && registered_name.is_some())
 }
 
 fn validate_format(
@@ -511,10 +510,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn known_formats_are_bounded_and_unknown_formats_fail_closed() {
-        assert!(is_supported_format(FORMAT_UNICODETEXT, None));
-        assert!(is_supported_format(0xC001, Some("HTML Format")));
-        assert!(!is_supported_format(0xC002, Some("Private Pointer Format")));
+    fn known_and_registered_hglobal_candidates_are_attempted() {
+        assert!(is_hglobal_snapshot_candidate(FORMAT_UNICODETEXT, None));
+        assert!(is_hglobal_snapshot_candidate(0xC001, Some("HTML Format")));
+        assert!(is_hglobal_snapshot_candidate(
+            0xC364,
+            Some("Chromium internal source RFH token")
+        ));
+        assert!(is_hglobal_snapshot_candidate(
+            0xC365,
+            Some("Chromium internal source URL")
+        ));
+        assert!(!is_hglobal_snapshot_candidate(0x0200, None));
+        assert!(!is_hglobal_snapshot_candidate(0x0300, None));
+        assert!(!is_hglobal_snapshot_candidate(0xC366, None));
+    }
+
+    #[test]
+    fn opaque_registered_data_still_requires_owned_nonempty_bytes() {
+        assert!(validate_format(
+            0xC364,
+            Some("Chromium internal source RFH token"),
+            &[1, 2, 3]
+        )
+        .is_ok());
+        assert!(validate_format(0xC364, Some("Chromium internal source RFH token"), &[]).is_err());
     }
 
     #[test]
