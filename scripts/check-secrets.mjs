@@ -1,7 +1,9 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { extname, join, relative } from "node:path";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { extname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ignored = new Set([".git", "node_modules", "dist", "target", "target-check"]);
+const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const textExtensions = new Set([
   ".json", ".md", ".mjs", ".ps1", ".rs", ".toml", ".ts", ".tsx", ".yml", ".yaml",
 ]);
@@ -15,29 +17,29 @@ const patterns = [
 ];
 
 const findings = [];
-function walk(directory) {
-  for (const name of readdirSync(directory)) {
-    if (ignored.has(name) || name.startsWith(".codex-")) continue;
-    const path = join(directory, name);
-    const stat = statSync(path);
-    if (stat.isDirectory()) {
-      walk(path);
-    } else if (textExtensions.has(extname(name))) {
-      const source = readFileSync(path, "utf8");
-      for (const pattern of patterns) {
-        for (const match of source.matchAll(pattern.regex)) {
-          findings.push({
-            file: relative(".", path),
-            name: pattern.name,
-            sample: match[0].slice(0, 12) + "…",
-          });
-        }
-      }
+const trackedFiles = execFileSync("git", ["ls-files", "-z"], {
+  cwd: root,
+  encoding: "buffer",
+})
+  .toString("utf8")
+  .split("\0")
+  .filter(Boolean);
+
+for (const file of trackedFiles) {
+  if (!textExtensions.has(extname(file)) || file.startsWith(".codex-")) continue;
+  const absolute = join(root, file);
+  const source = readFileSync(absolute, "utf8");
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern.regex)) {
+      findings.push({
+        file: relative(root, absolute),
+        name: pattern.name,
+        sample: match[0].slice(0, 12) + "…",
+      });
     }
   }
 }
 
-walk(".");
 if (findings.length) {
   console.error("Potential committed credentials detected:");
   for (const finding of findings) {

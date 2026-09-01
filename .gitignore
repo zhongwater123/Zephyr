@@ -3,6 +3,8 @@ dist/
 target/
 target-check/
 .vs/
+.cargo-target-clipboard/
+.worktrees/
 src-tauri/target/
 .tauri-dev.lock
 src-tauri/gen/
