@@ -60,9 +60,9 @@ Dossier 是跨组件或高风险任务的单一产品入口，不是通往全部
 
 ## 并行 Agent 权限
 
-多个 Agent 可以并行分析，并通过 main 写入租约轮流直接提交普通 MVP 修改；是否使用分支或 PR 不改变文档权限。开发 Agent 可以报告实现事实、追加实际执行过的证据，或按用户最新明确要求修改受影响的 MVP 契约，但不能仅凭自己完成实现或单元测试就把 `implementationReview.status` 升为 `conformant`、把 `validationStatus` 升为 `validated`，也不能替尚未进入 clean main 的隔离工作声明无偏差。
+多个 Agent 可以并行分析；并行写入必须使用各自独立的 worktree，同一 checkout 只允许一个写入者。Agent 默认只交付未暂存、未提交的 workspace diff，不得把编辑授权扩大为暂存、提交、推送或 PR 授权。是否使用分支或 PR 不改变文档权限。开发 Agent 可以报告实现事实、追加实际执行过的证据，或按用户最新明确要求修改受影响的 MVP 契约，但不能仅凭自己完成实现或单元测试就把 `implementationReview.status` 升为 `conformant`、把 `validationStatus` 升为 `validated`，也不能替尚未由维护者集成到 clean revision 的工作声明无偏差。
 
-验证和符合性升级由指定的集成/文档收口者完成。收口者只使用 clean main revision，核对最终代码、验收切片、目标环境结果和未关闭偏差。普通缺陷留在 commit、task 或可选 Issue/PR；只有跨任务持续存在并会污染架构判断的偏差，才以稳定 Issue ID 回链到 Dossier 或 Current View。项目不创建每任务一张文档交付单。
+验证和符合性升级由指定的集成/文档收口者完成。收口者只使用维护者已经集成的 clean revision，核对最终代码、验收切片、目标环境结果和未关闭偏差。普通缺陷先留在 workspace diff 和 Agent handoff，集成后进入维护者选择的 commit、task 或可选 Issue/PR；只有跨任务持续存在并会污染架构判断的偏差，才以稳定 Issue ID 回链到 Dossier 或 Current View。项目不创建每任务一张文档交付单。
 
 ## 元数据
 

@@ -37,69 +37,59 @@
 
 “一份”表示主入口，不是硬性禁止在确有跨边界影响时多读；但普通任务若需要三份以上规范性材料，应先检查任务是否过宽或文档是否重复。Architecture impact 输出用于选择入口，不是要求逐项阅读和修改的完成清单。
 
-## MVP Trunk、写入租约与隔离
+## 人工控制版本集成与工作区隔离
 
-本项目由一位维护者负责，多个会话和 Agent 可以异步处理不同功能。默认采用 trunk-based 的 **main 单写租约**，而不是“每个 Agent 一条分支和一个 PR”。Agent 身份不是交付单位；一次可回滚的用户目标或原子修改才是提交单位。
+本项目由维护者人工控制 Git 集成。Agent 的默认交付物是经过检查、仍留在当前工作区中的未暂存 diff，而不是 commit、push 或 PR。工作区出现与当前任务一致的未提交修改是正常的人工审查状态；“工作树不干净”不表示 Agent 必须继续执行版本控制操作。
 
-| 通道 | 适用范围 | 写入方式 | 收口方式 |
+| 通道 | 适用范围 | Agent 默认写入方式 | 人工收口方式 |
 | --- | --- | --- | --- |
-| Main 快速通道 | 普通 MVP 功能、bug、局部重构、测试、UI 和文档修正 | 获得租约后直接修改并提交 `main` | 范围测试通过即可；PR 可省略 |
-| Main 批次通道 | 同一目标跨多个短会话连续完成，但不需要并行写文件 | 后续会话轮流取得同一租约，继续在 `main` 创建原子提交 | 在功能或每日节点统一 push/CI |
-| 隔离通道 | 真正并行的写入者、长任务、实验、大型重构、迁移、安全/隐私/数据完整性变化 | 独立 branch + 独立 worktree；一个 worktree 一个写入者 | 由 main 租约持有者 cherry-pick/合并；PR 仅按风险需要 |
-| 审计通道 | 代码阅读、诊断、评审、方案比较 | 不取得租约，不修改跟踪文件 | 把结论交给后续写入者 |
+| Local 审查通道 | 普通 MVP 功能、bug、局部重构、测试、UI 和文档修正 | 在已分配 checkout 中编辑、测试，保留未暂存 diff | 维护者检查后自行暂存、提交和推送 |
+| Worktree 隔离通道 | 并行写入、长任务、实验、大型重构、迁移、安全/隐私/数据完整性变化 | 每个 Agent 使用独立 branch + 独立 worktree，仍默认不提交 | 维护者决定如何暂存、提交、合并或放弃 |
+| 审计通道 | 代码阅读、诊断、评审、方案比较 | 不修改跟踪文件 | 把结论交给维护者或后续写入者 |
 
-### Main 写入租约
+### 版本控制授权边界
 
-所有指向 canonical Local checkout 的会话共享 `HEAD`、索引和未提交文件，因此可以并行分析，但不能并行编辑、测试、暂存、提交、pull 或 push。直接写 main 前必须取得 Git common directory 下的 `codex-main-writer.lock` 目录；目录的原子创建就是租约获取，禁止先检查后覆盖，也禁止使用 `-Force` 抢锁。
+编辑文件的授权不包含任何 Git 集成授权。除非用户在当前请求中明确要求对应动作，Agent 不得执行：
 
-PowerShell 获取示例：
+- `git add`、`git commit`；
+- `git pull`、`git push`；
+- `git merge`、`git rebase`、`git cherry-pick`；
+- 创建或删除分支、tag，或切换共享 checkout 的分支；
+- 创建 PR、release，或使用管理员权限绕过 branch protection / required checks。
 
-```powershell
-$repoRoot = (git rev-parse --show-toplevel).Trim()
-$gitCommonValue = (git rev-parse --git-common-dir).Trim()
-$gitCommon = if ([IO.Path]::IsPathRooted($gitCommonValue)) { $gitCommonValue } else { Join-Path $repoRoot $gitCommonValue }
-$leasePath = Join-Path ([IO.Path]::GetFullPath($gitCommon)) "codex-main-writer.lock"
-New-Item -ItemType Directory -Path $leasePath -ErrorAction Stop
-@{
-  task = "<task-id-or-short-description>"
-  owner = "<thread-or-session-id>"
-  baseRevision = (git rev-parse HEAD).Trim()
-  acquiredAt = (Get-Date).ToString("o")
-} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $leasePath "owner.json") -Encoding UTF8
-```
+授权按动作独立判断：“修改”不等于“暂存”，“暂存”不等于“提交”，“提交”不等于“推送”。历史会话中的授权、当前账户具有管理员权限、仓库允许 direct push、远端链接需要生效、CI 需要触发，均不能替代当次明确授权。用户表达不清时，默认把完成的修改留在工作区并报告，不把方便收尾当成扩大权限的理由。
 
-获取失败表示已有写入者。该 Agent 继续只读分析、等待，或在任务确实满足隔离门槛时使用 worktree；不得修改已有租约。租约不能仅因时间过去而自动窃取。只有原持有者，或在确认原会话已经结束且 canonical checkout 干净后执行恢复的 Agent，才能删除陈旧租约。
+若用户当次明确要求提交或推送，Agent 必须在动作前重新检查精确 diff、分支、worktree、remote 和所需检查。保护分支若需要管理员 bypass，应先报告将被绕过的规则；只有用户已经明确接受该次 bypass 时才可继续。任何“提交并推送”之外的远端动作仍需单独授权。
 
-持有租约后必须再次执行：
+### 工作区与并行写入
+
+所有指向同一 checkout 的会话共享 `HEAD`、索引和未提交文件，因此同一个 checkout 同时只能有一个写入 Agent。多个 Agent 可以并行只读分析；并行写入必须为每个 Agent 分配独立 Git worktree，通常由 Codex Worktree 工作流或用户明确安排。分支名本身不隔离文件，禁止在共享 checkout 中通过 `git switch`、`git checkout` 或 `git switch -c` 模拟隔离。
+
+开始编辑前必须运行：
 
 ```powershell
 git rev-parse --show-toplevel
 git worktree list --porcelain
 git status --short --branch
-git rev-parse HEAD
 ```
 
-快速通道要求当前路径是 canonical checkout、分支为 `main`、工作区干净，并重新读取受影响文件，不能把租约前的旧分析直接当成当前事实。Agent 在一个租约内只处理一个原子任务：修改、执行匹配风险的检查、创建可回滚 commit、确认 `git status --short` 为空，再释放租约。分析尽量在获取租约前完成；不要在等待用户、外部服务或长时间实验时占用 main。
+确认当前路径确实是分配给该任务的 workspace。已有未提交修改一律视为用户所有：
 
-释放时先确认 `$leasePath` 是本仓库 Git common directory 下的精确租约目录，并核对 `owner.json` 属于当前任务，然后删除文件和空目录：
+- 先识别是否与当前任务重叠；
+- 不为了获得 clean tree 而 reset、stash、覆盖、暂存或提交；
+- 能确定不重叠时可以在用户指定 workspace 中继续，否则保持只读并报告冲突，或使用用户/Codex 分配的独立 worktree；
+- 一个 Agent 完成后可以留下 dirty worktree，下一位 Agent 必须基于真实 diff 判断，而不是假设这些修改可以接管或清理。
 
-```powershell
-Remove-Item -LiteralPath (Join-Path $leasePath "owner.json")
-Remove-Item -LiteralPath $leasePath
-```
+Agent 完成编辑后运行与风险匹配的检查，并向维护者报告：修改文件、验证结果、失败或未覆盖的目标环境，以及 `git status`。默认保持文件 unstaged/uncommitted。只有用户明确要求时才执行后续 Git 动作；不得创建 commit 只为让工作树恢复干净。
 
-如果实现未完成、测试失败或工作区无法安全恢复为干净状态，Agent 不得释放租约后把脏 main 留给下一会话；应报告当前状态并继续收口，或在取得用户同意后把剩余工作迁移到隔离通道。禁止用 `git reset --hard` 或覆盖他人文件清理现场。
+### 项目状态与文档权限
 
-### 分支、PR 与状态
-
-- 分支名不隔离工作文件。禁止在共享 canonical checkout 中用 `git switch`、`git checkout` 或 `git switch -c` 开启并行任务；需要分支时创建独立 worktree。
-- worktree 是并发和风险隔离工具，不自动产生 PR。隔离任务完成后可以由 main 租约持有者 cherry-pick 一个或多个原子提交，并及时删除临时 worktree/branch。
-- PR 只用于发布批次、难以逆转的长期决策、需要外部审查的安全/隐私/迁移变更，或用户明确要求的检查点。普通 MVP 修改不需要逐提交等待用户审核。
-- 本地 commit、pull、push 都改变共享项目状态，必须在 main 租约内串行执行。可以每个成功提交后 push，也可以按功能/每日批次 push；push 前运行与批次匹配的汇总检查。
-- 项目状态由 main 的 clean commits、CI、Dossier 验证状态和 release tag 表达，不由 Agent 数量、会话数量或临时分支数量表达。
-- 开发 Agent 可以修改代码、测试和用户明确改变的 MVP 契约，也可以报告验证与偏差；不得自行把 Dossier 升为 `validated`、Current View 升为 `reviewed`，或把 ADR 从 Proposed 升为 Accepted。指定收口者基于 clean main revision 和目标环境证据执行语义升级。
+- 项目的已集成状态由维护者最终提交的 revision、CI、Dossier 验证状态和 release tag 表达；Agent 工作区中的 diff 只表示待审修改。
+- PR 是维护者可选择的审查与集成工具，不由 Agent 因任务规模自行创建。
+- 开发 Agent 可以修改代码、测试和用户明确改变的 MVP 契约，也可以报告验证与偏差；不得自行把 Dossier 升为 `validated`、Current View 升为 `reviewed`，或把 ADR 从 Proposed 升为 Accepted。
+- 指定收口者只在维护者完成集成后，基于 clean revision 和目标环境证据执行语义升级；未提交 workspace diff 不得被写成已经进入 main 的事实。
 - 同一事实出现冲突时，不以最后写入者为准。源码决定实现事实，Dossier 契约决定用户行为目标，Accepted ADR 决定仍有效的长期边界，目标环境证据决定对应验收是否成立。
-- 不建立 `docs/changes/<task-id>` 流水账。普通交付信息保存在 commit、CI 和可选 Issue/PR；只有跨任务持续存在且会影响架构判断的偏差，才使用稳定 Issue ID 回链到 `knownDeviations`。
+- 不建立 `docs/changes/<task-id>` 流水账。普通交付信息先保存在 workspace diff 和 Agent handoff，集成后进入维护者选择的 commit、CI 或可选 Issue/PR；只有跨任务持续存在且会影响架构判断的偏差，才使用稳定 Issue ID 回链到 `knownDeviations`。
 
 ## 日常工作流
 
