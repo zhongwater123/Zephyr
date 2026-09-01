@@ -1,6 +1,6 @@
 [package]
 name = "gy-typing"
-version = "0.1.1"
+version = "0.1.2"
 description = "Windows AI voice input assistant"
 authors = ["GY Typing"]
 edition = "2021"

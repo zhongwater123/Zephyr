@@ -813,31 +813,36 @@
   }
 }
 
-.settings-sidebar .console-block {
-  margin: 0;
+.settings-sidebar .input-effects-block {
+  margin: 8px 4px 0;
   border: 0;
-  border-bottom: 1px solid var(--z-line);
-  border-radius: 0;
-  background: transparent;
-  padding: 16px 4px 8px;
+  border-top: 1px solid rgba(31, 43, 53, 0.085);
+  border-radius: 12px;
+  background: linear-gradient(145deg, rgba(31, 113, 129, 0.075), rgba(255, 255, 252, 0.7));
+  padding: 18px 14px 14px;
 }
 
-.settings-sidebar .console-title {
+.settings-sidebar .input-effects-block .console-title {
   margin: 0 0 8px;
   color: var(--z-text);
-  font-size: 15px;
+  font-size: 16.5px;
   font-weight: 680;
+  line-height: 26px;
 }
 
 .settings-sidebar .behavior-switch-list {
   display: block;
 }
 
-.settings-sidebar .behavior-switch-list .behavior-switch {
+.settings-sidebar .input-effects-block .behavior-switch-list .behavior-switch {
+  border: 0;
   border-top: 1px solid rgba(31, 43, 53, 0.085);
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 0;
 }
 
-.settings-sidebar .behavior-switch-list .behavior-switch:first-child {
+.settings-sidebar .input-effects-block .behavior-switch-list .behavior-switch:first-child {
   border-top: 0;
 }
 
@@ -1098,7 +1103,7 @@
 
 .polish-setting {
   --polish-row-h: 26px;
-  margin-top: 6px;
+  margin: 6px 4px 0;
   padding: 18px 14px 14px;
   border-top: 1px solid rgba(31, 43, 53, 0.085);
   border-radius: 12px;

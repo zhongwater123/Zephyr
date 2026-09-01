@@ -1,4 +1,3 @@
-import type { ComponentChildren } from "preact";
 import type { AsrOptionPool, ConfigValue, OptionSpec } from "../../domain";
 import { BehaviorSwitch } from "./BehaviorSwitch";
 
@@ -41,17 +40,15 @@ export function OptionPoolRenderer({
   savingOptions,
   errors,
   onChange,
-  children,
 }: {
   pool: AsrOptionPool | null;
   saving: boolean;
   onChange: (optionId: string, value: ConfigValue) => void;
   savingOptions?: Record<string, boolean>;
   errors?: Record<string, string>;
-  children?: ComponentChildren;
 }) {
   return (
-    <section className="console-block">
+    <section className="console-block input-effects-block">
       <div className="console-title">输入效果</div>
       <div
         className="behavior-switch-list"
@@ -80,7 +77,6 @@ export function OptionPoolRenderer({
           <p className="config-message">正在加载识别选项…</p>
         )}
       </div>
-      {children}
     </section>
   );
 }

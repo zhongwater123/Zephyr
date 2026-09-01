@@ -512,7 +512,7 @@ export function AppShell() {
 
   async function copyDiagnostics() {
     const details = [
-      "Zephyr v0.1.1",
+      "Zephyr v0.1.2",
       "语音服务：" + configStatus.provider_message,
       "运行状态：" + voiceStatus.state + " / " + voiceStatus.message,
       "智能整理：" + (hotwordState?.last_error || "无最近错误"),

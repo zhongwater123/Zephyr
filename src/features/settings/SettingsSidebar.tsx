@@ -170,20 +170,20 @@ export function SettingsSidebar({
             />
           </section>
 
+          <PolishLevelSetting
+            value={config.polish_level}
+            saving={polishSaving}
+            error={polishError}
+            onChange={onPolishLevel}
+          />
+
           <OptionPoolRenderer
             pool={optionPool}
             saving={optionSaving}
             savingOptions={optionSavingMap}
             errors={optionErrors}
             onChange={onOption}
-          >
-            <PolishLevelSetting
-              value={config.polish_level}
-              saving={polishSaving}
-              error={polishError}
-              onChange={onPolishLevel}
-            />
-          </OptionPoolRenderer>
+          />
 
           <section className="launch-section" aria-labelledby="launch-title">
             <div className="section-heading">

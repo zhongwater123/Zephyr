@@ -206,17 +206,17 @@ describe("SettingsSidebar", () => {
     expect(screen.getByText("按住开始，松开结束")).toBeTruthy();
   });
 
-  it("puts four plain-language output modes at the bottom of input effects", () => {
+  it("places smart polishing above the input effects module", () => {
     const onPolishLevel = vi.fn<PolishLevelHandler>();
     renderSidebar({ onPolishLevel });
 
     const inputEffects = screen.getByText("输入效果").closest("section");
     const slider = screen.getByRole("slider", { name: "智能润色输出方式" });
+    const polishSetting = slider.closest(".polish-setting");
 
-    expect(inputEffects?.contains(slider)).toBe(true);
-    expect(inputEffects?.textContent?.indexOf("智能润色")).toBeGreaterThan(
-      inputEffects?.textContent?.indexOf("自动标点") ?? -1,
-    );
+    expect(inputEffects?.contains(slider)).toBe(false);
+    expect(inputEffects?.classList.contains("input-effects-block")).toBe(true);
+    expect(polishSetting?.nextElementSibling).toBe(inputEffects);
     expect(slider).toHaveProperty("min", "0");
     expect(slider).toHaveProperty("max", "3");
     expect(slider.getAttribute("aria-valuetext")).toBe("自然表达");
