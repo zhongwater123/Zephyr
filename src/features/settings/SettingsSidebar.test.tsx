@@ -59,6 +59,7 @@ function renderSidebar(overrides: {
   onShortcutCapture?: ShortcutCaptureHandler;
   onPolishLevel?: PolishLevelHandler;
   onTriggerMode?: TriggerModeHandler;
+  triggerModeSaving?: boolean;
 } = {}) {
   const onLaunch = overrides.onLaunch ?? vi.fn<LaunchHandler>();
   const onShortcutCapture = overrides.onShortcutCapture ?? vi.fn<ShortcutCaptureHandler>();
@@ -87,7 +88,7 @@ function renderSidebar(overrides: {
       optionErrors={{}}
       polishSaving={false}
       polishError=""
-      triggerModeSaving={false}
+      triggerModeSaving={overrides.triggerModeSaving ?? false}
       triggerModeError=""
       enabledSaving={false}
       enabledError=""
@@ -155,6 +156,23 @@ describe("SettingsSidebar", () => {
     const overview = screen.getByText("已就绪").closest(".voice-overview-card");
     expect(overview).toBeTruthy();
     expect(overview?.querySelector('input[type="checkbox"]')).toBeTruthy();
+    expect(overview?.querySelector(".voice-overview-row .voice-overview-detail")).toBeTruthy();
+  });
+
+  it("keeps trigger mode saving visually silent and layout-stable", () => {
+    renderSidebar({ triggerModeSaving: true });
+
+    const modeGroup = screen.getByRole("radiogroup", { name: "快捷键触发方式" });
+    expect(modeGroup.closest(".shortcut-mode-setting")?.classList.contains("is-locked")).toBe(false);
+    expect(screen.queryByText("正在保存触发方式…")).toBeNull();
+    expect(screen.getByRole("radio", { name: /按住说话/ })).toHaveProperty("disabled", true);
+  });
+
+  it("uses the revised sidebar heading hierarchy", () => {
+    renderSidebar();
+
+    expect(screen.getByText("Zephyr").tagName).toBe("STRONG");
+    expect(screen.getByRole("heading", { name: "只说话，别打字" })).toBeTruthy();
   });
 
   it("merges shortcut binding and trigger mode into one compact module", () => {
@@ -180,7 +198,12 @@ describe("SettingsSidebar", () => {
   it("shows toggle-specific ready instructions", () => {
     renderSidebar({ triggerMode: "toggle" });
     expect(screen.getByText("按一下快捷键开始说话")).toBeTruthy();
-    expect(screen.getByText(/按一下快捷键开始语音输入/)).toBeTruthy();
+    expect(screen.getByText("按下开始，再按结束")).toBeTruthy();
+  });
+
+  it("shows concise hold-specific shortcut instructions", () => {
+    renderSidebar({ triggerMode: "hold" });
+    expect(screen.getByText("按住开始，松开结束")).toBeTruthy();
   });
 
   it("puts four plain-language output modes at the bottom of input effects", () => {

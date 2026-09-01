@@ -44,8 +44,8 @@ export function ShortcutCaptureField({
     .filter(Boolean);
   const idleHelp =
     mode === "toggle"
-      ? "按一下快捷键开始语音输入，再按一下结束。"
-      : "按住快捷键开始语音输入，松开后结束。";
+      ? "按下开始，再按结束"
+      : "按住开始，松开结束";
   const help = view.isCapturing ? TEXT.captureHelp : disabledReason || idleHelp;
 
   function startAndFocus() {

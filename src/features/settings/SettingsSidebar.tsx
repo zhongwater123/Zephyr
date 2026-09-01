@@ -119,8 +119,8 @@ export function SettingsSidebar({
     <aside id="config-drawer" className={"settings-sidebar " + (open ? "is-open" : "")} aria-hidden={!open}>
       <header className="settings-sidebar-header">
         <div>
-          <p className="drawer-kicker">Zephyr / 语音输入</p>
-          <h1>语音输入</h1>
+          <p className="drawer-kicker"><strong>Zephyr</strong> / 语音输入</p>
+          <h1>只说话，别打字</h1>
         </div>
         <button type="button" className="icon-button" aria-label="关闭设置" onClick={onClose}>
           <span aria-hidden="true">×</span>
@@ -135,6 +135,7 @@ export function SettingsSidebar({
                 <span className="runtime-status-indicator" aria-hidden="true" />
                 <strong>语音输入</strong>
                 <span className="voice-overview-state">{runtime.label}</span>
+                <span className="voice-overview-detail">{runtime.detail}</span>
               </div>
               <BehaviorSwitch
                 compact
@@ -145,7 +146,6 @@ export function SettingsSidebar({
                 onChange={onEnabled}
               />
             </div>
-            <p className="voice-overview-detail">{runtime.detail}</p>
             {enabledError ? <p className="field-error" role="alert">{enabledError}</p> : null}
           </section>
 

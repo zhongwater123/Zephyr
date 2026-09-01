@@ -21,9 +21,8 @@ export function ShortcutTriggerModeField({
   error: string;
   onChange: (mode: ShortcutTriggerMode) => void;
 }) {
-  const locked = disabled || saving;
   return (
-    <div className={"shortcut-mode-setting " + (locked ? "is-locked" : "")}>
+    <div className={"shortcut-mode-setting " + (disabled ? "is-locked" : "")}>
       <div
         className="shortcut-mode-segmented"
         role="radiogroup"
@@ -39,7 +38,7 @@ export function ShortcutTriggerModeField({
               name="shortcut-trigger-mode"
               value={option.value}
               checked={value === option.value}
-              disabled={locked}
+              disabled={disabled || saving}
               onChange={() => onChange(option.value)}
             />
             <span>{option.label}</span>
@@ -47,7 +46,6 @@ export function ShortcutTriggerModeField({
         ))}
       </div>
       {disabled ? <small className="shortcut-mode-lock">本次语音结束后可修改。</small> : null}
-      {saving ? <small className="shortcut-mode-saving" role="status">正在保存触发方式…</small> : null}
       {error ? <small className="field-error" role="alert">{error}</small> : null}
     </div>
   );
