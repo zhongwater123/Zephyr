@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import {
   closeSync,
@@ -138,6 +138,32 @@ function handleShutdown(signal) {
 
   if (child && child.exitCode === null && child.signalCode === null) {
     child.kill(signal);
+  }
+}
+
+if (args[0] === "dev" || args[0] === "build") {
+  const helperBuild = spawnSync(
+    process.execPath,
+    [
+      resolve(scriptDirectory, "build-paste-helper.mjs"),
+      ...(args[0] === "build" ? ["--release"] : []),
+    ],
+    {
+      cwd: projectRoot,
+      env: {
+        ...deploymentEnvironment,
+        GY_TYPING_CARGO_TARGET_DIR: targetDirectory,
+      },
+      stdio: "inherit",
+      windowsHide: true,
+    },
+  );
+  if (helperBuild.error || helperBuild.status !== 0) {
+    removeOwnedLock();
+    console.error(
+      `paste helper 构建失败：${helperBuild.error?.message || helperBuild.status}`,
+    );
+    process.exit(1);
   }
 }
 

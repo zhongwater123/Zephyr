@@ -80,6 +80,7 @@ describe("security state model", () => {
       targetAvailable: true,
       reasonCode: "target_changed",
       reasonMessage: "changed",
+      deliveryCertainty: "retryable",
     };
     expect(canDeliverPendingOutput(output, 99)).toBe(true);
     expect(canDeliverPendingOutput(output, 100)).toBe(false);

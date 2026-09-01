@@ -26,6 +26,7 @@ const targetRoot = resolve(
   deploymentEnvironment.GY_TYPING_CARGO_TARGET_DIR ||
     resolve(projectRoot, "src-tauri", "target"),
 );
+deploymentEnvironment.CARGO_TARGET_DIR = targetRoot;
 const packagingTempDirectory = resolve(targetRoot, ".tauri-packaging-tmp");
 mkdirSync(packagingTempDirectory, { recursive: true });
 deploymentEnvironment.TEMP = packagingTempDirectory;
@@ -71,6 +72,18 @@ function cargoVersion() {
   return version;
 }
 
+function pasteProtocolVersion() {
+  const source = readFileSync(
+    resolve(projectRoot, "src-tauri", "crates", "paste-protocol", "src", "lib.rs"),
+    "utf8",
+  );
+  const version = source.match(/pub const PROTOCOL_VERSION:\s*u16\s*=\s*(\d+)\s*;/)?.[1];
+  if (!version) {
+    throw new Error("无法读取 paste helper 协议版本");
+  }
+  return Number(version);
+}
+
 function assertReleaseContract() {
   if (process.platform !== "win32") {
     throw new Error("Windows NSIS 安装包必须在 Windows 上构建");
@@ -102,12 +115,26 @@ function assertReleaseContract() {
   if (tauriConfig.bundle?.windows?.nsis?.installMode !== "currentUser") {
     throw new Error("测试安装包必须使用 NSIS currentUser 安装模式");
   }
+  if (
+    !Array.isArray(tauriConfig.bundle?.externalBin) ||
+    tauriConfig.bundle.externalBin.length !== 1 ||
+    tauriConfig.bundle.externalBin[0] !== "binaries/zephyr-paste-helper"
+  ) {
+    throw new Error("Tauri externalBin 必须且只能注册 zephyr-paste-helper sidecar");
+  }
 
   return {
     mainBinaryName: packageJson.name,
     productName: tauriConfig.productName,
     identifier: tauriConfig.identifier,
     version: tauriConfig.version,
+    helperPath: resolve(
+      projectRoot,
+      "src-tauri",
+      "binaries",
+      "zephyr-paste-helper-x86_64-pc-windows-msvc.exe",
+    ),
+    helperProtocolVersion: pasteProtocolVersion(),
   };
 }
 
@@ -186,7 +213,100 @@ function assertWindowsGuiSubsystem(binaryPath) {
   }
 }
 
-function buildManifest(contract, installerPath) {
+function assertHelper(contract) {
+  if (!existsSync(contract.helperPath)) {
+    throw new Error(`未找到 paste helper sidecar：${contract.helperPath}`);
+  }
+  const binary = readFileSync(contract.helperPath);
+  if (binary.length < 0x40 || binary.toString("ascii", 0, 2) !== "MZ") {
+    throw new Error("paste helper 不是有效的 Windows PE 文件");
+  }
+  const peOffset = binary.readUInt32LE(0x3c);
+  if (
+    peOffset + 6 > binary.length ||
+    binary.toString("binary", peOffset, peOffset + 4) !== "PE\0\0" ||
+    binary.readUInt16LE(peOffset + 4) !== 0x8664
+  ) {
+    throw new Error("paste helper PE 架构不是 AMD64");
+  }
+  const transactionId = "00000000-0000-0000-0000-000000000001";
+  const selfCheck = spawnSync(contract.helperPath, [], {
+    cwd: projectRoot,
+    input: `${JSON.stringify({
+      protocolVersion: contract.helperProtocolVersion,
+      operation: "selfCheck",
+      transactionId,
+      mode: null,
+      text: null,
+      target: null,
+    })}\n`,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  if (selfCheck.error || selfCheck.status !== 0) {
+    throw new Error(
+      `paste helper 自检失败：${selfCheck.error?.message || selfCheck.stderr || selfCheck.status}`,
+    );
+  }
+  const event = JSON.parse(selfCheck.stdout.trim().split(/\r?\n/)[0] || "null");
+  if (
+    event?.protocolVersion !== contract.helperProtocolVersion ||
+    event?.transactionId !== transactionId ||
+    event?.kind !== "selfCheck" ||
+    typeof event?.helperVersion !== "string"
+  ) {
+    throw new Error("paste helper 自检回执与共享协议不匹配");
+  }
+  const rejectedFault = spawnSync(contract.helperPath, [], {
+    cwd: projectRoot,
+    input: `${JSON.stringify({
+      protocolVersion: contract.helperProtocolVersion,
+      operation: "selfCheck",
+      transactionId,
+      mode: null,
+      text: null,
+      target: null,
+      sendInputCount: 0,
+    })}\n`,
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  const rejectedEvent = JSON.parse(
+    rejectedFault.stdout.trim().split(/\r?\n/)[0] || "null",
+  );
+  if (
+    rejectedFault.status === 0 ||
+    rejectedEvent?.code !== "fault_injection_disabled" ||
+    rejectedEvent?.receipt?.submission !== "notSubmitted"
+  ) {
+    throw new Error("release paste helper 没有拒绝故障注入字段");
+  }
+  return {
+    fileName: contract.helperPath.split(/[\\/]/).at(-1),
+    bytes: statSync(contract.helperPath).size,
+    sha256: sha256(contract.helperPath),
+    protocolVersion: contract.helperProtocolVersion,
+    helperVersion: event.helperVersion,
+    peMachine: "AMD64",
+  };
+}
+
+function assertRuntimeHelper(targetRoot, sourceHelper) {
+  const runtimePath = resolve(
+    targetRoot,
+    "release",
+    "zephyr-paste-helper.exe",
+  );
+  if (!existsSync(runtimePath)) {
+    throw new Error(`Tauri release 目录缺少 paste helper：${runtimePath}`);
+  }
+  if (sha256(runtimePath) !== sourceHelper.sha256) {
+    throw new Error("Tauri release 目录中的 paste helper 与已校验 sidecar 不一致");
+  }
+  return runtimePath;
+}
+
+function buildManifest(contract, installerPath, helper) {
   const gitRevision = capture("git", ["rev-parse", "HEAD"]);
   const gitStatus = capture("git", ["status", "--porcelain"]);
   const manifest = {
@@ -203,6 +323,7 @@ function buildManifest(contract, installerPath) {
       bytes: statSync(installerPath).size,
       sha256: sha256(installerPath),
     },
+    pasteHelper: helper,
     source: {
       gitRevision,
       dirty: Boolean(gitStatus),
@@ -221,6 +342,13 @@ try {
     `发布契约检查通过：${contract.productName} ${contract.version} (${contract.identifier})`,
   );
 
+  run(
+    process.execPath,
+    ["scripts/build-paste-helper.mjs", "--release"],
+    "构建并校验 release paste helper",
+  );
+  const helper = assertHelper(contract);
+
   run(process.execPath, ["scripts/check-architecture-docs.mjs"], "架构文档结构检查");
   run(process.execPath, ["scripts/check-asr-boundaries.mjs"], "ASR 边界检查");
   run(process.execPath, ["scripts/check-secrets.mjs"], "凭据扫描");
@@ -231,7 +359,13 @@ try {
   );
   run(
     "cargo",
-    ["test", "--manifest-path", "src-tauri/Cargo.toml", "--all-features"],
+    [
+      "test",
+      "--manifest-path",
+      "src-tauri/Cargo.toml",
+      "--workspace",
+      "--all-features",
+    ],
     "Rust 自动化测试",
   );
 
@@ -246,6 +380,9 @@ try {
     "Tauri NSIS 构建",
   );
 
+  const runtimeHelperPath = assertRuntimeHelper(targetRoot, helper);
+  console.log(`Tauri runtime helper：${runtimeHelperPath}`);
+
   assertWindowsGuiSubsystem(
     resolve(targetRoot, "release", `${contract.mainBinaryName}.exe`),
   );
@@ -254,7 +391,7 @@ try {
     findInstaller(bundleDirectory, contract.productName, contract.version),
     contract.version,
   );
-  const { manifest, manifestPath } = buildManifest(contract, installerPath);
+  const { manifest, manifestPath } = buildManifest(contract, installerPath, helper);
   console.log(`\n安装包：${installerPath}`);
   console.log(`发布清单：${manifestPath}`);
   console.log(`SHA-256：${manifest.installer.sha256}`);

@@ -2,7 +2,7 @@ use super::resources::{PreparedSession, SessionCancellation, SessionMetrics, Ses
 use crate::command_error::CommandResult;
 use crate::delivery::DeliveryIntent;
 use crate::history::HistoryProvenance;
-use crate::inject::{InjectionMethod, TextInjector};
+use crate::inject::{DeliveryExecutor, DeliveryMode};
 use crate::pending_output_service::PendingOutputLease;
 use crate::provider::ProviderError;
 use crate::services::AppServices;
@@ -52,6 +52,7 @@ pub(super) enum VoiceCommand {
     },
     DeliverPending {
         id: String,
+        confirm_uncertain: bool,
         response: oneshot::Sender<CommandResult<()>>,
     },
     QueryMetrics {
@@ -208,8 +209,8 @@ impl StartOutcome {
 
 pub(super) struct FinalizationJob {
     pub session: SessionResources,
-    pub injector: Arc<dyn TextInjector>,
-    pub injection_method: InjectionMethod,
+    pub executor: Arc<dyn DeliveryExecutor>,
+    pub delivery_mode: DeliveryMode,
     pub services: AppServices,
 }
 
@@ -220,6 +221,7 @@ pub(super) struct PendingDraft {
     pub reason_message: String,
     pub delivery_intent: DeliveryIntent,
     pub provenance: HistoryProvenance,
+    pub certainty: crate::target::DeliveryCertainty,
 }
 
 pub(super) enum FinalizeOutcome {
@@ -255,8 +257,8 @@ impl FinalizeOutcome {
 
 pub(super) struct PendingDeliveryJob {
     pub lease: PendingOutputLease,
-    pub injector: Arc<dyn TextInjector>,
-    pub injection_method: InjectionMethod,
+    pub executor: Arc<dyn DeliveryExecutor>,
+    pub delivery_mode: DeliveryMode,
     pub services: AppServices,
     pub config: crate::config::AppConfig,
 }
@@ -269,6 +271,7 @@ pub(super) enum PendingDeliveryOutcome {
         lease: PendingOutputLease,
         code: &'static str,
         message: String,
+        certainty: crate::target::DeliveryCertainty,
     },
 }
 

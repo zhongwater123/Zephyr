@@ -4,6 +4,7 @@ impl VoiceSessionActor {
     pub(super) fn begin_pending_delivery(
         &mut self,
         id: String,
+        confirm_uncertain: bool,
         response: oneshot::Sender<CommandResult<()>>,
     ) {
         if self.runtime.current.is_some() || self.pending_operation.is_some() {
@@ -20,17 +21,27 @@ impl VoiceSessionActor {
                 return;
             }
         };
+        if lease.record().dto.delivery_certainty
+            == crate::target::DeliveryCertainty::MayHaveBeenSubmitted
+            && !confirm_uncertain
+        {
+            let _ = response.send(Err(CommandError::new(
+                "pending_delivery_confirmation_required",
+                "文本可能已经输入，请确认目标窗口后再明确选择重新发送",
+            )));
+            return;
+        }
         let config = self.services.config.snapshot();
         let method = match config.injection_strategy_for(&lease.record().target.executable_name) {
-            InjectionStrategy::Unicode => InjectionMethod::Unicode,
-            InjectionStrategy::ClipboardCompatibility => InjectionMethod::ClipboardCompatibility,
+            InjectionStrategy::Unicode => DeliveryMode::Unicode,
+            InjectionStrategy::ClipboardCompatibility => DeliveryMode::ClipboardPaste,
         };
         self.pending_operation = Some(PendingOperation { id, response });
         workflow::spawn_pending_delivery(
             PendingDeliveryJob {
                 lease,
-                injector: self.injector.clone(),
-                injection_method: method,
+                executor: self.executor.clone(),
+                delivery_mode: method,
                 services: self.services.clone(),
                 config,
             },
@@ -63,11 +74,16 @@ impl VoiceSessionActor {
                 lease,
                 code,
                 message,
+                certainty,
             } => {
-                drop(lease);
-                let _ = operation
-                    .response
-                    .send(Err(CommandError::new(code, message)));
+                let retained = lease
+                    .retain(certainty, code, &message)
+                    .map_err(map_pending_error);
+                if retained.is_ok() {
+                    presenter.pending_changed();
+                }
+                let result = retained.and(Err(CommandError::new(code, message)));
+                let _ = operation.response.send(result);
             }
         }
     }

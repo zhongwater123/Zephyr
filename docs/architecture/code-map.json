@@ -406,7 +406,9 @@
         "src-tauri/src/delivery.rs",
         "src-tauri/src/pending_output_service.rs",
         "src-tauri/src/target.rs",
-        "src-tauri/src/inject.rs"
+        "src-tauri/src/inject.rs",
+        "src-tauri/src/clipboard_transaction.rs",
+        "src-tauri/crates/paste-protocol"
       ],
       "docs": [
         "docs/architecture/c4-components-backend.md",
@@ -433,6 +435,8 @@
       "publicContracts": [
         "DeliveryService",
         "PendingOutput DTO, lease and lifecycle",
+        "DeliveryExecutor and three-state DeliveryReceipt",
+        "single automatic clipboard transaction ownership",
         "successful injection commit point"
       ]
     },
@@ -550,7 +554,9 @@
         "src-tauri/src/overlay.rs",
         "src-tauri/src/target.rs",
         "src-tauri/src/inject.rs",
-        "src-tauri/src/windows_keyboard.rs"
+        "src-tauri/src/windows_keyboard.rs",
+        "src-tauri/crates/zephyr-paste-helper",
+        "scripts/build-paste-helper.mjs"
       ],
       "docs": [
         "docs/architecture/c4-container.md",
@@ -562,7 +568,7 @@
         "docs/architecture/adr/0018-owned-clipboard-transaction-and-isolated-paste.md"
       ],
       "changeTriggers": [
-        "Win32、OLE、托盘、原生确认或窗口身份行为变化"
+        "Win32、sidecar、托盘、原生确认或窗口身份行为变化"
       ],
       "owner": "windows-maintainers",
       "status": "active",
@@ -570,7 +576,8 @@
       "publicContracts": [
         "NativeConfirmation",
         "TargetWindowIdentity",
-        "TextInjector",
+        "zephyr-paste-helper stdin/NDJSON protocol",
+        "owned clipboard snapshot and restore boundary",
         "tray and overlay window adapters"
       ]
     },

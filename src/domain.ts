@@ -88,6 +88,7 @@ export type PendingOutput = {
   targetAvailable: boolean;
   reasonCode: string;
   reasonMessage: string;
+  deliveryCertainty: "retryable" | "mayHaveBeenSubmitted";
 };
 
 export type CommandErrorPayload = {

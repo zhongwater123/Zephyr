@@ -96,7 +96,7 @@ impl NativeConfirmation for WindowsNativeConfirmation {
                 window,
                 "剪贴板兼容模式风险确认",
                 &format!(
-                    "是否为 {executable_name} 启用剪贴板兼容模式？\n\n该模式会临时替换系统剪贴板并发送 Ctrl+V。Zephyr 只会在取得完整 OLE IDataObject 快照、目标身份仍有效且剪贴板 sequence 未变化时执行和恢复；否则结果进入待处理区。"
+                    "是否为 {executable_name} 启用剪贴板兼容模式？\n\n该模式只会在隔离辅助进程能够安全保存剪贴板并复验原目标时启用；否则结果进入待处理区。"
                 ),
             )
         }

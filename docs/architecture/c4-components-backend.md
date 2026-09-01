@@ -1,5 +1,5 @@
 ---
-{"documentType":"c4-view","viewStatus":"current","sourceRevision":"b62667deab18f740c83bab2f1bcebae2fd0a59e2","worktreeState":"dirty","changedPaths":["src-tauri/src/voice_controller","src-tauri/src/voice_trigger.rs","src-tauri/src/voice_input_service.rs","src-tauri/src/streaming_pipeline.rs","src-tauri/src/lib.rs","docs/architecture/c4-components-backend.md"],"reviewStatus":"stale","reviewedAt":"2026-08-28","knownDeviations":["源码快照早于当前 main；等待收口者基于合并后的 clean revision 完成语义复核"]}
+{"documentType":"c4-view","viewStatus":"current","sourceRevision":"ce04cfb","worktreeState":"clean","changedPaths":["src-tauri/src/clipboard_transaction.rs","src-tauri/crates/paste-protocol","src-tauri/crates/zephyr-paste-helper","src-tauri/src/delivery.rs","src-tauri/src/inject.rs","src-tauri/src/lib.rs","src-tauri/tauri.conf.json","scripts/build-paste-helper.mjs","scripts/tauri.mjs","scripts/package-windows.mjs","docs/architecture/c4-components-backend.md"],"reviewStatus":"stale","reviewedAt":"2026-08-31","knownDeviations":["实现和开发打包已存在 clean revision；仍等待指定收口者基于安装后的真实 Windows 应用、格式与 helper 强杀矩阵复核"]}
 ---
 
 # C4 L3：Rust 后端组件
@@ -20,8 +20,9 @@ flowchart TB
         delivery["Component<br/>Delivery + Pending Services<br/><small>target, text, lease, inject, commit</small>"]
         repos["Component<br/>Repository Ports + Adapters<br/><small>JSON, SQLite, Keyring, Agent</small>"]
         incident["Component<br/>IncidentVault<br/><small>lock-free ingress, isolated writer, recovery queries</small>"]
-        win["Component<br/>Windows Adapters<br/><small>overlay, target identity, SendInput/OLE, confirmation</small>"]
+        win["Component<br/>Windows Adapters<br/><small>overlay, target identity, hook, confirmation</small>"]
     end
+    helper["Sidecar Process<br/>zephyr-paste-helper<br/><small>snapshot, clipboard, target verify, SendInput, restore</small>"]
 
     web -->|"invoke"| commands
     bootstrap -->|"construct/manage"| services
@@ -38,7 +39,9 @@ flowchart TB
     delivery -->|"history + hotword side effects after injection"| services
     services -->|"repository traits"| repos
     services -->|"native confirmation"| win
-    delivery -->|"target and injection adapters"| win
+    delivery -->|"early target validation"| win
+    delivery -->|"versioned stdin / NDJSON receipt"| helper
+    helper -->|"isolated Win32 transaction"| win
     streaming -->|"ASR provider built by ProviderService"| services
 ```
 
@@ -80,7 +83,9 @@ CPAL 录音以约 200ms chunk 写入容量 32 的有界队列。队列 Full 触�
 
 ### DeliveryService
 
-交付顺序固定为：文本验证 → 目标身份/前台复验 → 注入 → 成功提交历史 → 触发热词整理。`PendingOutputService` 独占最多 5 条、TTL 10 分钟的内存队列，并用租约防止复制、丢弃和重新交付重复消费。Pending 重新交付由 Actor 与新会话开始串行化；成功注入仍是不可回滚的提交点。
+交付顺序固定为：文本验证 → 主进程早期目标复验 → `ClipboardTransactionService` 取得唯一异步事务锁 → sidecar 再次复验目标并提交 → 主进程按三态回执仲裁 → 仅 `Submitted` 提交历史 → 触发热词整理。首次交付与 Pending 重发共享同一事务 service；显式“复制文本”不取锁，sidecar 的 sequence、事务标记和指纹检查会把它识别为并发修改并跳过恢复。
+
+`zephyr-paste-helper` 通过版本化 stdin 单请求和 stdout NDJSON 运行，独占自动交付的 Win32 剪贴板与 `SendInput`。它只按值保存经验证的有界格式，使用当前用户 DPAPI 加密并原子替换事务快照；不支持格式在覆盖前失败关闭。主进程只拥有协议、3 秒预算、最后可信阶段仲裁、最多一次纯恢复 helper 和 `NotSubmitted | Submitted | Unknown` 提交语义。`PendingOutputService` 继续独占最多 5 条、TTL 10 分钟的内存队列；Unknown 必须由用户明确二次确认才可重发。
 
 ### Repository Ports + Adapters
 

@@ -27,6 +27,7 @@ describe("MoreSettingsPanel organizer settings", () => {
         diagnosticMessage=""
         providerTestState=""
         organizerTestState=""
+        pendingOutputs={[]}
         onSection={vi.fn()}
         onProviderTest={vi.fn()}
         onOrganizerTest={vi.fn()}
@@ -42,6 +43,9 @@ describe("MoreSettingsPanel organizer settings", () => {
         onIncidentRecoveryEnabled={vi.fn()}
         onRevokeEndpoint={vi.fn()}
         onCopyDiagnostics={vi.fn()}
+        onDeliverPending={vi.fn()}
+        onCopyPending={vi.fn()}
+        onDiscardPending={vi.fn()}
       />,
     );
 

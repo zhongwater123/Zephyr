@@ -14,9 +14,15 @@
 
 ADR-0014 已接受“完整定稿后一次性整体粘贴、不为 LF 模拟 Enter、目标失败关闭、提交后不自动重复交付”的用户侧目标，但同时把“保存完整 OLE `IDataObject` 快照，再通过 `OleSetClipboard` 与 `OleFlushClipboard` 恢复”写成了具体决策。
 
-当前实现调用 `OleGetClipboard` 后只持有一个可能转发 COM/RPC 和延迟渲染的活对象，并未把所有格式复制为 Zephyr 自己拥有的不可变数据。交付写入语音文本、发送 Ctrl+V、等待 80ms，然后把该读取对象重新设为剪贴板数据源并 Flush。真实 Windows 已至少两次在 `delivery_inject` 后发生 `tokio-rt-worker` 栈溢出并以 `0xc000041d` 终止主进程；其中一次只有 13 个字符，且 provider final、relay、aggregate 和 delivery payload 的长度与哈希完全一致。该结果否定了目标环境完成声明，但现有日志尚不足以把具体栈溢出指令断言为 `OleSetClipboard` 或 `OleFlushClipboard`。
+被 revision `f93bc4d` 替换前，生产实现调用 `OleGetClipboard` 后只持有一个可能转发 COM/RPC 和延迟渲染的活对象，并未把所有格式复制为 Zephyr 自己拥有的不可变数据。交付写入语音文本、发送 Ctrl+V、等待 80ms，然后把该读取对象重新设为剪贴板数据源并 Flush。真实 Windows 已至少两次在 `delivery_inject` 后发生 `tokio-rt-worker` 栈溢出并以 `0xc000041d` 终止主进程；其中一次只有 13 个字符，且 provider final、relay、aggregate 和 delivery payload 的长度与哈希完全一致。该结果否定了目标环境完成声明，但现有日志尚不足以把具体栈溢出指令断言为 `OleSetClipboard` 或 `OleFlushClipboard`。
 
 OpenWhispr 提供了较安全的方向：它把有限的文本、HTML、RTF 和图片格式按值读入 Electron 主进程，串行等待恢复完成，并让独立 Windows helper 发送粘贴快捷键。它仍有格式白名单不完整、固定延迟、只比较文本以及目标恢复失败后可能粘贴到当前窗口等限制，不能直接复制。
+
+### 未验证的实现进度
+
+revision `3ea6d9f` 已实现本 ADR 描述的共享协议 crate、单例事务 service、独立 Windows helper、DPAPI 快照、恢复竞争保护、三态仲裁与 Tauri sidecar；revision `ce04cfb` 增加实际 NSIS 的 helper 架构、协议、自检、运行目录哈希和发布清单门禁。自动交付主进程源码不再调用 OLE、Win32 剪贴板写入或 `SendInput`。这只是实现和开发打包事实，不改变本 ADR 的 `Proposed` 状态：尚无安装后的完整真实 Windows 应用/格式/强杀矩阵，Dossier 仍为 `invalidated`。
+
+2026-09-01，基于 revision `a69242240d7da4e3d4f086b61548bfa019f93bdf` 的脏工作树修复了注册格式在检查实际数据载体前被名称名单直接拒绝的问题，并只允许 SmartDictation 单行在捕获明确失败、尚未覆盖剪贴板时改用 Unicode；Legacy 兼容语义保持失败关闭。Windows 打包前检查和自动化通过，用户随后报告暂未复现阻塞。该结果没有 clean revision、安装包身份、受控恢复比对或完整目标矩阵，只是实现进度和冒烟反馈，不构成接受本 ADR 或恢复 Dossier 验证状态的依据。
 
 ## Decision
 
@@ -24,8 +30,8 @@ OpenWhispr 提供了较安全的方向：它把有限的文本、HTML、RTF 和�
 
 1. Bootstrap 创建唯一的 `ClipboardTransactionService`。它串行化首次自动交付和 Pending 重新交付；锁从原数据捕获开始，跨越载荷发布、目标复验、粘贴提交、提交后的剪贴板保留窗口、恢复以及一次受控故障恢复，直到事务达到终态。用户明确点击“复制文本”产生的普通剪贴板替换不属于自动交付事务；如果它与事务竞争，恢复检查必须把它视为外部修改并放弃恢复。
 2. 独立、可终止、带超时的 Windows `PasteHelper` 拥有整个自动剪贴板事务和 `SendInput`，而不是只拥有 Ctrl+V。Tauri 主进程只负责协议、事务互斥、超时、子进程终止和回执仲裁；主进程自动交付代码不得调用 OLE/Win32 剪贴板读写或 `SendInput`。主进程已有的目标捕获可以作为早期失败关闭，但 helper 在不可逆写入和发送按键前都必须用 HWND、PID、进程创建时间和 EXE 重新验证原目标。
-3. 原剪贴板只能保存为 Zephyr 自己拥有的数据。Helper 按明确格式白名单枚举并同步深复制文本、HTML、RTF、DIB/DIBV5/PNG、文件列表及经验证可安全重建的有界 `HGLOBAL` 格式；不得把 `OleGetClipboard` 返回的活 `IDataObject`、远程代理或延迟渲染提供者称为完整快照。格式级解析必须验证内部长度、终止符和整数边界，不能把“可以取得一个句柄”等同于“可以安全重建”。
-4. 捕获报告 `Complete` 或 `UnsupportedFormats`。发现延迟渲染、OwnerDisplay、无法识别的非 `HGLOBAL`、私有句柄、单格式超过 64 MiB、总计超过 128 MiB，或任何覆盖后可能丢失且无法安全复制的数据时，事务必须在写入前失败关闭：可以使用不触碰剪贴板的安全注入策略，或把文本转入 Pending 供用户主动交付；不得静默丢弃原格式。
+3. 原剪贴板只能保存为 Zephyr 自己拥有的数据。Helper 枚举并同步深复制文本、HTML、RTF、DIB/DIBV5/PNG、文件列表及经验证可安全重建的有界 `HGLOBAL` 格式。动态注册格式的名称不是安全边界：即使名称不在内置解析集合，只要当前实例能够被同步物化、`GlobalSize` 有界、`GlobalLock` 成功并复制到应用自有内存，就以“注册名称 + 不透明原始字节”保存；不得仅因名称未知拒绝。不得把 `OleGetClipboard` 返回的活 `IDataObject`、远程代理或延迟渲染提供者称为完整快照。已知结构格式仍必须验证内部长度、终止符和整数边界，不能把“可以取得一个句柄”等同于“可以安全重建”。
+4. 捕获报告 `Complete` 或 `UnsupportedFormats`。发现延迟渲染、OwnerDisplay、无法物化或锁定的非 `HGLOBAL`、私有句柄、单格式超过 64 MiB、总计超过 128 MiB，或任何覆盖后可能丢失且无法安全复制的数据时，事务必须在写入前失败关闭：单行文本优先使用 helper 内不触碰剪贴板的 Unicode 安全注入，多行或该策略也失败时再转入 Pending；不得静默丢弃原格式，也不得在提交状态不确定时尝试另一种交付方式。
 5. 快照必须在首次不可逆剪贴板修改前，以当前用户 DPAPI 加密并原子写入受限应用数据目录。文件名只接受本事务 UUID；快照包含协议版本、格式清单、捕获 sequence 和完整性信息。正常终态删除快照，应用启动时只清理过期、可验证属于 Zephyr 的快照。快照内容和格式元数据不得进入 Prompt、History 或普通日志。
 6. Clipboard 发布不是一个可假定原子的 API。Helper 必须为 `EmptyClipboard`、事务标记写入、每个 `SetClipboardData` 和关闭剪贴板建立单调事务阶段，并在每个阶段支持故障注入。事务标记应尽可能在清空后首先发布，但“当前剪贴板没有标记”不能单独证明本事务尚未修改剪贴板；清空后、标记前崩溃必须由加密快照、持久阶段和 sequence 共同仲裁。无法证明恢复不会覆盖用户并发写入时不得自动恢复，并必须记录数据完整性事件。
 7. 完整载荷写入时同时发布私有事务 ID，并记录 sequence 与载荷指纹。提交后的恢复必须同时确认事务 ID、sequence 和载荷仍属于本次事务；用户或其他程序已经修改剪贴板时只跳过恢复并记录非内容诊断，不得覆盖竞争写入。恢复 helper 只恢复原数据，永远不发送粘贴按键；同一事务最多自动启动一次恢复 helper。
@@ -55,7 +61,8 @@ OpenWhispr 提供了较安全的方向：它把有限的文本、HTML、RTF 和�
 ### Negative
 
 - Windows helper 增加构建、签名、打包、版本协商和进程清理成本。
-- 任意 Windows 剪贴板格式无法被低成本完整复制；白名单外数据会降低自动粘贴可用率，必须提供清楚的安全降级体验。
+- 任意 Windows 剪贴板格式无法被低成本完整复制；动态注册且可证明为有界 `HGLOBAL` 的格式可以作为不透明字节恢复，其余非内存句柄、私有 owner 协议或无法物化的数据仍会降低自动粘贴可用率，必须提供清楚的安全降级体验。
+- `GlobalSize`、`GlobalLock` 和字节复制只能证明当前实例可以被应用拥有和重新发布，不能证明其内部语义不包含已经失效的源进程 token、句柄或其他 owner 关联。未知注册格式的通用值恢复是可用性优先的候选策略，仍需要受控 round-trip 和真实消费者矩阵；发现稳定的 owner 关联格式时应增加专用适配或显式策略，而不是继续扩大无条件信任。
 - Windows 剪贴板没有跨 `EmptyClipboard` 与多次 `SetClipboardData` 的通用原子提交；helper 崩溃时必须在“恢复原数据”和“不得覆盖用户并发复制”之间保守仲裁，仍可能只能报告数据完整性事件而不能自动恢复。
 - 恢复仍缺少通用的目标控件消费确认；固定延迟只能作为受测策略，不能升级为“原子插入”证明。
 - 迁移期间需要同时维护旧 Pending/History 契约与新的三态提交语义。

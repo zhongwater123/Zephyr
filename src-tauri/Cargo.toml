@@ -5,6 +5,10 @@ description = "Windows AI voice input assistant"
 authors = ["GY Typing"]
 edition = "2021"
 
+[workspace]
+members = ["crates/paste-protocol", "crates/zephyr-paste-helper"]
+resolver = "2"
+
 [lib]
 name = "gy_typing_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
@@ -27,6 +31,7 @@ hound = "3.5"
 keyring = { version = "3", features = ["windows-native"] }
 log = "0.4"
 metrics = "0.24"
+paste-protocol = { path = "crates/paste-protocol" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 rustls = { version = "0.23", features = ["ring"] }
@@ -38,12 +43,13 @@ sha2 = "0.10"
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2"
+tauri-plugin-shell = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
 tokio-rustls = "0.26"
 url = "2"
 uuid = { version = "1", features = ["v4"] }
-windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_LibraryLoader", "Win32_System_Ole", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+windows = { version = "0.58", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 tempfile = "3"
