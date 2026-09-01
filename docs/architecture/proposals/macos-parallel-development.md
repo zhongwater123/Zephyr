@@ -4,20 +4,20 @@
   "viewStatus": "proposed",
   "owner": "product-maintainers",
   "createdAt": "2026-08-31",
-  "revisitWhen": "维护者确认 macOS 首发范围、最低系统与 CPU 架构和平台交付安全契约，或任一 macOS 技术探针推翻能力切片、目标捕获、快捷键、非激活浮层或原子粘贴方案时",
-  "relatedFeatures": ["FEAT-SMART-DICTATION", "FEAT-SHORTCUT-BINDING", "FEAT-SHORTCUT-TRIGGER-MODES", "FEAT-VOICE-INPUT-CONTROL-PLANE", "FEAT-WINDOWS-DISTRIBUTION"]
+  "revisitWhen": "macOS Runnable Slice 的实机结果推翻单仓复用边界，或维护者开始确认原生输入、自动写回、最低系统、CPU 架构和外部分发契约时",
+  "relatedFeatures": ["FEAT-MACOS-RUNNABLE-SLICE", "FEAT-SMART-DICTATION", "FEAT-SHORTCUT-BINDING", "FEAT-SHORTCUT-TRIGGER-MODES", "FEAT-VOICE-INPUT-CONTROL-PLANE", "FEAT-WINDOWS-DISTRIBUTION"]
 }
 ---
 
 # macOS 单仓能力切片开发与安全交付边界
 
-> 本文是 Proposed architecture，不描述当前实现，也不把讨论结论自动升级为 Accepted ADR 或已确认 Feature 契约。当前产品仍是 Windows-only Tauri 应用；源码、Current C4、Runtime View 和各 Feature Dossier 的现有验证状态保持权威。
+> 本文是 Proposed architecture，不描述当前实现，也不把讨论结论自动升级为 Accepted ADR。当前要交付的范围以 [macOS Runnable Slice](../../features/macos-runnable-slice.md) 为准：先在真实 Mac 上跑通启动、麦克风、共享 ASR/处理和结果查看/复制；本文后半部分的原生输入、自动写回和分发设计属于后续里程碑。
 
 ## 1. 目的与当前结论
 
-Zephyr 可以继续使用同一个 Tauri、Rust 和 Preact 仓库开发 Windows 与 macOS，不需要复制一套独立 Mac App。共享层保留语音会话仲裁、录音/ASR 编排、智能成稿、文本校验、Pending、History、Hotword 和 IncidentVault；macOS 原生能力按快捷键、目标捕获、权限、浮层、文本交付、麦克风和凭据等纵向能力单元分别实现。
+Zephyr 可以继续使用同一个 Tauri、Rust 和 Preact 仓库开发 Windows 与 macOS，不需要复制一套独立 Mac App。当前先复用语音会话仲裁、录音/ASR 编排、文本处理和主界面，补齐真实 Mac 构建、启动、麦克风和结果查看/复制。快捷键、目标捕获、权限、浮层、自动文本交付和凭据等原生能力在其进入实际里程碑时再按纵向能力单元分别实现。
 
-维护者已明确 macOS MVP 采用经过 Developer ID 签名、Hardened Runtime 和 Apple Notarization 的直接 DMG 分发；Mac App Store 不属于当前产品范围。该长期边界仍需形成新的 ADR；本 Proposal 不改写 ADR-0001 的历史，也不把尚未实现的 macOS 能力描述成当前事实。
+“Mac 上真实跑通”与“可对外安装分发”是两个验收闭环。当前 Runnable Slice 不要求 Developer ID、Hardened Runtime、Apple Notarization 或 DMG；进入外部测试或发布里程碑时，候选路线仍是站外直接分发，而不是 Mac App Store。该长期边界仍需在真正实施前形成 ADR；本 Proposal 不改写 ADR-0001 的历史，也不把尚未实现的 macOS 能力描述成当前事实。
 
 加入 macOS 也不要求先建设一个覆盖所有 OS 能力的统一大平台层。简单的窗口生命周期、菜单、默认值和构建差异可以保留局部平台分支；只有需要跨越共享业务边界的语义才形成窄契约。当前共享模型中的 HWND、Windows 扫描码、`.exe`、Ctrl+V、OLE 和 Windows Credential Manager 泄漏应在对应 macOS 能力接入时拆除，不能继续穿过共享 Voice、Processing 或 Delivery 边界。
 
@@ -34,13 +34,13 @@ Zephyr 可以继续使用同一个 Tauri、Rust 和 Preact 仓库开发 Windows 
 - preinput 窗口请求透明、置顶和初始不聚焦，但没有 macOS non-activating panel 的实现与目标环境证据。
 - Current C4 和 Runtime View 正确地将当前部署描述为 Windows-only；在 macOS 实现完成并复核前不得提前修改为跨平台 Current 事实。
 
-## 3. 必须先修复的现存安全问题
+## 3. 自动写回的安全门禁，不是 Runnable Slice 前置条件
 
 ### 3.1 Delivery 提交结果必须是三态
 
-当前 `AtomicPasteReceipt` 只用 `paste_submitted: bool` 表达是否提交，而 Windows `SendInput` 可以返回部分事件已写入。部分写入时，目标可能已经收到 Ctrl+V，但上层会把所有注入错误映射为 `injection_rejected_before_submit` 并创建普通 Pending，后续重投存在重复输入风险。
+当前 main 已将共享 Delivery 回执改为 `NotSubmitted / Submitted / Unknown` 三态，并把不确定提交与普通可重投失败分开。该修复降低了现有 Windows 与未来 macOS 自动写回的重复输入风险，但对应 ADR 和目标环境验证仍未收口，不能把源码存在三态等同于安全能力已验证。
 
-在实现 macOS 自动文本写回前，候选共享契约应改为：
+未来实现 macOS 自动文本写回时必须沿用并实机验证这一语义：
 
 ```text
 SubmissionState
@@ -51,7 +51,7 @@ SubmissionState
 
 `Unknown` 只能显示“文字可能已经输入，请先检查目标应用”，并提供复制或另一个需要用户明确确认的恢复动作；不能伪装成普通失败，也不能自动进入一键重投路径。
 
-安全关键的 `TextInjector::inject_atomic_paste` 不应提供会自动宣称 `Restored` 的默认实现。每个平台必须显式实现提交状态和剪贴板恢复状态。
+安全关键的 injector 不应提供会自动宣称成功或 `Restored` 的默认实现。每个平台必须显式实现提交状态和剪贴板恢复状态。
 
 ### 3.2 多行目标分类必须识别输入表面
 
@@ -67,7 +67,7 @@ IDE 但内部控件未知          → 禁止多行自动粘贴
 无法分类                    → Pending / 用户主动复制
 ```
 
-该修复是现有 Windows 产品的安全工作，不应被归入“Mac 特有任务”而延期。
+该修复是现有 Windows 产品与未来自动写回的安全工作，不应被归入“Mac 特有任务”而延期；但它不阻塞只在 Zephyr 内展示并复制结果的 Runnable Slice。
 
 ## 4. 候选目标架构
 
@@ -141,37 +141,45 @@ Pressed/Released/Interrupted 和 Hold/Toggle 状态机继续共享。默认绑�
 
 Windows 可继续使用 Unicode SendInput 或 OLE AtomicPaste；macOS 候选实现使用 NSPasteboard、目标复验和单次 CGEvent Cmd+V。两者必须遵守相同的三态提交结果、剪贴板并发保护和禁止歧义重试规则，不要求使用相同底层机制。
 
-## 5. macOS MVP 候选能力
+## 5. 分层目标，禁止把后续能力塞回当前 MVP
 
-### 5.1 可以纳入首个内部 Alpha
+### 5.1 当前：Mac Runnable Slice
 
-- 启动主窗口、托盘/菜单和本地设置；
-- 麦克风权限与录音；
-- 复用现有 ASR、Fast 和 LLM 成稿链路；
-- 普通组合键的全局 Pressed/Released；
-- 按快捷键时捕获 frontmost application；
-- 不激活原目标的轻量浮层，或在原生非激活透明面板完成前使用保守的不透明面板；
-- 对已确认的普通可编辑输入框执行单次 Cmd+V；
-- 辅助功能未授权、目标变化或输入表面未知时进入 Pending/手动复制；
-- Apple Silicon 内部测试构件；
-- Developer ID 签名、公证和 DMG。
+当前唯一必须完成的闭环是：
 
-### 5.2 不应成为首个 Alpha 前置条件
+- 真实 Mac 从 clean revision 构建并启动主应用；
+- 主窗口和核心设置可用，Windows-only 能力不会拖垮整个应用；
+- 应用内按钮或简单可靠的触发方式开始/结束真实麦克风录音；
+- 复用现有 Voice/ASR/Processing，至少跑通 Fast final transcript；
+- 最终文字在 Zephyr 内可见并可复制，用户手动粘贴到目标应用；
+- Windows 构建和既有自动化不回归。
 
-- Mac App Store 上架、MAS sandbox 兼容或 `mas` 构建目标；
-- Intel 与 Universal Binary，除非公司设备清单证明必要；
-- Fn/Globe 键；
-- 单独右 Option 等 modifier-only 快捷键；
-- 鼠标侧键；
-- 全局吞键或与其他 Hook 的系统级独占；
-- 自动更新；
-- 系统音频/会议录音；
-- 屏幕内容和窗口标题采集；
-- 所有第三方应用都能自动输入的承诺。
+以上范围由 `FEAT-MACOS-RUNNABLE-SLICE` 规定。全局快捷键、浮层、目标捕获、自动粘贴和签名 DMG 即使尚未完成，也不能据此判定当前切片失败。
+
+### 5.2 后续：Mac Native Input Alpha
+
+只有 Runnable Slice 已在真实 Mac 上闭环后，才按产品优先级逐项加入：
+
+- 普通全局快捷键的 Pressed/Released，再评估按住说话和特殊物理键；
+- frontmost application 捕获、写回前复验和 Accessibility 权限；
+- 不抢焦点的非激活浮层，透明视觉不是第一优先级；
+- 对已确认普通输入面的单次 Cmd+V；
+- 无权限、目标变化、Secure Input 或输入面未知时降级为复制/Pending；
+- 三态提交和剪贴板恢复的 macOS 实机故障验证。
+
+这些能力不要求一次性打包成一个大 PR，也不要求为了接口形式统一提前重构全部 Windows 适配层。
+
+### 5.3 后续：Mac Distribution Alpha
+
+当团队要把应用交给开发机之外的用户安装时，再建立独立的分发闭环：Developer ID、Hardened Runtime、notarization、staple、DMG、干净机器安装、覆盖升级和发布清单。Mac App Store、MAS sandbox、自动更新、Intel 与 Universal Binary 仍不默认进入该里程碑。
+
+### 5.4 不作为默认目标：Windows 功能对等
+
+以下能力只能由新的明确产品优先级拉入，不从“支持 macOS”自动推导：Fn/Globe、单独右 Option、鼠标侧键、全局吞键、系统音频/会议录音、所有第三方应用自动输入、所有 Windows 设置与视觉行为的逐项复刻。
 
 ## 6. 权限与生命周期
 
-macOS 至少需要分别管理 Microphone、Accessibility，以及快捷键方案实际需要时的 Input Monitoring。权限状态不能压缩成一个持久化 boolean；候选状态包括 `Unknown`、`NotDetermined`、`Granted`、`Denied`、`Restricted`、`Revoked` 和 `Unavailable`。
+当前 Runnable Slice 只必须管理 Microphone。后续原生输入阶段还需要分别管理 Accessibility，以及快捷键方案实际需要时的 Input Monitoring。任何进入实现的权限状态都不能压缩成一个持久化 boolean；候选状态包括 `Unknown`、`NotDetermined`、`Granted`、`Denied`、`Restricted`、`Revoked` 和 `Unavailable`。
 
 权限交互应遵循：
 
@@ -196,13 +204,13 @@ Accessibility 权限属于核心自动写回能力，但不能成为应用启动
 - 点击穿透或明确的交互策略；
 - 浮层出现前已经捕获目标，写回前再次复验目标。
 
-Tauri 的 macOS 透明 WebView需要开启 `app.macOSPrivateApi`。如果产品保留透明浮层，配置只能位于 `tauri.macos.conf.json` 等平台特定配置。macOS MVP 已明确采用直接 DMG 分发，不再同时维护 Mac App Store 兼容目标；透明能力仍须服从不抢焦点、公开可支持 API、签名和实机验证要求。
+Tauri 的 macOS 透明 WebView需要开启 `app.macOSPrivateApi`。如果后续产品保留透明浮层，配置只能位于 `tauri.macos.conf.json` 等平台特定配置。候选分发方向是直接 DMG，不同时维护 Mac App Store 兼容目标；透明能力仍须服从不抢焦点、公开可支持 API、签名和实机验证要求。
 
 ## 8. 分发与凭据
 
-### 8.1 已确认的直接分发链路
+### 8.1 后续候选的直接分发链路
 
-macOS MVP 通过站外 DMG 分发，不建立 `mas` target、App Store provisioning profile 或 Mac App Store 提交流程。Developer ID 签名和 Apple Notarization 用于 Gatekeeper 信任，不等同于 App Store 上架。
+进入 Mac Distribution Alpha 后，候选方案是站外 DMG 分发，不建立 `mas` target、App Store provisioning profile 或 Mac App Store 提交流程。Developer ID 签名和 Apple Notarization 用于 Gatekeeper 信任，不等同于 App Store 上架。这不是当前 Runnable Slice 的完成条件。
 
 ```text
 macOS CI / 受控 Mac 构建机
@@ -246,116 +254,91 @@ macOS CI / 受控 Mac 构建机
 - 简单的平台生命周期、菜单、窗口默认值或构建差异可以使用局部 `cfg`；高风险原生能力和共享业务语义不得通过散布平台分支混入 Voice、Processing 或 Delivery。
 - 自动写回核心链路不以 `osascript` 为主实现，避免新增任意 Apple Events、Automation 权限和弱错误契约。
 - 不复制 OpenWhispr 在 macOS 快速粘贴失败后重新发送 Cmd+V 的兜底；任何可能已经提交的失败都必须返回 `Unknown`，不得换另一种工具再次尝试。
-- 首个 Alpha 不同时承担 Apple Silicon、Intel、Mac App Store和自动更新；支持矩阵由实际公司设备清单驱动。
+- 首个分发 Alpha 不同时承担 Apple Silicon、Intel、Mac App Store和自动更新；支持矩阵由实际设备清单驱动。
 - 不为了透明视觉延迟正确的目标捕获、非激活语义和 Delivery 安全；必要时先使用保守窗口形态。
 
-## 11. 文档系统候选调整
+## 11. 文档系统边界
 
-当前 Dossier 多数把共享用户行为和 Windows 证据能力写在同一个 validation slice。macOS 接入后，不能复制整套 Dossier，也不能让 Windows 证据完成 macOS 验收。
+当前执行范围已经拆成独立的 [macOS Runnable Slice Dossier](../../features/macos-runnable-slice.md)，避免让 Windows 原生输入、自动写回和分发要求污染首次 Mac bring-up。既有跨平台功能 Dossier 多数仍把共享用户行为和 Windows 证据能力写在同一个 validation slice；这些功能真正声明 macOS 支持时，不能复制整套 Dossier，也不能让 Windows 证据完成 macOS 验收。
 
 候选调整：
 
-1. Dossier 保留共享用户目标和平台无关的可观察行为；
-2. validation slice 增加明确 `platform` 或等价维度；
-3. 同一 acceptance 可以拥有 Windows 与 macOS 两个证据切片；
-4. 对外声明支持的平台集合必须版本化；总体 validation status 取所声明支持平台中的最低有效状态；
-5. 按实际实现增加 `platform.macos.<capability>` 能力组件；只有多个能力确实共享稳定责任时才增加通用平台组件，不预设单体 `backend.platform-boundary`；
-6. 新建跨应用文本交付 hard-boundary Dossier，集中管理提交三态、目标身份、终端防护、剪贴板和 Pending；
-7. 新建 macOS 分发 Dossier，独立记录签名、公证、安装、覆盖升级和权限连续性；
-8. 创建新的 Proposed ADR 决定单仓 macOS 能力切片和直接 DMG 分发；它扩展 ADR-0001 的平台范围，同时保留 Tauri 本地 IPC、Rust 敏感能力和最小 WebView capability 边界，不把 ADR-0001 整体视为错误；
-9. 创建新的 Proposed ADR 替代 AtomicPaste 的布尔提交回执，不改写 ADR-0003/0014 的历史；
-10. `implementationStatus=implemented` 应要求 `implementationReview.status=conformant` 且无已知偏差；
-11. 文档门禁应禁止 HWND、Win32、WindowsKeyboard、AXUIElement、CGEvent 和平台错误类型穿过共享业务契约，但不得禁止它们存在于对应平台能力单元，也不能把某种目录、trait 或 helper 数量升级为永久技术禁令；
-12. 若引入原生 helper，构建与发布证据必须覆盖源码哈希/版本、目标 CPU 架构、可执行权限、签名、应用包内路径和启动失败语义。
+1. Runnable Slice 只维护自己的真实 Mac 启动、麦克风、共享 ASR 和结果复制验收，不把尚未承诺的平台对等要求写入。
+2. 某个既有共享功能真正声明 macOS 支持时，再为对应 acceptance 增加明确的平台证据切片；总体 validation status 不得由 Windows 证据替代 Mac 证据。
+3. 按实际实现增加 `platform.macos.<capability>` 能力组件；只有多个能力确实共享稳定责任时才增加通用平台组件，不预设单体 `backend.platform-boundary`。
+4. 自动跨应用写回开始实施前，新建或确认 hard-boundary Dossier，集中管理提交三态、目标身份、终端防护、剪贴板和 Pending。
+5. 对外分发开始实施前，新建 macOS 分发 Dossier，独立记录签名、公证、安装、覆盖升级和权限连续性。
+6. 长期单仓 macOS 能力边界和直接 DMG 分发进入实施时，再分别形成 Proposed ADR；不为了 Runnable Slice 预先冻结 helper 数量、目录形状或所有平台 trait。
+7. 文档门禁应禁止 HWND、Win32、WindowsKeyboard、AXUIElement、CGEvent 和平台错误类型穿过共享业务契约，但不得禁止它们存在于对应平台能力单元。
+8. 若引入原生 helper，构建与发布证据必须覆盖源码哈希/版本、目标 CPU 架构、可执行权限、签名、应用包内路径和启动失败语义。
 
-这些调整仍是候选设计；本次记录不修改现有 Dossier schema、Feature 契约、ADR、Current C4、Runtime View 或代码地图。
+除新增当前 Runnable Slice 契约外，本 Proposal 不提前修改既有 Feature 的 macOS 支持声明、ADR 状态、Current C4、Runtime View 或代码地图。它们只能在 clean revision 和真实实现证据出现后由收口者更新。
 
 ## 12. 分阶段实施与门禁
 
-### Phase 0：Delivery 安全纠错（只阻塞自动写回）
+### Phase A：Mac Runnable Slice（当前）
 
-- Delivery 回执改为 NotSubmitted / Submitted / Unknown；
-- 部分 SendInput 和进程异常使用 Unknown；
-- Unknown 禁止自动重试和普通 Pending 重投；
-- 移除安全关键 injector 的伪成功默认实现；
-- 无控件级证据的 IDE 多行交付失败关闭；
-- 补充故障注入、ADR 和 hard-boundary Dossier。
+- 先建立能在真实 Mac 编译、启动和运行的最小构建脊柱；
+- 只处理会阻塞启动的 Windows-only 依赖、装配和配置，不预先抽象所有平台能力；
+- 接通真实麦克风、VoiceSessionActor、现有 ASR/Processing 和应用内结果展示/复制；
+- 应用内按钮优先，简单快捷键可选；未实现能力明确失败关闭；
+- 在 Windows 上运行现有自动化，在真实 Mac 上记录绑定 clean revision 的构建和端到端结果。
 
-门禁：在该阶段完成前不实现 macOS 自动 Cmd+V。该门禁不阻塞 macOS 编译、启动、权限、麦克风、快捷键、目标捕获或非激活浮层能力的独立开发和实机探针。
+门禁：必须有真实 Mac 证据，只有 `cargo check`、前端构建或 Windows CI 不算跑通。反过来，缺少 Accessibility、浮层、自动 Cmd+V、Developer ID 或 DMG 不阻塞本阶段完成。
 
-### Phase 1：macOS 构建脊柱与能力单元骨架
+### Phase B：Mac Native Input Alpha（后续、按需拆分）
 
-- 增加 target-specific 依赖、`tauri.macos.conf.json`、Info.plist、entitlements 和 macOS CI；
-- 为 `mac-hotkey`、`mac-target-and-permission`、`mac-overlay`、`mac-paste`、`mac-microphone` 等实际能力建立独立实现边界；
-- 只在相应能力需要接入共享业务时重构 TargetIdentity、ShortcutRuntime、ShortcutBinding 或 Delivery receipt；
-- 原生 helper 若存在，必须具有独立构建、架构检查、生命周期和最终应用包校验；
-- 尚未实现的能力显式失败关闭。
-
-门禁：不要求先完成覆盖所有 OS 能力的 `PlatformServices` 或一次性迁移全部 Windows 模块。Windows 自动化与当前行为不得回归；macOS runner 必须完成 compile/test，而不是只编译前端。
-
-### Phase 2：macOS 内部 Alpha 纵向链路
-
-- 权限状态机；
-- 麦克风与普通组合快捷键；
-- frontmost app 捕获与复验；
+- 普通全局快捷键与 Pressed/Released 生命周期；
+- frontmost application 捕获、复验和权限状态；
 - 非激活浮层；
-- 已确认普通输入框的单次 Cmd+V；
-- 无权限、目标变化和未知表面的 Pending/复制降级；
-- Apple Silicon 内部构件。
+- 已确认普通输入面的单次 Cmd+V；
+- 无权限、目标变化和未知输入面时的复制/Pending 降级；
+- 三态交付、剪贴板并发和退出/睡眠唤醒的实机验证。
 
-每个能力单元在集成前必须同时交付原生实现、adapter、权限/失败语义、自动化、构建装配和已知实机缺口；不能只提交一个孤立 API 封装后把生命周期和打包责任留给其他单元。
+门禁：Delivery 安全纠错只阻塞自动写回，不阻塞 Phase A。每个进入实现的原生能力单元应同时承担 adapter、生命周期、权限/失败语义、构建装配、测试和实机缺口，避免把孤立 API 封装扔给其他 Agent 收尾。
 
-门禁：真实 Mac 上验证快速按放、权限拒绝/撤销、切应用、退出、睡眠唤醒和剪贴板并发。
+### Phase C：外部应用与安全矩阵（自动写回后）
 
-### Phase 3：外部应用与安全矩阵
+只有 Phase B 真正加入自动写回后，才验证 TextEdit/Notes、浏览器、Office、IDE 编辑器与集成终端、Terminal、密码框/Secure Input、中文输入法、多显示器/全屏 Space、目标退出/切换和剪贴板并发。任何目标环境失败都否定对应验收，不能用模拟测试解释掉实机结果。
 
-至少覆盖：
+### Phase D：签名、公证与受控分发（需要交付他人时）
 
-- TextEdit 或 Notes；
-- 浏览器普通输入框；
-- Office 输入面；
-- VS Code/Cursor 编辑器与集成终端分别验证；
-- Terminal、iTerm 或企业实际终端；
-- 密码框与 Secure Input；
-- 中文输入法组合状态；
-- 多显示器和全屏 Space；
-- 识别期间目标退出、切换或 PID 复用；
-- 粘贴期间其他程序修改剪贴板。
-
-门禁：任何目标环境失败都否定对应验收，不用模拟测试解释掉实机结果。
-
-### Phase 4：签名、公证与受控分发
-
-- Developer ID、Hardened Runtime、notarization 和 staple；
-- DMG 与发布清单；
+- Developer ID、Hardened Runtime、notarization、staple 和 DMG；
 - 干净 Mac 安装、首次权限、覆盖升级、卸载和本地数据保持；
-- 同 bundle identifier/Team 更新后的 TCC 权限连续性；
-- 公证失败、下载损坏和签名不匹配的失败关闭。
+- 发布清单记录构件身份、SHA-256、源码 revision、工作树、CPU 架构、系统和签名身份。
 
-门禁：未保存构件身份、SHA-256、源码 revision、工作树、目标机器和系统环境时，不得声称 macOS 分发已验证。
+门禁：本阶段完成前不得声称“可对外分发”，但不回头否定已经有证据的开发机 Runnable Slice。
 
-## 13. 建议的完成定义
+## 13. 当前 Runnable Slice 的完成定义
 
-macOS MVP 只有同时满足以下条件才可以从 Alpha 升级：
+只有同时满足以下条件，才可以说“Zephyr 已在 Mac 上首次跑通”：
 
-- 单仓共享链路没有复制第二套 Voice/ASR/Processing/Delivery；
-- 已接入共享链路的 Windows adapter 与对应 macOS 能力单元通过同一业务契约测试；
-- SubmissionState Unknown 在所有路径上禁止自动重试；
-- 多行终端、Secure Input 和未知 IDE 表面失败关闭；
-- 权限拒绝/撤销后不继续采音或伪报自动输入；
-- 浮层不抢走原目标焦点，并有真实 Mac 证据；
-- 外部应用矩阵记录版本、硬件、系统、签名身份与结果；
-- DMG 已签名、公证、staple 并在干净目标机验证；
-- 对应 Dossier、ADR、Current C4、Runtime View 和代码地图已在实现复核后更新；
-- validation status 与实际证据能力一致。
+- 同一仓库和共享主链路，没有复制第二套 Voice/ASR/Processing；
+- clean revision 在一台记录了芯片和系统版本的真实 Mac 上构建并启动；
+- 用户能明确开始/结束录音，真实麦克风数据进入现有会话链路；
+- 至少一次 Fast final transcript 成功产生；在达成前，任何失败都必须准确定位为权限、设备、网络、凭据或服务问题，不能以“可解释但未跑通”宣称完成；
+- 最终文本在 Zephyr 内可见且可复制，用户可手动粘贴；
+- Windows 既有自动化与构建基线未回归；
+- Dossier 仍诚实标记尚未覆盖的实机环境与后续能力，不把一次开发机成功升级为全面 macOS 支持。
 
-## 14. 待维护者确认的问题
+全局快捷键、目标捕获、透明浮层、自动 Cmd+V、外部应用矩阵和公证 DMG 不属于这一定义。
 
-1. 首个内部 Alpha 是否只支持 Apple Silicon，以及公司设备清单中的最低 macOS 版本；
-2. macOS 首版默认快捷键与允许的组合范围；
-3. 透明浮层是否是 Alpha 必须项，还是可以先使用保守的不透明非激活面板；
-4. 无法区分 IDE 编辑器与集成终端时，多行结果统一 Pending 的产品取舍；
-5. 何时停止编译期共享凭据并切换到服务端短期令牌/按用户签发；
-6. macOS Alpha 的目标应用矩阵和内部测试人员范围。
+## 14. 待确认问题，按里程碑处理
 
-这些问题确认后，应创建对应 Proposed ADR 和 Dossier 变更；在此之前不应把候选答案隐含进源码默认值。
+### 当前 Phase A 需要尽快确定
+
+1. 第一台可用于实机联调的 Mac 芯片和 macOS 版本；
+2. 首次跑通由应用内按钮触发，还是已有一个低成本、无需额外权限的可靠入口；
+3. 现有内部 ASR 凭据在该 Mac 上如何安全注入和验证；
+4. 最终文本先复用哪个现有界面区域展示和复制。
+
+### 不应提前阻塞 Phase A
+
+1. 默认全局快捷键、右 Option、Fn/Globe 和按住/切换的完整语义；
+2. 透明浮层的最终形态；
+3. IDE 编辑器与集成终端的输入面分类；
+4. 自动写回目标应用矩阵；
+5. 最低支持系统、Intel/Universal Binary、Developer ID、公证和 DMG；
+6. 何时切换服务端短期令牌或按用户签发凭据。
+
+后续问题只有在对应里程碑真正启动时才升级为 Feature 契约或 ADR，不得隐含进 Phase A 的默认值和完成门禁。
