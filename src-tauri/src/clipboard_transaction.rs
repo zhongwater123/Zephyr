@@ -119,10 +119,10 @@ impl ClipboardTransactionService {
                 if helper_request.mode == Some(DeliveryMode::ClipboardPaste)
                     && stage_at_least(failure.last_stage, HelperStage::PayloadWritten)
                 {
-                    receipt.restoration = self
-                        .recover_once(helper_request.transaction_id)
-                        .await
-                        .unwrap_or(RestorationState::Failed);
+                    receipt.restoration = restoration_after_recovery(
+                        receipt.restoration,
+                        self.recover_once(helper_request.transaction_id).await,
+                    );
                 }
                 if receipt.submission == SubmissionState::NotSubmitted {
                     Err(InjectError::Worker(failure.message))
@@ -152,10 +152,10 @@ impl ClipboardTransactionService {
             && terminal.receipt.restoration == RestorationState::Failed
             && stage_at_least(report.last_stage, HelperStage::PayloadWritten)
         {
-            terminal.receipt.restoration = self
-                .recover_once(terminal.receipt.transaction_id)
-                .await
-                .unwrap_or(RestorationState::Failed);
+            terminal.receipt.restoration = restoration_after_recovery(
+                terminal.receipt.restoration,
+                self.recover_once(terminal.receipt.transaction_id).await,
+            );
         }
         if terminal.receipt.submission != SubmissionState::NotSubmitted || terminal.code.is_none() {
             if let Some(code) = terminal.code.as_deref() {
@@ -402,6 +402,17 @@ fn restoration_after_abnormal_exit(stage: Option<HelperStage>) -> RestorationSta
     }
 }
 
+fn restoration_after_recovery(
+    original: RestorationState,
+    recovered: Option<RestorationState>,
+) -> RestorationState {
+    if recovered == Some(RestorationState::Restored) {
+        RestorationState::Restored
+    } else {
+        original
+    }
+}
+
 fn should_fallback_to_unicode(
     request: &HelperRequest,
     allowed: bool,
@@ -439,6 +450,25 @@ mod tests {
         assert_eq!(
             submission_from_stage(Some(HelperStage::RestoreStarted)),
             SubmissionState::Submitted
+        );
+    }
+
+    #[test]
+    fn uncertain_recovery_cannot_hide_an_existing_restoration_failure() {
+        assert_eq!(
+            restoration_after_recovery(
+                RestorationState::Failed,
+                Some(RestorationState::SkippedConcurrentChange),
+            ),
+            RestorationState::Failed
+        );
+        assert_eq!(
+            restoration_after_recovery(RestorationState::Failed, None),
+            RestorationState::Failed
+        );
+        assert_eq!(
+            restoration_after_recovery(RestorationState::Failed, Some(RestorationState::Restored),),
+            RestorationState::Restored
         );
     }
 
