@@ -143,6 +143,20 @@
 - 当前判断：ASR 首次联调可以沿用现有受控内部凭据模型，但必须在真实 Mac 上验证读取与网络链路。
 - 影响：如果 LLM 凭据或 Keychain 适配阻塞，只降级到 Fast transcript，不扩大本切片去解决公开分发凭据模型。
 
+## 概念迭代记录
+
+### CI-MACRUN-01：完整自动写回平台化不是 Runnable Slice 前置条件
+
+- 状态：Confirmed
+- 当前结论：Windows 自动交付已经通过现有 `DeliveryExecutor` 隔离执行机制，但共享工作流仍保留 `Unicode`、`ClipboardPaste` 等 Windows 风格策略。该语义耦合必须在 macOS 自动写回真正进入范围时处理；当前 Runnable Slice 通过应用内结果路线绕开目标捕获和自动交付，不先建设 `AutomaticTextDeliveryPort`。
+- 依据：`AC-MACRUN-04` 只要求结果在 Zephyr 内可见并可复制，且“明确不规定的实现”排除了自动 `Cmd+V`、剪贴板事务和跨应用写回。提前抽象尚无第二个平台实现反馈的自动交付策略会扩大当前 MVP，并增加错误抽象风险。
+
+### CI-MACRUN-02：下一实现阶段只建立最小 macOS 适配与 Unsupported 边界
+
+- 状态：Confirmed
+- 当前结论：下一阶段先处理 target-specific 依赖、macOS 可用的凭据 backend、Tauri macOS 配置、Windows-only 启动装配隔离、显式 Unsupported/Unavailable 适配器，以及 Apple Silicon CI 的编译、测试和 `.app` 打包。`OutputRoute::InApp`、UI 录音按钮、结果卡和麦克风权限生命周期在随后的垂直切片中实现。
+- 依据：先让同一工程暴露真实 macOS 编译与启动阻塞，能够保持故障可归因；该阶段只证明构建脊柱成立，不替代 `AC-MACRUN-01` 至 `AC-MACRUN-04` 所需的真实 Mac 运行证据。
+
 ## 架构决策
 
 - [ADR-0001：Tauri 本地桌面边界](../architecture/adr/0001-tauri-local-desktop-boundary.md) 提供当前壳层与 IPC 的历史边界；它的 Windows-only 部分需要在实现 macOS 时由后续决策扩展，而不是复制一套 App。
@@ -153,6 +167,7 @@
 
 - 应用装配与平台入口：`src-tauri/src/lib.rs`、`src-tauri/src/main.rs`、`src-tauri/src/platform.rs`
 - 语音会话与触发：`src-tauri/src/voice_controller/`、`src-tauri/src/voice_trigger.rs`
+- 目标能力边界：`src-tauri/src/target_port.rs`、`src-tauri/src/windows_target.rs`
 - 麦克风与 ASR：`src-tauri/src/audio.rs`、`src-tauri/src/streaming_pipeline.rs`、`src-tauri/src/provider/`
 - 共享服务与 IPC：`src-tauri/src/services.rs`、`src-tauri/src/commands/`、`src/ipc/client.ts`
 - 主界面：`src/app/AppShellV2.tsx`、`src/features/`
@@ -162,7 +177,9 @@
 - `implementationStatus=not_started`：截至记录 revision，产品仍按 Windows-only 装配，尚无可复核的 macOS Runnable Slice。
 - `validationStatus=unverified`：没有真实 Mac 上绑定 clean revision 的构建、麦克风、ASR 和结果复制证据。
 - Windows 上的单元测试、CI 或既有功能证据不能替代本 Dossier 的 macOS 实机证据。
+- `3d71d91` 已在 clean `main` 将 Windows 目标捕获、存在性检查、前台复验和激活迁移到 `TargetPort`/`WindowsTargetAdapter`，共享 Voice、Delivery 和 Pending 只持有带平台中立 context 的 opaque `CapturedTarget`；GitHub Actions run `33538788062` 的 PR fast 与 Full engineering checks 均通过。该记录只证明跨平台准备边界和 Windows 自动化基线，不覆盖任何 `AC-MACRUN-*` 的真实 Mac 证据，因此不改变上述状态。
 
 ## 澄清历史
 
 - 2026-09-01：用户明确把当前目标从“首个 Mac Alpha 精确覆盖 Windows 原生体验和分发链路”收窄为“先在真实 Mac 上端到端跑通核心价值链”。原生快捷键、目标捕获、透明浮层、自动写回和公证 DMG 保留为后续里程碑，不再作为当前实现前置条件。
+- 2026-09-02：Windows 目标能力端口化以 `3d71d91` 进入 clean `main` 并通过对应 GitHub CI；用户确认下一步进入“macOS 所需的最小适配器和明确的 Unsupported 能力”，不把完整自动写回平台化提前为 Runnable Slice 前置条件。

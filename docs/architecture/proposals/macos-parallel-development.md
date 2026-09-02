@@ -23,9 +23,10 @@ Zephyr 可以继续使用同一个 Tauri、Rust 和 Preact 仓库开发 Windows 
 
 ## 2. 已核对的当前实现事实
 
-以下内容是本 Proposal 创建时的源码事实，不代表目标设计：
+以下内容是截至 clean `main` revision `3d71d91` 的源码事实，不代表目标设计或 macOS 已开始实现：
 
-- `TargetWindowIdentity` 直接保存 `hwnd`、PID、Windows 进程创建时间和 EXE；非 Windows 的捕获、存在性验证、前台验证和激活全部返回 Unsupported。
+- 共享 Voice、Delivery 和 Pending 已改持有 `CapturedTarget`；平台中立 `TargetContext` 只暴露应用 key、窗口标题、PID 和多行风险，opaque payload 不序列化、不持久化。`WindowsTargetAdapter` 私有持有 HWND、PID、进程创建时间、EXE 路径与标题，并通过 `TargetPort` 提供捕获、存在性检查、前台复验和激活；非 Windows adapter 明确返回 Unsupported。
+- 自动交付执行继续位于现有 `DeliveryExecutor`/`ClipboardTransactionService` 边界，但共享 Actor 仍把 `InjectionStrategy` 映射为 `DeliveryMode::Unicode` 或 `ClipboardPaste`。这是未来自动写回平台化需要处理的策略耦合，不是只展示并复制应用内结果的 Runnable Slice 前置条件。
 - `ShortcutManager::initialize` 直接创建 `WindowsKeyboardEngine`；`ShortcutRuntimePort` 的错误和诊断类型仍来自 `windows_keyboard`。
 - `PhysicalKeyId` 使用 Windows scan code 与 `extended` 位；前端录入表包含 Windows 扫描码、Win 修饰键和 Windows 保留组合。
 - `AppServices::production` 固定装配 `WindowsCredentialStore` 和 `WindowsNativeConfirmation`；`keyring` 仅启用 `windows-native` feature。
@@ -33,6 +34,7 @@ Zephyr 可以继续使用同一个 Tauri、Rust 和 Preact 仓库开发 Windows 
 - Tauri bundle 只启用 NSIS；CI 只运行 Windows job；尚无 macOS Info.plist、entitlements、签名、公证或 DMG 发布脚本。
 - preinput 窗口请求透明、置顶和初始不聚焦，但没有 macOS non-activating panel 的实现与目标环境证据。
 - Current C4 和 Runtime View 正确地将当前部署描述为 Windows-only；在 macOS 实现完成并复核前不得提前修改为跨平台 Current 事实。
+- revision `3d71d91` 的 Windows PR fast 与 Full engineering checks 已通过；真实 Windows 录音、目标切换、Pending 和自动输入运行时回归仍没有绑定该 revision 的目标环境证据。
 
 ## 3. 自动写回的安全门禁，不是 Runnable Slice 前置条件
 
@@ -278,6 +280,7 @@ macOS CI / 受控 Mac 构建机
 
 ### Phase A：Mac Runnable Slice（当前）
 
+- 当前已完成 Windows 目标能力的窄端口准备；不以重构完整自动交付策略作为继续实施的门禁；
 - 先建立能在真实 Mac 编译、启动和运行的最小构建脊柱；
 - 只处理会阻塞启动的 Windows-only 依赖、装配和配置，不预先抽象所有平台能力；
 - 接通真实麦克风、VoiceSessionActor、现有 ASR/Processing 和应用内结果展示/复制；
@@ -285,6 +288,8 @@ macOS CI / 受控 Mac 构建机
 - 在 Windows 上运行现有自动化，在真实 Mac 上记录绑定 clean revision 的构建和端到端结果。
 
 门禁：必须有真实 Mac 证据，只有 `cargo check`、前端构建或 Windows CI 不算跑通。反过来，缺少 Accessibility、浮层、自动 Cmd+V、Developer ID 或 DMG 不阻塞本阶段完成。
+
+当前 Phase A 的下一实现切片固定为“最小 macOS 适配器和显式 Unsupported 能力”：先完成 target-specific 依赖、macOS credential backend、平台专用 Tauri 配置、Windows-only 启动装配隔离和 Apple Silicon `.app` CI。应用内 `OutputRoute` 与 UI 结果路线随后独立接入；这两个切片都不得提前声称真实 Mac 已启动、授权或录音成功。
 
 ### Phase B：Mac Native Input Alpha（后续、按需拆分）
 

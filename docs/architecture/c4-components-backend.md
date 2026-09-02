@@ -1,5 +1,5 @@
 ---
-{"documentType":"c4-view","viewStatus":"current","sourceRevision":"0f6dc06ac3eded7805814e58463aa66203dc409b","worktreeState":"clean","reviewStatus":"stale","reviewedAt":"2026-09-01","knownDeviations":["已基于当前 main 的 clean revision 重新核对主进程与 zephyr-paste-helper 的职责、事务边界、三态提交仲裁和打包门禁；仍等待指定收口者基于安装后的真实 Windows 应用、格式与 helper 强杀矩阵复核"]}
+{"documentType":"c4-view","viewStatus":"current","sourceRevision":"3d71d9151cab5cd41cb9c3c5eff98f47b6d8de1e","worktreeState":"dirty","changedPaths":["docs/architecture/c4-components-backend.md","docs/architecture/proposals/macos-parallel-development.md","docs/features/macos-runnable-slice.md"],"reviewStatus":"stale","reviewedAt":"2026-09-02","knownDeviations":["已核对 TargetPort、WindowsTargetAdapter、ClipboardTransactionService 和 Pending 的源码责任，但尚未由指定收口者升级为 reviewed","真实 Windows 录音、目标切换、Pending 重投递、格式与 helper 强杀矩阵仍缺绑定 3d71d91 的目标环境证据","macOS 适配器、启动装配和应用内结果路线尚未实现"]}
 ---
 
 # C4 L3：Rust 后端组件
@@ -20,7 +20,7 @@ flowchart TB
         delivery["Component<br/>Delivery + Pending Services<br/><small>target, text, lease, inject, commit</small>"]
         repos["Component<br/>Repository Ports + Adapters<br/><small>JSON, SQLite, Keyring, Agent</small>"]
         incident["Component<br/>IncidentVault<br/><small>lock-free ingress, isolated writer, recovery queries</small>"]
-        win["Component<br/>Windows Adapters<br/><small>overlay, target identity, hook, confirmation</small>"]
+        win["Component<br/>Windows Adapters<br/><small>overlay, TargetPort adapter, hook, confirmation</small>"]
     end
     helper["Sidecar Process<br/>zephyr-paste-helper<br/><small>snapshot, clipboard, target verify, SendInput, restore</small>"]
 
@@ -39,7 +39,7 @@ flowchart TB
     delivery -->|"history + hotword side effects after injection"| services
     services -->|"repository traits"| repos
     services -->|"native confirmation"| win
-    delivery -->|"early target validation"| win
+    delivery -->|"TargetPort: capture / exists / validate / activate"| win
     delivery -->|"versioned stdin / NDJSON receipt"| helper
     helper -->|"isolated Win32 transaction"| win
     streaming -->|"ASR provider built by ProviderService"| services
@@ -83,7 +83,9 @@ CPAL 录音以约 200ms chunk 写入容量 32 的有界队列。队列 Full 触�
 
 ### DeliveryService
 
-交付顺序固定为：文本验证 → 主进程早期目标复验 → `ClipboardTransactionService` 取得唯一异步事务锁 → sidecar 再次复验目标并提交 → 主进程按三态回执仲裁 → 仅 `Submitted` 提交历史 → 触发热词整理。首次交付与 Pending 重发共享同一事务 service；显式“复制文本”不取锁，sidecar 的 sequence、事务标记和指纹检查会把它识别为并发修改并跳过恢复。
+Windows 目标身份由 `WindowsTargetAdapter` 私有持有；共享 Voice、Delivery 和 Pending 只传递 `CapturedTarget` 及其平台中立 `TargetContext`。启动会话通过 `TargetPort::capture` 捕获目标；首次交付只调用 `validate_foreground`，Pending 重发按 `activate` → `validate_foreground` 顺序复验，列表可用性通过同一端口的 `exists` 动态计算。opaque payload 只在 Windows target/helper adapter 边界还原，不进入 DTO、数据库或共享工作流判断。
+
+交付顺序固定为：文本验证 → `TargetPort` 主进程早期目标复验 → `ClipboardTransactionService` 取得唯一异步事务锁 → sidecar 再次复验目标并提交 → 主进程按三态回执仲裁 → 仅 `Submitted` 提交历史 → 触发热词整理。首次交付与 Pending 重发共享同一事务 service；显式“复制文本”不取锁，sidecar 的 sequence、事务标记和指纹检查会把它识别为并发修改并跳过恢复。
 
 `zephyr-paste-helper` 通过版本化 stdin 单请求和 stdout NDJSON 运行，独占自动交付的 Win32 剪贴板与 `SendInput`。它只按值保存经验证的有界格式，使用当前用户 DPAPI 加密并原子替换事务快照；不支持格式在覆盖前失败关闭。主进程只拥有协议、3 秒预算、最后可信阶段仲裁、最多一次纯恢复 helper 和 `NotSubmitted | Submitted | Unknown` 提交语义。`PendingOutputService` 继续独占最多 5 条、TTL 10 分钟的内存队列；Unknown 必须由用户明确二次确认才可重发。
 
