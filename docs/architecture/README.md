@@ -10,7 +10,7 @@
 - **代码地图**：把当前组件 ID 映射到源码、Current 叙事、ADR，并将非规范性 Implementation Guide 单独分类，支持自动影响分析。
 - **测试与实机记录**：提供绑定版本、工作树和环境的验证证据。
 
-当前基线：Windows-only Tauri 2 桌面应用；前端为 Preact/Vite，核心语音链路为 Rust。现有 Current 视图绑定 2026-08-27 至 2026-08-28 的历史脏工作区快照，已统一标为 `reviewStatus=stale`；在收口者基于合并后的 clean revision 完成语义复核前，它们只能用于导航和提出核查问题，不能作为当前实现符合性证明。
+当前基线：Zephyr 是单仓 Tauri 2 桌面应用，前端为 Preact/Vite，核心语音链路为 Rust。Windows 是当前可用的产品路径；clean `0713398` 已加入 Apple Silicon macOS 的条件编译、最小 adapter、显式 Unsupported 和 `.app` CI，但应用内录音到结果复制尚未接通，也没有真实 Mac 用户路径证据。现有 Current C4 与 Runtime View 多数仍绑定 2026-08-27 至 2026-09-02 的历史快照并标为 `reviewStatus=stale`；它们只能用于导航和提出核查问题，不能覆盖源码事实或 [macOS Runnable Slice](../features/macos-runnable-slice.md) 的当前状态。
 
 ## 推荐阅读路径
 

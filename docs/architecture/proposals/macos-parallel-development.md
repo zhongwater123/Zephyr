@@ -21,9 +21,9 @@ Zephyr 可以继续使用同一个 Tauri、Rust 和 Preact 仓库开发 Windows 
 
 加入 macOS 也不要求先建设一个覆盖所有 OS 能力的统一大平台层。简单的窗口生命周期、菜单、默认值和构建差异可以保留局部平台分支；只有需要跨越共享业务边界的语义才形成窄契约。当前共享模型中的 HWND、Windows 扫描码、`.exe`、Ctrl+V、OLE 和 Windows Credential Manager 泄漏应在对应 macOS 能力接入时拆除，不能继续穿过共享 Voice、Processing 或 Delivery 边界。
 
-## 2. 已核对的当前实现事实
+## 2. 已核对的历史实现基线
 
-以下内容是截至 clean `main` revision `3d71d91` 的源码事实，不代表目标设计或 macOS 已开始实现：
+以下内容是截至 clean `main` revision `3d71d91` 的历史基线，用来解释本 Proposal 形成时的问题，不是持续更新的当前状态。实际实现进展与验证边界只在 [macOS Runnable Slice](../../features/macos-runnable-slice.md) 维护，避免 Proposal 同时充当计划、状态页和验收记录：
 
 - 共享 Voice、Delivery 和 Pending 已改持有 `CapturedTarget`；平台中立 `TargetContext` 只暴露应用 key、窗口标题、PID 和多行风险，opaque payload 不序列化、不持久化。`WindowsTargetAdapter` 私有持有 HWND、PID、进程创建时间、EXE 路径与标题，并通过 `TargetPort` 提供捕获、存在性检查、前台复验和激活；非 Windows adapter 明确返回 Unsupported。
 - 自动交付执行继续位于现有 `DeliveryExecutor`/`ClipboardTransactionService` 边界，但共享 Actor 仍把 `InjectionStrategy` 映射为 `DeliveryMode::Unicode` 或 `ClipboardPaste`。这是未来自动写回平台化需要处理的策略耦合，不是只展示并复制应用内结果的 Runnable Slice 前置条件。
@@ -289,7 +289,7 @@ macOS CI / 受控 Mac 构建机
 
 门禁：必须有真实 Mac 证据，只有 `cargo check`、前端构建或 Windows CI 不算跑通。反过来，缺少 Accessibility、浮层、自动 Cmd+V、Developer ID 或 DMG 不阻塞本阶段完成。
 
-当前 Phase A 的下一实现切片固定为“最小 macOS 适配器和显式 Unsupported 能力”：先完成 target-specific 依赖、macOS credential backend、平台专用 Tauri 配置、Windows-only 启动装配隔离和 Apple Silicon `.app` CI。应用内 `OutputRoute` 与 UI 结果路线随后独立接入；这两个切片都不得提前声称真实 Mac 已启动、授权或录音成功。
+Phase A 的实现顺序固定为两个可独立归因的切片：先建立 target-specific 依赖、macOS credential backend、平台专用 Tauri 配置、Windows-only 启动装配隔离和 Apple Silicon `.app` CI；随后接入应用内 `OutputRoute`、录音入口与结果路线。每个切片的完成情况以 Dossier 为准；任何 CI 构建都不得提前声称真实 Mac 已完成窗口、授权、录音或结果链路验收。
 
 ### Phase B：Mac Native Input Alpha（后续、按需拆分）
 

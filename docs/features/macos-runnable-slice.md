@@ -9,14 +9,20 @@
     "sourceRef": "Codex task: user clarified that the current macOS goal is a real runnable end-to-end slice, not exact Windows feature parity"
   },
   "specStatus": "confirmed",
-  "implementationStatus": "not_started",
+  "implementationStatus": "in_progress",
   "implementationReview": {
-    "status": "unreviewed",
-    "sourceRevision": "c9f9a6a0e19f3505b78398058263a54dd57ced8e",
+    "status": "partial",
+    "sourceRevision": "0713398be716a63fdc30dd3c2055375cefde0ec4",
     "worktreeState": "clean",
-    "reviewedAt": "2026-09-01",
-    "summary": "当前 clean main 仍是 Windows-only；尚未开始 macOS Runnable Slice 的实现复核。",
-    "knownDeviations": []
+    "reviewedAt": "2026-09-02",
+    "summary": "clean main 已建立 Apple Silicon 编译、最小平台适配、显式 Unsupported 和 .app CI 脊柱；应用内录音到结果复制的垂直切片尚未实现。",
+    "knownDeviations": [
+      "前端目前只公开 global_shortcut_supported 单一能力位，且配置状态读取失败时回退为 true；macOS 能力显示尚未完全失败关闭。",
+      "OutputRoute::InApp、UI 开始/结束/取消命令、最新结果、结果事件和复制动作尚未实现，AC-MACRUN-02 至 AC-MACRUN-04 尚无完整产品路径。",
+      "PhysicalKeyId 和 DeliveryRequest 仍保留 Windows scan code、Unicode/ClipboardPaste 等语义；这些休眠契约不得直接扩展为 macOS 原生能力。",
+      "MoreSettingsPanel 仍含 Windows 原生输入、SendInput、.exe 和自动投递文案，macOS 设置体验尚未按能力完整裁剪。",
+      "阶段二变更同时替换了已跟踪的 Windows paste-helper 二进制，但对应 helper 源码没有同批变化；Windows 打包门禁通过只证明构件可被打包，不证明该二进制的来源与必要性。"
+    ]
   },
   "validationStatus": "unverified",
   "components": [
@@ -29,18 +35,20 @@
     "backend.voice-controller",
     "backend.streaming",
     "backend.repositories",
+    "platform.macos-bootstrap",
+    "platform.windows",
     "external.asr"
   ],
   "decisions": ["ADR-0001", "ADR-0002", "ADR-0004", "ADR-0005", "ADR-0012"],
   "validationSlices": [
     {
       "id": "AC-MACRUN-01",
-      "components": ["system.zephyr", "frontend.shell", "backend.bootstrap"],
+      "components": ["system.zephyr", "frontend.shell", "backend.bootstrap", "platform.macos-bootstrap"],
       "requiredEvidence": ["automated", "runtime_hook"]
     },
     {
       "id": "AC-MACRUN-02",
-      "components": ["backend.bootstrap", "backend.voice-controller", "backend.streaming"],
+      "components": ["backend.bootstrap", "backend.voice-controller", "backend.streaming", "platform.macos-bootstrap"],
       "requiredEvidence": ["automated", "runtime_hook"]
     },
     {
@@ -55,11 +63,41 @@
     },
     {
       "id": "AC-MACRUN-05",
-      "components": ["system.zephyr", "backend.bootstrap", "backend.services", "backend.voice-controller", "backend.streaming"],
+      "components": ["system.zephyr", "backend.bootstrap", "backend.services", "backend.voice-controller", "backend.streaming", "platform.macos-bootstrap", "platform.windows"],
       "requiredEvidence": ["automated"]
     }
   ],
-  "evidence": [],
+  "evidence": [
+    {
+      "id": "EV-MACRUN-ARM64-CI-20260902",
+      "acceptanceIds": ["AC-MACRUN-01", "AC-MACRUN-05"],
+      "acceptanceCoverage": [
+        { "acceptanceId": "AC-MACRUN-01", "coverage": "partial" },
+        { "acceptanceId": "AC-MACRUN-05", "coverage": "partial" }
+      ],
+      "method": "automated",
+      "result": "pass",
+      "freshness": "current",
+      "capabilities": ["automated", "runtime_hook"],
+      "scope": "GitHub Actions run 33598614491 在 macos-15 Apple Silicon runner 上完成前端构建与测试、Rust format/clippy/library tests、ad-hoc .app 构建，并验证主程序为 arm64、Mach-O 与 Info.plist 最低版本均为 15.0、麦克风用途说明存在、包内无 paste-helper、codesign 校验通过；随后直接启动主程序并确认进程存活 8 秒。同期 PR fast 与 Full engineering checks 通过。",
+      "testRefs": [
+        ".github/workflows/ci.yml::macos-arm64",
+        ".github/workflows/ci.yml::macos-arm64/Verify app bundle",
+        ".github/workflows/ci.yml::pr-fast",
+        ".github/workflows/ci.yml::full-main"
+      ],
+      "limitations": [
+        "CI 直接启动可执行文件并观察进程存活，没有证明 Finder 启动、主窗口实际渲染或完整退出生命周期。",
+        "没有真实用户设备上的 TCC 麦克风授权、拒绝恢复、真实音频、ASR、Keychain、结果展示或复制证据。",
+        "产物仅为 ad-hoc 签名的 Apple Silicon .app，不是 Developer ID 签名、公证、DMG、Intel 或 Universal Binary 分发产物。"
+      ],
+      "sourceRevision": "0713398be716a63fdc30dd3c2055375cefde0ec4",
+      "worktreeState": "clean",
+      "buildId": "github-actions-33598614491",
+      "environment": "GitHub-hosted macos-15 Apple Silicon and windows-latest runners",
+      "validatedAt": "2026-09-02"
+    }
+  ],
   "impactAssessments": []
 }
 ---
@@ -143,6 +181,12 @@
 - 当前判断：ASR 首次联调可以沿用现有受控内部凭据模型，但必须在真实 Mac 上验证读取与网络链路。
 - 影响：如果 LLM 凭据或 Keychain 适配阻塞，只降级到 Fast transcript，不扩大本切片去解决公开分发凭据模型。
 
+### ASM-MACRUN-05：macOS 15.0 是 bring-up 基线
+
+- 状态：Confirmed
+- 结论：当前 Apple Silicon CI 和 `.app` 的最低系统版本固定为 macOS 15.0，用于收敛 MVP bring-up 环境；它不是最终公开的最低系统兼容承诺。
+- 影响：降低最低版本或扩大到 Intel/Universal Binary 必须有新的构建与实机证据，不能只修改 bundle 字段后宣称支持。
+
 ## 概念迭代记录
 
 ### CI-MACRUN-01：完整自动写回平台化不是 Runnable Slice 前置条件
@@ -151,10 +195,10 @@
 - 当前结论：Windows 自动交付已经通过现有 `DeliveryExecutor` 隔离执行机制，但共享工作流仍保留 `Unicode`、`ClipboardPaste` 等 Windows 风格策略。该语义耦合必须在 macOS 自动写回真正进入范围时处理；当前 Runnable Slice 通过应用内结果路线绕开目标捕获和自动交付，不先建设 `AutomaticTextDeliveryPort`。
 - 依据：`AC-MACRUN-04` 只要求结果在 Zephyr 内可见并可复制，且“明确不规定的实现”排除了自动 `Cmd+V`、剪贴板事务和跨应用写回。提前抽象尚无第二个平台实现反馈的自动交付策略会扩大当前 MVP，并增加错误抽象风险。
 
-### CI-MACRUN-02：下一实现阶段只建立最小 macOS 适配与 Unsupported 边界
+### CI-MACRUN-02：先建立最小 macOS 适配与 Unsupported 边界
 
 - 状态：Confirmed
-- 当前结论：下一阶段先处理 target-specific 依赖、macOS 可用的凭据 backend、Tauri macOS 配置、Windows-only 启动装配隔离、显式 Unsupported/Unavailable 适配器，以及 Apple Silicon CI 的编译、测试和 `.app` 打包。`OutputRoute::InApp`、UI 录音按钮、结果卡和麦克风权限生命周期在随后的垂直切片中实现。
+- 当前结论：Runnable Slice 先处理 target-specific 依赖、macOS 可用的凭据 backend、Tauri macOS 配置、Windows-only 启动装配隔离、显式 Unsupported/Unavailable 适配器，以及 Apple Silicon CI 的编译、测试和 `.app` 打包；再通过独立垂直切片实现 `OutputRoute::InApp`、UI 录音按钮、结果卡和麦克风权限生命周期。截至 clean `0713398`，前一切片已进入主干，后一切片尚未开始。
 - 依据：先让同一工程暴露真实 macOS 编译与启动阻塞，能够保持故障可归因；该阶段只证明构建脊柱成立，不替代 `AC-MACRUN-01` 至 `AC-MACRUN-04` 所需的真实 Mac 运行证据。
 
 ## 架构决策
@@ -165,7 +209,9 @@
 
 ## 当前实现入口
 
-- 应用装配与平台入口：`src-tauri/src/lib.rs`、`src-tauri/src/main.rs`、`src-tauri/src/platform.rs`
+- 应用装配与平台入口：`src-tauri/src/lib.rs`、`src-tauri/src/main.rs`、`src-tauri/src/platform.rs`、`src-tauri/src/platform/macos.rs`、`src-tauri/src/platform/windows.rs`
+- 平台能力与 Unsupported 契约：`src-tauri/src/desktop_support.rs`、`src-tauri/src/shortcut_runtime.rs`、`src-tauri/src/target_port.rs`、`src-tauri/src/inject.rs`
+- macOS 构建与打包：`src-tauri/tauri.macos.conf.json`、`src-tauri/Info.plist`、`.github/workflows/ci.yml`
 - 语音会话与触发：`src-tauri/src/voice_controller/`、`src-tauri/src/voice_trigger.rs`
 - 目标能力边界：`src-tauri/src/target_port.rs`、`src-tauri/src/windows_target.rs`
 - 麦克风与 ASR：`src-tauri/src/audio.rs`、`src-tauri/src/streaming_pipeline.rs`、`src-tauri/src/provider/`
@@ -174,12 +220,14 @@
 
 ## 验证状态
 
-- `implementationStatus=not_started`：截至记录 revision，产品仍按 Windows-only 装配，尚无可复核的 macOS Runnable Slice。
+- `implementationStatus=in_progress`、`implementationReview.status=partial`：截至 clean `0713398`，阶段二的 Apple Silicon 构建脊柱、平台条件编译、Apple Keychain backend、显式 Unsupported adapter 和 `.app` CI 已存在；应用内录音、共享链路接入、结果显示与复制尚未形成垂直切片。
 - `validationStatus=unverified`：没有真实 Mac 上绑定 clean revision 的构建、麦克风、ASR 和结果复制证据。
-- Windows 上的单元测试、CI 或既有功能证据不能替代本 Dossier 的 macOS 实机证据。
+- GitHub Actions run `33598614491` 是有价值的部分工程证据：它证明 arm64 `.app` 可以构建、包边界符合当前配置且原生进程能够短暂存活；它没有观察窗口渲染，也不能替代本 Dossier 的真实 Mac 用户路径证据。
+- 当前 `.app` 只能用于工程检查和后续实机 bring-up，不能表述为“macOS 内部可用版本”。
 - `3d71d91` 已在 clean `main` 将 Windows 目标捕获、存在性检查、前台复验和激活迁移到 `TargetPort`/`WindowsTargetAdapter`，共享 Voice、Delivery 和 Pending 只持有带平台中立 context 的 opaque `CapturedTarget`；GitHub Actions run `33538788062` 的 PR fast 与 Full engineering checks 均通过。该记录只证明跨平台准备边界和 Windows 自动化基线，不覆盖任何 `AC-MACRUN-*` 的真实 Mac 证据，因此不改变上述状态。
 
 ## 澄清历史
 
 - 2026-09-01：用户明确把当前目标从“首个 Mac Alpha 精确覆盖 Windows 原生体验和分发链路”收窄为“先在真实 Mac 上端到端跑通核心价值链”。原生快捷键、目标捕获、透明浮层、自动写回和公证 DMG 保留为后续里程碑，不再作为当前实现前置条件。
 - 2026-09-02：Windows 目标能力端口化以 `3d71d91` 进入 clean `main` 并通过对应 GitHub CI；用户确认下一步进入“macOS 所需的最小适配器和明确的 Unsupported 能力”，不把完整自动写回平台化提前为 Runnable Slice 前置条件。
+- 2026-09-02：clean `0713398` 已完成最小 macOS adapter 与 Apple Silicon `.app` CI 脊柱，并通过 run `33598614491` 的自动化；用户要求把阶段进展与不足写回文档系统。实现状态调整为 `in_progress/partial`，验证仍保持 `unverified`，下一产品切片是应用内录音到结果复制。
