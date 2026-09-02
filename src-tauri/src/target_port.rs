@@ -10,6 +10,9 @@ pub struct TargetContext {
     pub multiline_may_execute: bool,
 }
 
+// macOS target capture is explicitly unsupported in this phase, so the opaque
+// native payload boundary has no macOS constructor or downcast consumer yet.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 trait OpaqueTargetPayload: Any + Send + Sync + fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 }
@@ -26,10 +29,12 @@ where
 #[derive(Clone)]
 pub struct CapturedTarget {
     context: TargetContext,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     payload: Arc<dyn OpaqueTargetPayload>,
 }
 
 impl CapturedTarget {
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub(crate) fn new<T>(context: TargetContext, payload: T) -> Self
     where
         T: Any + Send + Sync + fmt::Debug,
@@ -40,6 +45,7 @@ impl CapturedTarget {
         }
     }
 
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub(crate) fn payload_as<T: Any>(&self) -> Option<&T> {
         self.payload.as_ref().as_any().downcast_ref()
     }

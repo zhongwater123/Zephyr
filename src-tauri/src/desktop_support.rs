@@ -7,6 +7,9 @@ pub enum DesktopCapability {
     GlobalShortcut,
     AutomaticTextDelivery,
     NativeConfirmation,
+    // The macOS bootstrap advertises this shared capability as unsupported;
+    // only the Windows assembly constructs the capability today.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     PreinputOverlay,
 }
 

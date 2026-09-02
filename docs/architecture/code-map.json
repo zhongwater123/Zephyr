@@ -327,7 +327,8 @@
       "source": [
         "src-tauri/src/voice_controller",
         "src-tauri/src/voice_trigger.rs",
-        "src-tauri/src/state.rs"
+        "src-tauri/src/state.rs",
+        "src-tauri/src/overlay.rs"
       ],
       "docs": [
         "docs/architecture/c4-components-backend.md",
@@ -555,7 +556,7 @@
       "kind": "platform-adapter",
       "source": [
         "src-tauri/src/platform/windows.rs",
-        "src-tauri/src/overlay.rs",
+        "src-tauri/src/overlay/window.rs",
         "src-tauri/src/windows_target.rs",
         "src-tauri/src/windows_keyboard.rs",
         "src-tauri/tauri.windows.conf.json",

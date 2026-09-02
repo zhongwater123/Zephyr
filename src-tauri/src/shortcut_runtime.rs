@@ -4,18 +4,27 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeyboardEngineEvent {
+    // Only the Windows hook emits physical press/release events in this phase.
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Pressed,
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     Released,
     Interrupted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum KeyboardEngineErrorKind {
+    #[cfg(target_os = "windows")]
     DispatchUnavailable,
+    #[cfg(target_os = "windows")]
     HookWorkerUnavailable,
+    #[cfg(target_os = "windows")]
     ReinstallRequestFailed,
+    #[cfg(target_os = "windows")]
     ReinstallTimeout,
+    #[cfg(target_os = "windows")]
     ReinstallFailed,
+    #[cfg(target_os = "windows")]
     GenerationSuperseded,
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     Unsupported,
