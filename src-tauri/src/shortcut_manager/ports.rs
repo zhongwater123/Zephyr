@@ -1,7 +1,9 @@
 use crate::config::AppConfig;
+#[cfg(target_os = "windows")]
 use crate::physical_shortcut::ShortcutBinding;
 use crate::services::{ConfigService, ConfigServiceError};
 pub(super) use crate::shortcut_runtime::ShortcutRuntimePort;
+#[cfg(target_os = "windows")]
 use crate::shortcut_runtime::{KeyboardEngineDiagnostics, KeyboardEngineError};
 #[cfg(target_os = "windows")]
 use crate::windows_keyboard::WindowsKeyboardEngine;

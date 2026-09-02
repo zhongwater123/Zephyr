@@ -170,11 +170,14 @@ pub fn run() {
             app.manage(pending);
             app.manage(shortcut_manager.clone());
             app.manage(voice_control.clone());
-            if voice_services
-                .support
-                .supports(desktop_support::DesktopCapability::PreinputOverlay)
+            #[cfg(target_os = "windows")]
             {
-                overlay::setup_preinput_window(app.handle())?;
+                if voice_services
+                    .support
+                    .supports(desktop_support::DesktopCapability::PreinputOverlay)
+                {
+                    overlay::setup_preinput_window(app.handle())?;
+                }
             }
             let show_voice_toggle = voice_services
                 .support

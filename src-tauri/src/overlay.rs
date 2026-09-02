@@ -1,17 +1,18 @@
 use serde::Serialize;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, Instant};
-use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
-};
+#[cfg(target_os = "windows")]
+use std::time::Duration;
+use std::time::Instant;
+use tauri::AppHandle;
+
+#[cfg(target_os = "windows")]
+mod window;
+
+#[cfg(target_os = "windows")]
+pub use window::setup_preinput_window;
 
 pub const PREINPUT_LABEL: &str = "preinput";
-const PREINPUT_SHOW_EVENT: &str = "preinput_show";
-const PREINPUT_UPDATE_EVENT: &str = "preinput_update";
-const PREINPUT_HIDE_EVENT: &str = "preinput_hide";
-const PREINPUT_WIDTH: f64 = 360.0;
-const PREINPUT_HEIGHT: f64 = 88.0;
+#[cfg(target_os = "windows")]
 const PREINPUT_EMIT_COALESCE_MS: u64 = 30;
 static PREINPUT_STORE: OnceLock<Mutex<PreInputStore>> = OnceLock::new();
 
@@ -47,38 +48,31 @@ pub enum PreInputState {
     Error,
 }
 
-pub fn setup_preinput_window(app: &AppHandle) -> tauri::Result<()> {
-    let window = ensure_preinput_window(app)?;
-    window.hide()?;
-    Ok(())
-}
-
+#[cfg(target_os = "windows")]
 pub fn show_preinput(app: &AppHandle, payload: PreInputPayload) {
-    let Ok(window) = ensure_preinput_window(app) else {
-        log::warn!("failed to create preinput overlay window");
-        return;
-    };
-
-    if let Some(position) = overlay_position(app) {
-        if let Err(error) = window.set_position(position) {
-            log::warn!("failed to position preinput overlay: {error}");
-        }
-    }
-
     let Some(payload) = store_preinput_payload(payload) else {
         return;
     };
-    if let Err(error) = window.show() {
-        log::warn!("failed to show preinput overlay: {error}");
+    if let Err(error) = window::show(app, &payload) {
+        log::warn!("failed to create preinput overlay window: {error}");
     }
-    emit_to_preinput(app, PREINPUT_SHOW_EVENT, &payload);
-    emit_to_preinput(app, PREINPUT_UPDATE_EVENT, &payload);
 }
 
+#[cfg(not(target_os = "windows"))]
+pub fn show_preinput(_app: &AppHandle, _payload: PreInputPayload) {
+    log::warn!("preinput overlay presentation is unsupported on this platform");
+}
+
+#[cfg(target_os = "windows")]
 pub fn update_preinput(app: &AppHandle, payload: PreInputPayload) {
     if let Some(payload) = store_preinput_payload(payload) {
         emit_update_coalesced(app, payload);
     }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn update_preinput(_app: &AppHandle, _payload: PreInputPayload) {
+    log::warn!("preinput overlay presentation is unsupported on this platform");
 }
 
 pub fn begin_preinput_session() -> u64 {
@@ -105,11 +99,14 @@ pub fn hide_preinput_for_session(app: &AppHandle, session_id: u64) {
     let Some(payload) = clear_current_preinput_payload(session_id) else {
         return;
     };
-    if let Some(window) = app.get_webview_window(PREINPUT_LABEL) {
-        emit_to_preinput(app, PREINPUT_HIDE_EVENT, &payload);
-        if let Err(error) = window.hide() {
-            log::warn!("failed to hide preinput overlay: {error}");
-        }
+    #[cfg(target_os = "windows")]
+    {
+        window::hide(app, &payload);
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, payload);
+        log::warn!("preinput overlay presentation is unsupported on this platform");
     }
 }
 
@@ -120,6 +117,7 @@ pub fn current_preinput_payload() -> Option<PreInputPayload> {
         .and_then(|store| store.current.clone())
 }
 
+#[cfg(target_os = "windows")]
 fn store_preinput_payload(mut payload: PreInputPayload) -> Option<PreInputPayload> {
     if let Ok(mut store) = preinput_store().lock() {
         if payload.session_id <= store.closed_session_id {
@@ -162,10 +160,11 @@ fn clear_current_preinput_payload(session_id: u64) -> Option<PreInputPayload> {
     None
 }
 
+#[cfg(target_os = "windows")]
 fn emit_update_coalesced(app: &AppHandle, payload: PreInputPayload) {
     let delay = {
         let Ok(mut store) = preinput_store().lock() else {
-            emit_to_preinput(app, PREINPUT_UPDATE_EVENT, &payload);
+            window::emit_update(app, &payload);
             return;
         };
 
@@ -173,7 +172,7 @@ fn emit_update_coalesced(app: &AppHandle, payload: PreInputPayload) {
             None => {
                 store.last_emit_at = Some(Instant::now());
                 drop(store);
-                emit_to_preinput(app, PREINPUT_UPDATE_EVENT, &payload);
+                window::emit_update(app, &payload);
                 return;
             }
             Some(last_emit_at)
@@ -182,7 +181,7 @@ fn emit_update_coalesced(app: &AppHandle, payload: PreInputPayload) {
                 store.last_emit_at = Some(Instant::now());
                 store.delayed_emit_scheduled = false;
                 drop(store);
-                emit_to_preinput(app, PREINPUT_UPDATE_EVENT, &payload);
+                window::emit_update(app, &payload);
                 return;
             }
             Some(last_emit_at) if !store.delayed_emit_scheduled => {
@@ -206,128 +205,13 @@ fn emit_update_coalesced(app: &AppHandle, payload: PreInputPayload) {
             store.current.clone()
         };
         if let Some(payload) = payload {
-            emit_to_preinput(&app, PREINPUT_UPDATE_EVENT, &payload);
+            window::emit_update(&app, &payload);
         }
     });
 }
 
 fn preinput_store() -> &'static Mutex<PreInputStore> {
     PREINPUT_STORE.get_or_init(|| Mutex::new(PreInputStore::default()))
-}
-
-fn ensure_preinput_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
-    if let Some(window) = app.get_webview_window(PREINPUT_LABEL) {
-        return Ok(window);
-    }
-
-    WebviewWindowBuilder::new(
-        app,
-        PREINPUT_LABEL,
-        WebviewUrl::App("index.html?window=preinput".into()),
-    )
-    .title("Zephyr Preview")
-    .inner_size(PREINPUT_WIDTH, PREINPUT_HEIGHT)
-    .resizable(false)
-    .decorations(false)
-    .transparent(true)
-    .shadow(false)
-    .always_on_top(true)
-    .skip_taskbar(true)
-    .focused(false)
-    .visible(false)
-    .build()
-}
-
-fn emit_to_preinput<T: Serialize + Clone>(app: &AppHandle, event: &str, payload: &T) {
-    if let Err(error) = app.emit_to(PREINPUT_LABEL, event, payload.clone()) {
-        log::warn!("failed to emit {event} to preinput overlay: {error}");
-    }
-}
-
-fn overlay_position(app: &AppHandle) -> Option<PhysicalPosition<i32>> {
-    bottom_center_position(app)
-}
-
-fn bottom_center_position(app: &AppHandle) -> Option<PhysicalPosition<i32>> {
-    let (x, y, width, height) = target_screen_rect(app).or_else(|| primary_screen_rect(app))?;
-
-    Some(PhysicalPosition::new(
-        x + ((width as f64 - PREINPUT_WIDTH) / 2.0).max(0.0) as i32,
-        y + (height as f64 * 0.72 - PREINPUT_HEIGHT / 2.0).max(0.0) as i32,
-    ))
-}
-
-fn primary_screen_rect(app: &AppHandle) -> Option<(i32, i32, u32, u32)> {
-    let monitor = app.primary_monitor().ok().flatten()?;
-    let PhysicalPosition { x, y } = monitor.position();
-    let PhysicalSize { width, height } = monitor.size();
-    Some((*x, *y, *width, *height))
-}
-
-#[cfg(target_os = "windows")]
-fn target_screen_rect(_app: &AppHandle) -> Option<(i32, i32, u32, u32)> {
-    foreground_monitor_rect().or_else(cursor_monitor_rect)
-}
-
-#[cfg(target_os = "windows")]
-fn foreground_monitor_rect() -> Option<(i32, i32, u32, u32)> {
-    use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITOR_DEFAULTTONEAREST};
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-
-    let foreground = unsafe { GetForegroundWindow() };
-    if foreground.0.is_null() {
-        return None;
-    }
-
-    let monitor = unsafe { MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST) };
-    monitor_rect(monitor)
-}
-
-#[cfg(target_os = "windows")]
-fn cursor_monitor_rect() -> Option<(i32, i32, u32, u32)> {
-    use windows::Win32::Foundation::POINT;
-    use windows::Win32::Graphics::Gdi::{MonitorFromPoint, MONITOR_DEFAULTTONEAREST};
-    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-
-    let mut point = POINT::default();
-    if unsafe { GetCursorPos(&mut point) }.is_err() {
-        return None;
-    }
-
-    let monitor = unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST) };
-    monitor_rect(monitor)
-}
-
-#[cfg(target_os = "windows")]
-fn monitor_rect(monitor: windows::Win32::Graphics::Gdi::HMONITOR) -> Option<(i32, i32, u32, u32)> {
-    use std::mem::size_of;
-    use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITORINFO};
-
-    if monitor.0.is_null() {
-        return None;
-    }
-
-    let mut info = MONITORINFO {
-        cbSize: size_of::<MONITORINFO>() as u32,
-        ..Default::default()
-    };
-
-    if !unsafe { GetMonitorInfoW(monitor, &mut info).as_bool() } {
-        return None;
-    }
-
-    let rect = info.rcMonitor;
-    let width = rect.right.saturating_sub(rect.left);
-    let height = rect.bottom.saturating_sub(rect.top);
-    if width <= 0 || height <= 0 {
-        return None;
-    }
-    Some((rect.left, rect.top, width as u32, height as u32))
-}
-
-#[cfg(not(target_os = "windows"))]
-fn target_screen_rect(_app: &AppHandle) -> Option<(i32, i32, u32, u32)> {
-    None
 }
 
 #[cfg(test)]
