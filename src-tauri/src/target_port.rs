@@ -66,29 +66,6 @@ pub trait TargetPort: Send + Sync {
     fn activate(&self, target: &CapturedTarget) -> Result<(), String>;
 }
 
-#[cfg(not(target_os = "windows"))]
-#[derive(Debug, Default)]
-pub struct UnsupportedTargetPort;
-
-#[cfg(not(target_os = "windows"))]
-impl TargetPort for UnsupportedTargetPort {
-    fn capture(&self) -> Result<CapturedTarget, String> {
-        Err("目标窗口身份仅支持 Windows".to_string())
-    }
-
-    fn exists(&self, _target: &CapturedTarget) -> Result<(), String> {
-        Err("目标窗口身份仅支持 Windows".to_string())
-    }
-
-    fn validate_foreground(&self, _target: &CapturedTarget) -> Result<(), String> {
-        Err("目标窗口身份仅支持 Windows".to_string())
-    }
-
-    fn activate(&self, _target: &CapturedTarget) -> Result<(), String> {
-        Err("目标窗口身份仅支持 Windows".to_string())
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;

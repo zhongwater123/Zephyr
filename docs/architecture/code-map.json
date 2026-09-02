@@ -220,6 +220,7 @@
       "source": [
         "src-tauri/src/lib.rs",
         "src-tauri/src/runtime_metrics.rs",
+        "src-tauri/src/platform.rs",
         "src-tauri/src/platform/tray.rs",
         "src-tauri/tauri.conf.json",
         "src-tauri/src/main.rs"
@@ -287,6 +288,7 @@
       "source": [
         "src-tauri/src/services.rs",
         "src-tauri/src/voice_input_service.rs",
+        "src-tauri/src/desktop_support.rs",
         "src-tauri/src/text_processing"
       ],
       "docs": [
@@ -448,7 +450,9 @@
       "source": [
         "src-tauri/src/physical_shortcut.rs",
         "src-tauri/src/shortcut_manager",
-        "src-tauri/src/windows_keyboard.rs"
+        "src-tauri/src/shortcut_runtime.rs",
+        "src-tauri/src/windows_keyboard.rs",
+        "src-tauri/src/windows_shortcut_mapping.rs"
       ],
       "docs": [
         "docs/architecture/c4-components-backend.md",
@@ -550,12 +554,11 @@
       "name": "Windows adapters",
       "kind": "platform-adapter",
       "source": [
-        "src-tauri/src/platform.rs",
-        "src-tauri/src/platform",
+        "src-tauri/src/platform/windows.rs",
         "src-tauri/src/overlay.rs",
         "src-tauri/src/windows_target.rs",
-        "src-tauri/src/inject.rs",
         "src-tauri/src/windows_keyboard.rs",
+        "src-tauri/tauri.windows.conf.json",
         "src-tauri/crates/zephyr-paste-helper",
         "scripts/build-paste-helper.mjs"
       ],
@@ -580,6 +583,33 @@
         "zephyr-paste-helper stdin/NDJSON protocol",
         "owned clipboard snapshot and restore boundary",
         "tray and overlay window adapters"
+      ]
+    },
+    {
+      "id": "platform.macos-bootstrap",
+      "name": "macOS bootstrap adapters",
+      "kind": "platform-adapter",
+      "source": [
+        "src-tauri/src/platform/macos.rs",
+        "src-tauri/tauri.macos.conf.json",
+        "src-tauri/Info.plist"
+      ],
+      "docs": [
+        "docs/architecture/code-map.md"
+      ],
+      "adrs": [
+        "docs/architecture/adr/0001-tauri-local-desktop-boundary.md"
+      ],
+      "changeTriggers": [
+        "macOS 凭据、Unsupported 能力、目标/投递空适配器或 app bundle 配置变化"
+      ],
+      "owner": "core-maintainers",
+      "status": "active",
+      "dependsOn": [],
+      "publicContracts": [
+        "Apple Keychain credential backend",
+        "explicit unsupported_platform capability error",
+        "macOS app-only internal bundle contract"
       ]
     },
     {

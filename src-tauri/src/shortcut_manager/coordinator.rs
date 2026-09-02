@@ -136,7 +136,7 @@ impl EditCoordinator {
                 ));
             }
         };
-        engine.set_enabled(false);
+        engine.set_enabled(false)?;
         let edit_id = {
             let mut state = self.state.lock().map_err(|error| error.to_string())?;
             state.next_edit_id = state.next_edit_id.saturating_add(1).max(1);

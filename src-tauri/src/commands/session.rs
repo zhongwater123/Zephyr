@@ -1,6 +1,8 @@
 use crate::command_error::{self, CommandError, CommandResult};
+use crate::desktop_support::DesktopCapability;
 use crate::overlay;
 use crate::pending_output_service::{PendingOutputService, PendingOutputServiceError};
+use crate::services::AppServices;
 use crate::state::VoiceStatePayload;
 use crate::voice_controller::SessionMetrics;
 use crate::voice_controller::VoiceSessionHandle;
@@ -99,8 +101,12 @@ pub async fn deliver_pending_output(
     confirm_uncertain: Option<bool>,
     window: WebviewWindow,
     voice: State<'_, VoiceSessionHandle>,
+    services: State<'_, AppServices>,
 ) -> CommandResult<()> {
     command_error::require_window(&window, "main")?;
+    services
+        .support
+        .require(DesktopCapability::AutomaticTextDelivery)?;
     voice
         .deliver_pending(id, confirm_uncertain.unwrap_or(false))
         .await

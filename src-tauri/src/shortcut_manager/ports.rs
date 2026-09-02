@@ -1,9 +1,10 @@
 use crate::config::AppConfig;
 use crate::physical_shortcut::ShortcutBinding;
 use crate::services::{ConfigService, ConfigServiceError};
-use crate::windows_keyboard::{
-    KeyboardEngineDiagnostics, KeyboardEngineError, WindowsKeyboardEngine,
-};
+pub(super) use crate::shortcut_runtime::ShortcutRuntimePort;
+use crate::shortcut_runtime::{KeyboardEngineDiagnostics, KeyboardEngineError};
+#[cfg(target_os = "windows")]
+use crate::windows_keyboard::WindowsKeyboardEngine;
 
 use super::contract::ShortcutEditOutcome;
 
@@ -43,22 +44,19 @@ impl ShortcutConfigPort for ConfigService {
     }
 }
 
-pub(super) trait ShortcutRuntimePort: Send + Sync {
-    fn set_binding(&self, binding: Option<&ShortcutBinding>) -> Result<(), String>;
-    fn set_enabled(&self, enabled: bool);
-    fn ensure_runtime_ready(&self, force_reinstall: bool) -> Result<u64, KeyboardEngineError>;
-    fn is_healthy(&self) -> bool;
-    fn diagnostics(&self) -> KeyboardEngineDiagnostics;
-    fn shutdown(&self);
-}
-
+#[cfg(target_os = "windows")]
 impl ShortcutRuntimePort for WindowsKeyboardEngine {
+    fn startup_error(&self) -> Option<String> {
+        WindowsKeyboardEngine::startup_error(self)
+    }
+
     fn set_binding(&self, binding: Option<&ShortcutBinding>) -> Result<(), String> {
         WindowsKeyboardEngine::set_binding(self, binding)
     }
 
-    fn set_enabled(&self, enabled: bool) {
+    fn set_enabled(&self, enabled: bool) -> Result<(), String> {
         WindowsKeyboardEngine::set_enabled(self, enabled);
+        Ok(())
     }
 
     fn ensure_runtime_ready(&self, force_reinstall: bool) -> Result<u64, KeyboardEngineError> {

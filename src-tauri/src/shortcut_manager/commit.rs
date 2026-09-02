@@ -157,7 +157,9 @@ impl EditCoordinator {
             if let Err(error) = engine.ensure_runtime_ready(false) {
                 return self.fail_commit(&attempt, HOOK_UNAVAILABLE, &error.message);
             }
-            engine.set_enabled(true);
+            if let Err(message) = engine.set_enabled(true) {
+                return self.fail_commit(&attempt, HOOK_UNAVAILABLE, &message);
+            }
         }
         self.finish_edit_success();
         let outcome = self.outcome_for(
@@ -256,7 +258,13 @@ impl EditCoordinator {
         engine: &Arc<dyn ShortcutRuntimePort>,
         binding: &ShortcutBinding,
     ) -> Result<(), Box<ShortcutEditOutcome>> {
-        engine.set_enabled(false);
+        if let Err(message) = engine.set_enabled(false) {
+            return Err(Box::new(self.fail_commit(
+                attempt,
+                HOOK_UNAVAILABLE,
+                &message,
+            )));
+        }
         if let Err(message) = engine.set_binding(Some(binding)) {
             return Err(Box::new(self.fail_commit(
                 attempt,
@@ -264,7 +272,13 @@ impl EditCoordinator {
                 &message,
             )));
         }
-        engine.set_enabled(attempt.current.enabled);
+        if let Err(message) = engine.set_enabled(attempt.current.enabled) {
+            return Err(Box::new(self.fail_commit(
+                attempt,
+                HOOK_UNAVAILABLE,
+                &message,
+            )));
+        }
         self.log_engine(
             "runtime_binding_applied",
             &attempt.trace_id,

@@ -132,7 +132,7 @@ export function ShortcutCaptureField({
           view.isCapturing
             ? "正在录入快捷键，再次点击或按 Escape 取消"
             : disabled
-              ? "本次语音结束后才可以修改快捷键"
+              ? disabledReason || "当前不可修改快捷键"
             : view.committing
               ? "正在应用快捷键"
               : TEXT.currentLabel + " " + view.activeLabel + "，" + TEXT.resetLabel

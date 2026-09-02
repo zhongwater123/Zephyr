@@ -17,12 +17,12 @@ use ports::{ShortcutObserverPort, ShortcutRuntimePort};
 
 use crate::config::ShortcutTriggerMode;
 use crate::services::{AppServices, ConfigService};
+use crate::shortcut_runtime::{KeyboardEngineEvent, ShortcutRuntimeFactory};
 use crate::voice_controller::VoiceSessionHandle;
 use crate::voice_trigger::{
     ActivationId, BeginDecision, BeginReceipt, TriggerBehavior, VoiceActivation, VoiceCancelReason,
     VoiceTriggerPort,
 };
-use crate::windows_keyboard::{KeyboardEngineEvent, WindowsKeyboardEngine};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use tauri::{AppHandle, Emitter};
 
@@ -139,16 +139,17 @@ impl ShortcutManager {
         app: &mut tauri::App,
         services: AppServices,
         voice: VoiceSessionHandle,
+        runtime_factory: Arc<dyn ShortcutRuntimeFactory>,
     ) -> tauri::Result<Arc<Self>> {
         let config = services.config.snapshot();
         let binding = config.shortcut_binding.clone();
         let weak_slot: Arc<OnceLock<Weak<ShortcutManager>>> = Arc::new(OnceLock::new());
         let callback_slot = weak_slot.clone();
-        let engine_result = WindowsKeyboardEngine::start(move |event| {
+        let engine_result = runtime_factory.start(Box::new(move |event| {
             if let Some(manager) = callback_slot.get().and_then(Weak::upgrade) {
                 manager.handle_engine_event(event);
             }
-        });
+        }));
         let (engine, initial_error): (Option<Arc<dyn ShortcutRuntimePort>>, Option<String>) =
             match engine_result {
                 Ok(engine) => {
@@ -156,7 +157,7 @@ impl ShortcutManager {
                     let binding_error = binding
                         .is_none()
                         .then(|| "旧快捷键无法映射为物理键，请重新设置。".to_string());
-                    (Some(Arc::new(engine)), hook_error.or(binding_error))
+                    (Some(engine), hook_error.or(binding_error))
                 }
                 Err(error) => (None, Some(error)),
             };

@@ -227,6 +227,7 @@ export function AppShell() {
         provider_ready: false,
         provider_message: commandErrorMessage(error),
         recovery_warning: null,
+        global_shortcut_supported: true,
       });
     }
   }

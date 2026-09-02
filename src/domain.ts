@@ -75,6 +75,7 @@ export type ConfigStatus = {
   provider_ready: boolean;
   provider_message: string;
   recovery_warning?: string | null;
+  global_shortcut_supported: boolean;
 };
 
 export type PendingOutput = {
@@ -314,4 +315,5 @@ export const defaultConfigStatus: ConfigStatus = {
   provider_ready: false,
   provider_message: "正在检查识别服务。",
   recovery_warning: null,
+  global_shortcut_supported: true,
 };

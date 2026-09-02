@@ -11,10 +11,10 @@ impl EditCoordinator {
         if let Ok(engine) = self.engine_handle() {
             if let Err(error) = engine.set_binding(config.shortcut_binding.as_ref()) {
                 self.set_runtime_error(Some(error));
-            } else {
-                engine.set_enabled(
-                    config.enabled && config.shortcut_binding.is_some() && initial_error.is_none(),
-                );
+            } else if let Err(error) = engine.set_enabled(
+                config.enabled && config.shortcut_binding.is_some() && initial_error.is_none(),
+            ) {
+                self.set_runtime_error(Some(error));
             }
         }
         self.publish_current_runtime_error();

@@ -52,7 +52,7 @@ pub trait CredentialStore: Send + Sync {
 }
 
 #[derive(Debug, Default)]
-pub struct WindowsCredentialStore;
+pub struct SystemCredentialStore;
 
 fn deployment_asr_api_key() -> Option<String> {
     option_env!("GY_TYPING_ASR_API_KEY")
@@ -76,7 +76,7 @@ fn deployment_deepseek_api_key() -> Option<String> {
         })
 }
 
-impl CredentialStore for WindowsCredentialStore {
+impl CredentialStore for SystemCredentialStore {
     fn load_api_key(&self) -> Result<Option<String>, ConfigError> {
         match deployment_asr_api_key() {
             Some(api_key) => Ok(Some(api_key)),

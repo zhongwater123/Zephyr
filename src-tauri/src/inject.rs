@@ -21,6 +21,12 @@ pub enum InjectError {
     ClipboardSnapshotUnsupported(String),
     #[error("delivery target changed: {0}")]
     TargetChanged(String),
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[error("unsupported desktop capability {capability}: {message}")]
+    UnsupportedCapability {
+        capability: &'static str,
+        message: String,
+    },
     #[error("delivery worker failed: {0}")]
     Worker(String),
 }

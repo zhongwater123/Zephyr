@@ -1,8 +1,18 @@
-use crate::command_error::{CommandError, CommandResult};
+use crate::command_error::CommandResult;
 use crate::config::EndpointPurpose;
-use tauri::WebviewWindow;
+use crate::desktop_support::DesktopSupportPolicy;
+use crate::inject::DeliveryExecutor;
+use crate::shortcut_runtime::ShortcutRuntimeFactory;
+use crate::target_port::TargetPort;
+use std::sync::Arc;
+use tauri::{AppHandle, WebviewWindow};
 
 pub mod tray;
+
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "windows")]
+mod windows;
 
 pub trait NativeConfirmation: Send + Sync {
     fn authorize_endpoint(
@@ -19,94 +29,35 @@ pub trait NativeConfirmation: Send + Sync {
     ) -> CommandResult<bool>;
 }
 
-#[derive(Debug, Default)]
-pub struct WindowsNativeConfirmation;
-
-#[cfg(target_os = "windows")]
-fn message_box(window: &WebviewWindow, title: &str, message: &str) -> CommandResult<bool> {
-    use std::os::windows::ffi::OsStrExt;
-    use windows::core::PCWSTR;
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_YESNO,
-    };
-
-    let message_wide: Vec<u16> = std::ffi::OsStr::new(message)
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    let title_wide: Vec<u16> = std::ffi::OsStr::new(title)
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
-    let raw_parent = window
-        .hwnd()
-        .map_err(|error| CommandError::new("native_dialog_failed", error.to_string()))?;
-    let result = unsafe {
-        MessageBoxW(
-            HWND(raw_parent.0 as *mut _),
-            PCWSTR(message_wide.as_ptr()),
-            PCWSTR(title_wide.as_ptr()),
-            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
-        )
-    };
-    Ok(result == IDYES)
+pub struct PlatformServiceAdapters {
+    pub support: DesktopSupportPolicy,
+    pub confirmations: Arc<dyn NativeConfirmation>,
 }
 
-impl NativeConfirmation for WindowsNativeConfirmation {
-    fn authorize_endpoint(
-        &self,
-        window: &WebviewWindow,
-        origin: &str,
-        purpose: &EndpointPurpose,
-    ) -> CommandResult<bool> {
-        #[cfg(target_os = "windows")]
-        {
-            let purpose_label = match purpose {
-                EndpointPurpose::Asr => "语音识别",
-                EndpointPurpose::HotwordAgent => "热词整理 Agent",
-                EndpointPurpose::TextProcessing => "智能成稿处理",
-            };
-            message_box(
-                window,
-                "授权新的凭据接收主机",
-                &format!(
-                    "Zephyr 即将向以下新主机发送 {purpose_label} 凭据：\n\n{origin}\n\n该主机可能读取并使用你的密钥。是否授权？"
-                ),
-            )
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            let _ = (window, origin, purpose);
-            Err(CommandError::new(
-                "native_dialog_unavailable",
-                "endpoint 授权仅支持 Windows 原生确认框",
-            ))
-        }
-    }
+pub struct PlatformRuntimeAdapters {
+    pub targets: Arc<dyn TargetPort>,
+    pub delivery: Arc<dyn DeliveryExecutor>,
+    pub shortcut: Arc<dyn ShortcutRuntimeFactory>,
+}
 
-    fn enable_clipboard_compatibility(
-        &self,
-        window: &WebviewWindow,
-        executable_name: &str,
-    ) -> CommandResult<bool> {
-        #[cfg(target_os = "windows")]
-        {
-            message_box(
-                window,
-                "剪贴板兼容模式风险确认",
-                &format!(
-                    "是否为 {executable_name} 启用剪贴板兼容模式？\n\n该模式只会在隔离辅助进程能够安全保存剪贴板并复验原目标时启用；否则结果进入待处理区。"
-                ),
-            )
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            let _ = (window, executable_name);
-            Err(CommandError::new(
-                "native_dialog_unavailable",
-                "剪贴板兼容模式仅支持 Windows 原生确认框",
-            ))
-        }
+pub fn service_adapters() -> PlatformServiceAdapters {
+    #[cfg(target_os = "windows")]
+    {
+        windows::service_adapters()
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::service_adapters()
+    }
+}
+
+pub fn runtime_adapters(app: &AppHandle) -> PlatformRuntimeAdapters {
+    #[cfg(target_os = "windows")]
+    {
+        windows::runtime_adapters(app)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        macos::runtime_adapters(app)
     }
 }

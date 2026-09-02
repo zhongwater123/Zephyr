@@ -1,5 +1,6 @@
 use crate::config::{AppConfig, ConfigError, ConfigRecovery, CredentialUpdates, LoadedConfig};
-use crate::platform::{NativeConfirmation, WindowsNativeConfirmation};
+use crate::desktop_support::DesktopSupportPolicy;
+use crate::platform::NativeConfirmation;
 use crate::provider::{
     StreamingTranscriptionProvider, UnavailableProvider, VolcengineAdapter, VolcengineAuth,
     VolcengineAuthMode, VolcengineRuntimeProfile,
@@ -10,7 +11,7 @@ use crate::provider_model::{
 use crate::repositories::{
     ConfigRepository, CredentialStore, DeepSeekHotwordAgentClient, HistoryRepository,
     HotwordAgentClient, HotwordRepository, JsonConfigRepository, SqliteStore,
-    WindowsCredentialStore,
+    SystemCredentialStore,
 };
 use crate::text_processing::{DeepSeekTextProcessor, PromptRepository, TextProcessor};
 use std::sync::{Arc, Mutex, RwLock};
@@ -118,6 +119,7 @@ pub struct AppServices {
     pub hotword_agent: Arc<dyn HotwordAgentClient>,
     pub provider: Arc<ProviderService>,
     pub confirmations: Arc<dyn NativeConfirmation>,
+    pub support: DesktopSupportPolicy,
     pub incidents: Arc<crate::incident::IncidentService>,
     pub text_processor: Arc<dyn TextProcessor>,
     pub prompt_repository: Arc<PromptRepository>,
@@ -204,7 +206,8 @@ impl AppServices {
     }
 
     pub fn production(loaded: LoadedConfig) -> Result<Self, ConfigError> {
-        let credentials: Arc<dyn CredentialStore> = Arc::new(WindowsCredentialStore);
+        let platform = crate::platform::service_adapters();
+        let credentials: Arc<dyn CredentialStore> = Arc::new(SystemCredentialStore);
         let provider = Arc::new(ProviderService::new(credentials.clone()));
         let repository: Arc<dyn ConfigRepository> = Arc::new(JsonConfigRepository::production()?);
         let loaded = repository.load().unwrap_or(loaded);
@@ -226,7 +229,8 @@ impl AppServices {
             hotwords: sqlite,
             hotword_agent: Arc::new(DeepSeekHotwordAgentClient::new(credentials)),
             provider,
-            confirmations: Arc::new(WindowsNativeConfirmation),
+            confirmations: platform.confirmations,
+            support: platform.support,
             incidents: Arc::new(crate::incident::IncidentService::production()),
             text_processor,
             prompt_repository,

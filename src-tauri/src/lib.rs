@@ -1,15 +1,18 @@
 mod audio;
+#[cfg(target_os = "windows")]
 mod clipboard_transaction;
 mod command_error;
 mod commands;
 mod config;
 mod delivery;
+mod desktop_support;
 mod history;
 mod hotwords;
 mod incident;
 mod inject;
 mod overlay;
 mod pending_output_service;
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 mod physical_shortcut;
 mod platform;
 mod preview;
@@ -19,6 +22,7 @@ mod repositories;
 mod runtime_metrics;
 mod services;
 mod shortcut_manager;
+mod shortcut_runtime;
 mod state;
 mod streaming_pipeline;
 mod target;
@@ -27,7 +31,10 @@ mod text_processing;
 mod voice_controller;
 mod voice_input_service;
 mod voice_trigger;
+#[cfg(target_os = "windows")]
 mod windows_keyboard;
+#[cfg(target_os = "windows")]
+mod windows_shortcut_mapping;
 #[cfg(target_os = "windows")]
 mod windows_target;
 
@@ -126,22 +133,21 @@ pub fn run() {
             commands::provider::test_provider
         ])
         .setup(move |app| {
-            #[cfg(target_os = "windows")]
-            let targets: Arc<dyn target_port::TargetPort> =
-                Arc::new(windows_target::WindowsTargetAdapter);
-            #[cfg(not(target_os = "windows"))]
-            let targets: Arc<dyn target_port::TargetPort> =
-                Arc::new(target_port::UnsupportedTargetPort);
+            let platform_runtime = platform::runtime_adapters(app.handle());
+            let targets = platform_runtime.targets;
             let pending = Arc::new(pending_output_service::PendingOutputService::new(
                 targets.clone(),
             ));
-            let delivery_executor: Arc<dyn inject::DeliveryExecutor> = Arc::new(
-                clipboard_transaction::ClipboardTransactionService::new(app.handle().clone()),
-            );
+            let delivery_executor = platform_runtime.delivery;
+            let shortcut_runtime = platform_runtime.shortcut;
             let initial_config = voice_services.config.snapshot();
+            let initial_enabled = initial_config.enabled
+                && voice_services
+                    .support
+                    .supports(desktop_support::DesktopCapability::GlobalShortcut);
             let voice = voice_controller::VoiceSessionHandle::spawn(
                 app.handle().clone(),
-                initial_config.enabled,
+                initial_enabled,
                 initial_config.revision,
                 voice_services.clone(),
                 pending.clone(),
@@ -152,18 +158,28 @@ pub fn run() {
                 app,
                 voice_services.clone(),
                 voice.clone(),
+                shortcut_runtime,
             )?;
             let voice_control = voice_input_service::VoiceControlService::new(
                 voice_services.config.clone(),
                 voice.clone(),
                 shortcut_manager.clone(),
+                voice_services.support.clone(),
             );
             app.manage(voice);
             app.manage(pending);
             app.manage(shortcut_manager.clone());
             app.manage(voice_control.clone());
-            overlay::setup_preinput_window(app.handle())?;
-            platform::tray::setup(app.handle(), voice_control)?;
+            if voice_services
+                .support
+                .supports(desktop_support::DesktopCapability::PreinputOverlay)
+            {
+                overlay::setup_preinput_window(app.handle())?;
+            }
+            let show_voice_toggle = voice_services
+                .support
+                .supports(desktop_support::DesktopCapability::GlobalShortcut);
+            platform::tray::setup(app.handle(), voice_control, show_voice_toggle)?;
             Ok(())
         })
         .build(tauri::generate_context!())

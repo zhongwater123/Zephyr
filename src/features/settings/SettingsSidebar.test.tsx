@@ -51,6 +51,7 @@ type TriggerModeHandler = (mode: ShortcutTriggerMode) => void;
 
 function renderSidebar(overrides: {
   providerReady?: boolean;
+  globalShortcutSupported?: boolean;
   voiceState?: VoiceState;
   triggerMode?: ShortcutTriggerMode;
   polishLevel?: PolishLevel;
@@ -76,6 +77,7 @@ function renderSidebar(overrides: {
       configStatus={{
         provider_ready: overrides.providerReady ?? true,
         provider_message: overrides.providerReady === false ? "offline" : "ok",
+        global_shortcut_supported: overrides.globalShortcutSupported ?? true,
       }}
       voiceStatus={{
         state: overrides.voiceState ?? "Idle",
@@ -139,6 +141,17 @@ describe("SettingsSidebar", () => {
   it("shows service unavailable ahead of transient runtime state", () => {
     renderSidebar({ providerReady: false, voiceState: "Recording" });
     expect(screen.getByText("服务不可用")).toBeTruthy();
+  });
+
+  it("shows an explicit unavailable state when global shortcuts are unsupported", () => {
+    renderSidebar({ globalShortcutSupported: false });
+
+    expect(screen.getByText("当前平台暂不可用")).toBeTruthy();
+    expect(screen.getByText("macOS 暂不支持全局快捷键语音输入")).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /语音输入/ })).toHaveProperty("checked", false);
+    expect(screen.getByRole("checkbox", { name: /语音输入/ })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: /macOS 暂不支持全局快捷键/ })).toHaveProperty("disabled", true);
+    expect(screen.getByText("macOS 暂不支持全局快捷键。")).toBeTruthy();
   });
 
   it("offers accessible mutually exclusive trigger modes", () => {

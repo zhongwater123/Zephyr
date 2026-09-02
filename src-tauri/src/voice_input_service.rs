@@ -1,4 +1,5 @@
 use crate::config::{self, AppConfig, InjectionStrategy};
+use crate::desktop_support::{DesktopCapability, DesktopSupportPolicy};
 use crate::services::{ConfigService, ConfigServiceError};
 use crate::shortcut_manager::ShortcutManager;
 use crate::voice_controller::{VoiceAvailability, VoiceSessionHandle};
@@ -8,6 +9,7 @@ use std::sync::Arc;
 pub enum VoiceControlServiceError {
     Config(ConfigServiceError),
     NativeConfirmationRequired,
+    Unsupported(DesktopCapability),
     Reconciliation {
         committed_revision: u64,
         message: String,
@@ -25,6 +27,7 @@ pub struct VoiceControlService {
     config: Arc<ConfigService>,
     voice: VoiceSessionHandle,
     shortcut: Arc<ShortcutManager>,
+    support: DesktopSupportPolicy,
 }
 
 impl VoiceControlService {
@@ -32,11 +35,13 @@ impl VoiceControlService {
         config: Arc<ConfigService>,
         voice: VoiceSessionHandle,
         shortcut: Arc<ShortcutManager>,
+        support: DesktopSupportPolicy,
     ) -> Self {
         Self {
             config,
             voice,
             shortcut,
+            support,
         }
     }
 
@@ -48,6 +53,9 @@ impl VoiceControlService {
         let current = self.config.snapshot();
         if current.revision != expected_revision {
             return Err(ConfigServiceError::Conflict(Box::new(current)).into());
+        }
+        if let Some(capability) = required_capability_for_config_change(&current, &next) {
+            self.require(capability)?;
         }
         if introduces_clipboard_compatibility(&current, &next) {
             return Err(VoiceControlServiceError::NativeConfirmationRequired);
@@ -73,6 +81,9 @@ impl VoiceControlService {
         enabled: bool,
         expected_revision: u64,
     ) -> Result<u64, VoiceControlServiceError> {
+        if enabled {
+            self.require(DesktopCapability::GlobalShortcut)?;
+        }
         let mut next = self.config.snapshot();
         if next.revision != expected_revision {
             return Err(ConfigServiceError::Conflict(Box::new(next)).into());
@@ -86,6 +97,14 @@ impl VoiceControlService {
         Ok(revision)
     }
 
+    fn require(&self, capability: DesktopCapability) -> Result<(), VoiceControlServiceError> {
+        if self.support.supports(capability) {
+            Ok(())
+        } else {
+            Err(VoiceControlServiceError::Unsupported(capability))
+        }
+    }
+
     pub async fn toggle_from_current(&self) -> Result<u64, VoiceControlServiceError> {
         let current = self.config.snapshot();
         self.set_enabled(!current.enabled, current.revision).await
@@ -96,15 +115,16 @@ impl VoiceControlService {
         enabled: bool,
         committed_revision: u64,
     ) -> Result<(), VoiceControlServiceError> {
+        let effective_enabled = effective_voice_enabled(&self.support, enabled);
         let snapshot = self
             .voice
-            .set_availability(enabled, committed_revision)
+            .set_availability(effective_enabled, committed_revision)
             .await
             .map_err(|error| VoiceControlServiceError::Reconciliation {
                 committed_revision,
                 message: format!("{error:?}"),
             })?;
-        let expected = if enabled {
+        let expected = if effective_enabled {
             VoiceAvailability::Available
         } else {
             VoiceAvailability::Disabled
@@ -118,13 +138,30 @@ impl VoiceControlService {
                 ),
             });
         }
-        if let Err(message) = self.shortcut.set_enabled(enabled) {
+        if let Err(message) = self.shortcut.set_enabled(effective_enabled) {
             log::warn!(
                 "voice desired state committed at revision {committed_revision}, but shortcut health is degraded: {message}"
             );
         }
         Ok(())
     }
+}
+
+fn required_capability_for_config_change(
+    current: &AppConfig,
+    next: &AppConfig,
+) -> Option<DesktopCapability> {
+    if !current.enabled && next.enabled {
+        Some(DesktopCapability::GlobalShortcut)
+    } else if introduces_clipboard_compatibility(current, next) {
+        Some(DesktopCapability::AutomaticTextDelivery)
+    } else {
+        None
+    }
+}
+
+fn effective_voice_enabled(policy: &DesktopSupportPolicy, persisted_enabled: bool) -> bool {
+    persisted_enabled && policy.supports(DesktopCapability::GlobalShortcut)
 }
 
 fn introduces_clipboard_compatibility(current: &AppConfig, next: &AppConfig) -> bool {
@@ -156,5 +193,42 @@ mod tests {
 
         let unchanged = next.clone();
         assert!(!introduces_clipboard_compatibility(&next, &unchanged));
+    }
+
+    #[test]
+    fn config_preflight_allows_unrelated_saves_of_legacy_enabled_state() {
+        let current = AppConfig::default();
+        let mut next = current.clone();
+        next.history_enabled = !current.history_enabled;
+
+        assert_eq!(required_capability_for_config_change(&current, &next), None);
+        assert!(!effective_voice_enabled(
+            &DesktopSupportPolicy::macos_bootstrap(),
+            next.enabled
+        ));
+    }
+
+    #[test]
+    fn config_preflight_identifies_new_unsupported_capabilities() {
+        let current = AppConfig {
+            enabled: false,
+            ..AppConfig::default()
+        };
+        let mut enabling = current.clone();
+        enabling.enabled = true;
+        assert_eq!(
+            required_capability_for_config_change(&current, &enabling),
+            Some(DesktopCapability::GlobalShortcut)
+        );
+
+        let mut clipboard = current.clone();
+        clipboard.injection_overrides.push(InjectionOverride {
+            executable_name: "legacy.exe".to_string(),
+            strategy: InjectionStrategy::ClipboardCompatibility,
+        });
+        assert_eq!(
+            required_capability_for_config_change(&current, &clipboard),
+            Some(DesktopCapability::AutomaticTextDelivery)
+        );
     }
 }

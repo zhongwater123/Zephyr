@@ -1,5 +1,7 @@
 use crate::command_error::{self, CommandError, CommandResult};
+use crate::desktop_support::DesktopCapability;
 use crate::physical_shortcut::ShortcutBinding;
+use crate::services::AppServices;
 use crate::shortcut_manager::{
     ShortcutEditOutcome, ShortcutEditSession, ShortcutEditTraceInput, ShortcutManager,
 };
@@ -20,8 +22,12 @@ pub async fn begin_shortcut_edit(
     expected_revision: u64,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
+    services: State<'_, AppServices>,
 ) -> CommandResult<ShortcutEditSession> {
     command_error::require_window(&window, "main")?;
+    services
+        .support
+        .require(DesktopCapability::GlobalShortcut)?;
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || manager.begin_edit(trace_id, expected_revision))
         .await
@@ -37,8 +43,12 @@ pub async fn commit_shortcut_edit(
     binding: ShortcutBinding,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
+    services: State<'_, AppServices>,
 ) -> CommandResult<ShortcutEditOutcome> {
     command_error::require_window(&window, "main")?;
+    services
+        .support
+        .require(DesktopCapability::GlobalShortcut)?;
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         manager.commit_edit(trace_id, edit_id, expected_revision, binding)
@@ -54,8 +64,12 @@ pub async fn cancel_shortcut_edit(
     edit_id: u64,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
+    services: State<'_, AppServices>,
 ) -> CommandResult<ShortcutEditOutcome> {
     command_error::require_window(&window, "main")?;
+    services
+        .support
+        .require(DesktopCapability::GlobalShortcut)?;
     let manager = manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || manager.cancel_edit(trace_id, edit_id))
         .await
@@ -68,8 +82,12 @@ pub fn record_shortcut_edit_trace(
     input: ShortcutEditTraceInput,
     window: WebviewWindow,
     manager: State<'_, Arc<ShortcutManager>>,
+    services: State<'_, AppServices>,
 ) -> CommandResult<()> {
     command_error::require_window(&window, "main")?;
+    services
+        .support
+        .require(DesktopCapability::GlobalShortcut)?;
     manager
         .record_trace(input)
         .map_err(|error| CommandError::new("shortcut_trace_invalid", error))

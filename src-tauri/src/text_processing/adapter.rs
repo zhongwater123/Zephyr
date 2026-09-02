@@ -625,7 +625,7 @@ mod tests {
     #[ignore = "requires live DeepSeek credentials and network access"]
     async fn live_deployment_credential_completes_text_processing_request() {
         let credentials: Arc<dyn CredentialStore> =
-            Arc::new(crate::repositories::WindowsCredentialStore);
+            Arc::new(crate::repositories::SystemCredentialStore);
         let config = Arc::new(ConfigService::new(
             LoadedConfig {
                 config: AppConfig::default(),

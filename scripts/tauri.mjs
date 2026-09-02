@@ -141,7 +141,7 @@ function handleShutdown(signal) {
   }
 }
 
-if (args[0] === "dev" || args[0] === "build") {
+if (process.platform === "win32" && (args[0] === "dev" || args[0] === "build")) {
   const helperBuild = spawnSync(
     process.execPath,
     [

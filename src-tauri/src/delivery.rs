@@ -261,6 +261,13 @@ fn map_inject_error(
             code: "target_changed",
             message,
         },
+        InjectError::UnsupportedCapability {
+            capability,
+            message,
+        } => DeliveryFailure {
+            code: "unsupported_platform",
+            message: format!("{message} ({capability})"),
+        },
         other => DeliveryFailure {
             code: "injection_task_failed",
             message: other.to_string(),
@@ -360,6 +367,21 @@ mod tests {
             DeliveryMode::Unicode,
         );
         assert_eq!(unicode.code, "delivery_helper_unavailable");
+    }
+
+    #[test]
+    fn unsupported_delivery_remains_a_stable_platform_failure() {
+        let failure = map_inject_error(
+            InjectError::UnsupportedCapability {
+                capability: "automaticTextDelivery",
+                message: "automatic text delivery is unsupported on macOS".to_string(),
+            },
+            DeliveryIntent::SmartDictation,
+            DeliveryMode::Unicode,
+        );
+
+        assert_eq!(failure.code, "unsupported_platform");
+        assert!(failure.message.contains("automaticTextDelivery"));
     }
 
     #[test]

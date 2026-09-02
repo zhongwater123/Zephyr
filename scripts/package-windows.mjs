@@ -36,6 +36,25 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+function windowsTauriConfig() {
+  const base = readJson(resolve(projectRoot, "src-tauri", "tauri.conf.json"));
+  const windows = readJson(
+    resolve(projectRoot, "src-tauri", "tauri.windows.conf.json"),
+  );
+  return {
+    ...base,
+    ...windows,
+    bundle: {
+      ...base.bundle,
+      ...windows.bundle,
+      windows: {
+        ...base.bundle?.windows,
+        ...windows.bundle?.windows,
+      },
+    },
+  };
+}
+
 function run(command, args, label) {
   console.log(`\n==> ${label}`);
   const result = spawnSync(command, args, {
@@ -90,7 +109,7 @@ function assertReleaseContract() {
   }
 
   const packageJson = readJson(resolve(projectRoot, "package.json"));
-  const tauriConfig = readJson(resolve(projectRoot, "src-tauri", "tauri.conf.json"));
+  const tauriConfig = windowsTauriConfig();
   const versions = {
     "package.json": packageJson.version,
     "src-tauri/tauri.conf.json": tauriConfig.version,
@@ -107,7 +126,7 @@ function assertReleaseContract() {
 
   const targets = tauriConfig.bundle?.targets;
   if (!Array.isArray(targets) || !targets.includes("nsis")) {
-    throw new Error("src-tauri/tauri.conf.json 必须启用 NSIS bundle target");
+    throw new Error("src-tauri/tauri.windows.conf.json 必须启用 NSIS bundle target");
   }
   if (tauriConfig.bundle?.useLocalToolsDir !== true) {
     throw new Error("Windows 打包必须启用 bundle.useLocalToolsDir，避免 NSIS 工具缓存跨磁盘移动失败");
@@ -337,7 +356,9 @@ function buildManifest(contract, installerPath, helper) {
 
 try {
   const contract = assertReleaseContract();
-  assertBundledCredentials(deploymentEnvironment);
+  if (!checkOnly) {
+    assertBundledCredentials(deploymentEnvironment);
+  }
   console.log(
     `发布契约检查通过：${contract.productName} ${contract.version} (${contract.identifier})`,
   );

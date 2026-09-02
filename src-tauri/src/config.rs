@@ -341,6 +341,7 @@ fn read_and_migrate_config(path: &Path) -> Result<AppConfig, ConfigError> {
             &mut config.asr,
         );
     }
+    #[cfg(target_os = "windows")]
     if config.shortcut_binding.is_none() {
         config.shortcut_binding = ShortcutBinding::from_legacy_label(&config.shortcut).ok();
     }
@@ -674,7 +675,10 @@ mod tests {
         assert_eq!(config.revision, 0);
         assert_eq!(config.shortcut, "Ctrl+Alt+Space");
         assert_eq!(config.polish_level, DEFAULT_POLISH_LEVEL);
+        #[cfg(target_os = "windows")]
         assert!(config.shortcut_binding.is_some());
+        #[cfg(target_os = "macos")]
+        assert!(config.shortcut_binding.is_none());
     }
 
     #[test]
@@ -750,7 +754,10 @@ mod tests {
         assert!(config.incident_save_failed_audio);
         assert!(config.incident_save_failed_text);
         assert_eq!(config.shortcut, "Ctrl+Alt+Space");
+        #[cfg(target_os = "windows")]
         assert!(config.shortcut_binding.is_some());
+        #[cfg(target_os = "macos")]
+        assert!(config.shortcut_binding.is_none());
     }
 
     #[test]

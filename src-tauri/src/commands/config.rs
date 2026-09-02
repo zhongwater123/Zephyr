@@ -3,6 +3,7 @@ use crate::config::{
     self, AppConfig, ConfigRecovery, EndpointPurpose, InjectionOverride, InjectionStrategy,
     ShortcutTriggerMode, TrustedEndpoint,
 };
+use crate::desktop_support::{unsupported_platform, DesktopCapability};
 use crate::services::{AppServices, ConfigServiceError};
 use crate::shortcut_manager::ShortcutManager;
 use crate::voice_controller::VoiceSessionHandle;
@@ -16,6 +17,7 @@ pub(crate) struct ConfigStatus {
     pub(crate) provider_ready: bool,
     pub(crate) provider_message: String,
     pub(crate) recovery_warning: Option<String>,
+    pub(crate) global_shortcut_supported: bool,
 }
 
 pub(crate) fn require_revision(config: &AppConfig, expected_revision: u64) -> CommandResult<()> {
@@ -69,6 +71,7 @@ fn map_voice_input_error(error: VoiceControlServiceError) -> CommandError {
             "native_confirmation_required",
             "新增剪贴板兼容应用必须通过专用的 Windows 原生确认流程",
         ),
+        VoiceControlServiceError::Unsupported(capability) => unsupported_platform(capability),
         VoiceControlServiceError::Reconciliation {
             committed_revision,
             message,
@@ -84,6 +87,7 @@ pub(crate) fn status(
     config: &AppConfig,
     recovery: ConfigRecovery,
     provider: &crate::services::ProviderService,
+    support: &crate::desktop_support::DesktopSupportPolicy,
 ) -> ConfigStatus {
     let recovery_warning = match recovery {
         ConfigRecovery::None => None,
@@ -97,11 +101,13 @@ pub(crate) fn status(
             provider_ready: true,
             provider_message: "火山引擎识别服务已由部署环境配置。".to_string(),
             recovery_warning,
+            global_shortcut_supported: support.supports(DesktopCapability::GlobalShortcut),
         },
         Err(message) => ConfigStatus {
             provider_ready: false,
             provider_message: message,
             recovery_warning,
+            global_shortcut_supported: support.supports(DesktopCapability::GlobalShortcut),
         },
     }
 }
@@ -171,6 +177,7 @@ pub fn get_config_status(
         &services.config.snapshot(),
         services.config.recovery(),
         services.provider.as_ref(),
+        &services.support,
     ))
 }
 
@@ -189,6 +196,9 @@ pub fn authorize_endpoint(
             "识别服务地址由部署环境管理",
         ));
     }
+    services
+        .support
+        .require(DesktopCapability::NativeConfirmation)?;
     let origin = config::normalize_origin(&endpoint).map_err(CommandError::from)?;
     let current = services.config.snapshot();
     require_revision(&current, expected_revision)?;
@@ -260,6 +270,11 @@ pub fn set_clipboard_compatibility(
     services: State<'_, AppServices>,
 ) -> CommandResult<AppConfig> {
     command_error::require_window(&window, "main")?;
+    if enabled {
+        services
+            .support
+            .require(DesktopCapability::AutomaticTextDelivery)?;
+    }
     let executable_name = executable_name.trim();
     if executable_name.is_empty()
         || executable_name.contains(['/', '\\'])
@@ -270,6 +285,8 @@ pub fn set_clipboard_compatibility(
             "请输入不含路径的 Windows 可执行文件名，例如 legacy.exe",
         ));
     }
+    let mut next = services.config.snapshot();
+    require_revision(&next, expected_revision)?;
     if enabled
         && !services
             .confirmations
@@ -280,8 +297,6 @@ pub fn set_clipboard_compatibility(
             "未启用剪贴板兼容模式",
         ));
     }
-    let mut next = services.config.snapshot();
-    require_revision(&next, expected_revision)?;
     next.injection_overrides
         .retain(|entry| !entry.executable_name.eq_ignore_ascii_case(executable_name));
     if enabled {
@@ -352,6 +367,9 @@ pub fn set_shortcut_trigger_mode(
     shortcut: State<'_, Arc<ShortcutManager>>,
 ) -> CommandResult<AppConfig> {
     command_error::require_window(&window, "main")?;
+    services
+        .support
+        .require(DesktopCapability::GlobalShortcut)?;
     if voice.status_snapshot().session_active || shortcut.is_trigger_active() {
         return Err(CommandError::new(
             "voice_session_active",

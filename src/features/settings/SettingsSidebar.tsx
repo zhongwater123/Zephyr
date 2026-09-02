@@ -27,6 +27,13 @@ function runtimePresentation(
   service: ConfigStatus,
   status: VoiceStatePayload,
 ) {
+  if (!service.global_shortcut_supported) {
+    return {
+      label: "当前平台暂不可用",
+      detail: "macOS 暂不支持全局快捷键语音输入",
+      tone: "paused",
+    };
+  }
   if (!service.provider_ready || status.state === "Error") {
     return { label: "服务不可用", detail: status.state === "Error" ? status.message : "语音服务暂时无法连接", tone: "danger" };
   }
@@ -112,9 +119,14 @@ export function SettingsSidebar({
   onLaunch: (panel: "personalization" | "more_settings") => void;
 }) {
   const runtime = runtimePresentation(config, configStatus, voiceStatus);
-  const voiceControlsLocked = ["Starting", "Recording", "Transcribing", "Pasting"].includes(
-    voiceStatus.state,
-  );
+  const shortcutUnsupported = !configStatus.global_shortcut_supported;
+  const voiceSessionActive = ["Starting", "Recording", "Transcribing", "Pasting"].includes(voiceStatus.state);
+  const voiceControlsLocked = shortcutUnsupported || voiceSessionActive;
+  const shortcutDisabledReason = shortcutUnsupported
+    ? "macOS 暂不支持全局快捷键。"
+    : voiceSessionActive
+      ? "本次语音结束后可修改快捷键。"
+      : "";
   return (
     <aside id="config-drawer" className={"settings-sidebar " + (open ? "is-open" : "")} aria-hidden={!open}>
       <header className="settings-sidebar-header">
@@ -140,9 +152,9 @@ export function SettingsSidebar({
               <BehaviorSwitch
                 compact
                 label="语音输入"
-                description={config.enabled ? "在任意应用中使用快捷键输入" : "当前不会监听快捷键"}
-                checked={config.enabled}
-                disabled={enabledSaving}
+                description={shortcutUnsupported ? "当前平台不会监听全局快捷键" : config.enabled ? "在任意应用中使用快捷键输入" : "当前不会监听快捷键"}
+                checked={config.enabled && !shortcutUnsupported}
+                disabled={enabledSaving || shortcutUnsupported}
                 onChange={onEnabled}
               />
             </div>
@@ -158,7 +170,7 @@ export function SettingsSidebar({
               onKeyUp={onShortcutKeyUp}
               mode={config.shortcut_trigger_mode}
               disabled={voiceControlsLocked}
-              disabledReason={voiceControlsLocked ? "本次语音结束后可修改快捷键。" : ""}
+              disabledReason={shortcutDisabledReason}
             />
 
             <ShortcutTriggerModeField

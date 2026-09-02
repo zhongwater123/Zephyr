@@ -3,12 +3,20 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
-pub fn setup(app: &AppHandle, voice_control: VoiceControlService) -> tauri::Result<()> {
+pub fn setup(
+    app: &AppHandle,
+    voice_control: VoiceControlService,
+    show_voice_toggle: bool,
+) -> tauri::Result<()> {
     let open_settings = MenuItem::with_id(app, "open_settings", "打开设置", true, None::<&str>)?;
     let toggle_enabled =
         MenuItem::with_id(app, "toggle_enabled", "暂停 / 继续", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open_settings, &toggle_enabled, &quit])?;
+    let menu = if show_voice_toggle {
+        Menu::with_items(app, &[&open_settings, &toggle_enabled, &quit])?
+    } else {
+        Menu::with_items(app, &[&open_settings, &quit])?
+    };
 
     let mut tray = TrayIconBuilder::with_id("main")
         .tooltip("Zephyr")

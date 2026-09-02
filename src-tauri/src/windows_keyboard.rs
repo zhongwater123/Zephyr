@@ -2,7 +2,9 @@ use crate::physical_shortcut::{
     modifier_bit, CompiledBinding, PhysicalKeyId, ShortcutBinding, LEFT_CTRL, LEFT_WIN, RIGHT_ALT,
     RIGHT_WIN,
 };
-use std::fmt;
+use crate::shortcut_runtime::{
+    KeyboardEngineDiagnostics, KeyboardEngineError, KeyboardEngineErrorKind, KeyboardEngineEvent,
+};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::mpsc::{self, SyncSender};
@@ -23,13 +25,6 @@ const BINDING_VALID: u64 = 1 << 63;
 const HOOK_GENERATION_TIMEOUT: Duration = Duration::from_secs(2);
 const TRACE_TARGET: &str = "shortcut_edit_trace";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KeyboardEngineEvent {
-    Pressed,
-    Released,
-    Interrupted,
-}
-
 #[derive(Debug, Clone, Copy)]
 enum Signal {
     Pressed,
@@ -37,39 +32,6 @@ enum Signal {
     Interrupted,
     Shutdown,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum KeyboardEngineErrorKind {
-    DispatchUnavailable,
-    HookWorkerUnavailable,
-    ReinstallRequestFailed,
-    ReinstallTimeout,
-    ReinstallFailed,
-    GenerationSuperseded,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct KeyboardEngineError {
-    pub(crate) kind: KeyboardEngineErrorKind,
-    pub(crate) message: String,
-}
-
-impl KeyboardEngineError {
-    fn new(kind: KeyboardEngineErrorKind, message: impl Into<String>) -> Self {
-        Self {
-            kind,
-            message: message.into(),
-        }
-    }
-}
-
-impl fmt::Display for KeyboardEngineError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for KeyboardEngineError {}
 
 #[derive(Debug, Clone, Default)]
 struct HookInstallReceipt {
@@ -179,18 +141,6 @@ impl HookGlobals {
 }
 
 static GLOBALS: OnceLock<Arc<HookGlobals>> = OnceLock::new();
-
-#[derive(Debug, Clone)]
-pub struct KeyboardEngineDiagnostics {
-    pub hook_generation: u64,
-    pub observed_events: u64,
-    pub emitted_events: u64,
-    pub dropped_events: u64,
-    pub hook_healthy: bool,
-    pub hook_worker_alive: bool,
-    pub dispatch_alive: bool,
-    pub enabled: bool,
-}
 
 pub struct WindowsKeyboardEngine {
     globals: Arc<HookGlobals>,

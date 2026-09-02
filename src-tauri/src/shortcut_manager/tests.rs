@@ -9,7 +9,7 @@ use super::{
 use crate::config::AppConfig;
 use crate::physical_shortcut::ShortcutBinding;
 use crate::physical_shortcut::{ModifierBinding, ModifierKind, ModifierSide, PhysicalKeyId};
-use crate::windows_keyboard::KeyboardEngineDiagnostics;
+use crate::shortcut_runtime::{KeyboardEngineDiagnostics, KeyboardEngineError};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -101,6 +101,10 @@ impl FakeRuntime {
 }
 
 impl ShortcutRuntimePort for FakeRuntime {
+    fn startup_error(&self) -> Option<String> {
+        None
+    }
+
     fn set_binding(&self, binding: Option<&ShortcutBinding>) -> Result<(), String> {
         let binding = binding.cloned();
         self.operations
@@ -121,18 +125,16 @@ impl ShortcutRuntimePort for FakeRuntime {
         Ok(())
     }
 
-    fn set_enabled(&self, enabled: bool) {
+    fn set_enabled(&self, enabled: bool) -> Result<(), String> {
         self.enabled.store(enabled, Ordering::Relaxed);
         self.operations
             .lock()
             .unwrap()
             .push(RuntimeOperation::SetEnabled(enabled));
+        Ok(())
     }
 
-    fn ensure_runtime_ready(
-        &self,
-        force_reinstall: bool,
-    ) -> Result<u64, crate::windows_keyboard::KeyboardEngineError> {
+    fn ensure_runtime_ready(&self, force_reinstall: bool) -> Result<u64, KeyboardEngineError> {
         self.operations
             .lock()
             .unwrap()

@@ -136,7 +136,7 @@ impl EditCoordinator {
     ) -> Result<AppConfig, String> {
         let current = self.config.snapshot();
         let engine = self.engine_handle()?;
-        engine.set_enabled(false);
+        engine.set_enabled(false)?;
         engine.set_binding(current.shortcut_binding.as_ref())?;
         if current.enabled {
             if current.shortcut_binding.is_none() {
@@ -145,7 +145,7 @@ impl EditCoordinator {
             engine
                 .ensure_runtime_ready(force_reinstall)
                 .map_err(|error| error.message)?;
-            engine.set_enabled(true);
+            engine.set_enabled(true)?;
         }
         Ok(current)
     }
