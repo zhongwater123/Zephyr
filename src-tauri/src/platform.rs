@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, WebviewWindow};
 
 pub mod tray;
+pub mod window_lifecycle;
 
 #[cfg(target_os = "macos")]
 mod macos;

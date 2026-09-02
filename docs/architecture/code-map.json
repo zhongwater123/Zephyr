@@ -222,6 +222,7 @@
         "src-tauri/src/runtime_metrics.rs",
         "src-tauri/src/platform.rs",
         "src-tauri/src/platform/tray.rs",
+        "src-tauri/src/platform/window_lifecycle.rs",
         "src-tauri/tauri.conf.json",
         "src-tauri/src/main.rs"
       ],

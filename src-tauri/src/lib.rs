@@ -132,6 +132,7 @@ pub fn run() {
             commands::config::set_incident_recovery_enabled,
             commands::provider::test_provider
         ])
+        .on_window_event(platform::window_lifecycle::handle_window_event)
         .setup(move |app| {
             let platform_runtime = platform::runtime_adapters(app.handle());
             let targets = platform_runtime.targets;

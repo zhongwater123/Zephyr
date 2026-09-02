@@ -1,7 +1,8 @@
+use super::window_lifecycle;
 use crate::voice_input_service::VoiceControlService;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
 
 pub fn setup(
     app: &AppHandle,
@@ -29,11 +30,11 @@ pub fn setup(
                 ..
             } = event
             {
-                show_main_window(tray.app_handle());
+                window_lifecycle::restore_main_window(tray.app_handle());
             }
         })
         .on_menu_event(move |app, event| match event.id().as_ref() {
-            "open_settings" => show_main_window(app),
+            "open_settings" => window_lifecycle::restore_main_window(app),
             "toggle_enabled" => {
                 let voice_control = voice_control.clone();
                 tauri::async_runtime::spawn(async move {
@@ -54,11 +55,4 @@ pub fn setup(
     }
     tray.build(app)?;
     Ok(())
-}
-
-fn show_main_window(app: &AppHandle) {
-    if let Some(window) = app.get_webview_window("main") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
 }
